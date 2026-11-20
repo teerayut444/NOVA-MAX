@@ -7,8 +7,10 @@ maxMessageSize = 250
 enableStaticServing = true
 
 [client]
-# Hide Deploy / GitHub source link / main menu in the top toolbar
-toolbarMode = "minimal"
+# Use "viewer" (not "minimal") so stStatusWidget ("Running...") stays rendered even when
+# hostToolbarItems is empty (e.g. under ?embed=true&embed_options=show_toolbar);
+# Share / Star / Edit / GitHub / Deploy / Main Menu are hidden via CSS in app.py.
+toolbarMode = "viewer"
 
 [browser]
 gatherUsageStats = false
