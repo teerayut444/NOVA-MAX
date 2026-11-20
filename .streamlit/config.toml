@@ -6,6 +6,10 @@ maxUploadSize = 200
 maxMessageSize = 250
 enableStaticServing = true
 
+[client]
+# Hide Deploy / GitHub source link / main menu in the top toolbar
+toolbarMode = "minimal"
+
 [browser]
 gatherUsageStats = false
 

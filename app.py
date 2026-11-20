@@ -157,6 +157,17 @@ if df_raw is None or df_raw.empty:
 # ----------------- SIDEBAR & THEME SETUP -----------------
 is_dark_mode = render_sidebar(df_raw)
 inject_global_theme_css(is_dark_mode)
+st.markdown(
+    """
+    <style>
+    [data-testid="stToolbarActions"],
+    [data-testid="stAppDeployButton"],
+    .stAppDeployButton,
+    [data-testid="stMainMenu"] { display: none !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ----------------- GLOBAL FLOATING KPI CARDS -----------------
 render_floating_kpi_cards(df_raw, df_raw, is_dark_mode)
