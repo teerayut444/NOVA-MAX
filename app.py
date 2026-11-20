@@ -81,7 +81,30 @@ st.set_page_config(
     page_title="NOVA NPA Dashboard",
     page_icon=_load_app_page_icon(),
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
+    menu_items={},
+)
+
+# Hide Streamlit toolbar actions (Share / Star / Edit / GitHub), Deploy, Main Menu, Decoration & Footer across all screens
+# while preserving stStatusWidget (Running... indicator) and Sidebar header controls.
+st.html(
+    """
+    <style>
+    [data-testid="stToolbarActions"],
+    [data-testid="stToolbarActionButton"],
+    [data-testid="stAppDeployButton"],
+    .stAppDeployButton,
+    [data-testid="stMainMenu"],
+    #MainMenu,
+    [data-testid="stDecoration"],
+    footer,
+    #GithubIcon,
+    header[data-testid="stHeader"] a[href*="github.com"] {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    </style>
+    """
 )
 
 # ----------------- PORTAL GATEWAY ENTRY CHECK -----------------
@@ -157,17 +180,6 @@ if df_raw is None or df_raw.empty:
 # ----------------- SIDEBAR & THEME SETUP -----------------
 is_dark_mode = render_sidebar(df_raw)
 inject_global_theme_css(is_dark_mode)
-st.markdown(
-    """
-    <style>
-    [data-testid="stToolbarActions"],
-    [data-testid="stAppDeployButton"],
-    .stAppDeployButton,
-    [data-testid="stMainMenu"] { display: none !important; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
 # ----------------- GLOBAL FLOATING KPI CARDS -----------------
 render_floating_kpi_cards(df_raw, df_raw, is_dark_mode)
