@@ -1,2 +1,0 @@
-# NOVA-MAX
-Web Dash
