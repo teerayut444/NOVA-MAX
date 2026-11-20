@@ -2070,9 +2070,6 @@ function notifyParentFilterChange() {
         u.searchParams.delete('map_filter_only_proj');
       }
       window.parent.history.replaceState({}, '', u.toString());
-      try {
-        window.parent.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-      } catch(pe) {}
       triggerStreamlitSync(null, 80);
     } catch(e) {
       console.warn('notifyParentFilterChange error:', e);
@@ -2212,6 +2209,7 @@ function restoreInMapFiltersFromParentUrl() {
 var streamlitSyncTimer = null;
 var streamlitSyncBtnTimer = null;
 var lastSyncPayload = null;
+var lastExecutedSyncJson = null;
 
 function triggerStreamlitSync(customPayload, delayMs) {
   var delay = (delayMs !== undefined) ? delayMs : 320;
@@ -2240,13 +2238,12 @@ function executeStreamlitSync(payload) {
     var pdoc = pWin.document;
     var finalPayload = payload || lastSyncPayload || getMapSyncPayload();
     var jsonStr = JSON.stringify(finalPayload);
+    if (jsonStr === lastExecutedSyncJson) {
+      return;
+    }
+    lastExecutedSyncJson = jsonStr;
 
-    // 1. Dispatch popstate on window.parent to sync URL params
-    try {
-      pWin.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-    } catch(pe) {}
-
-    // 2. Set hidden bridge input to pass exact data directly to Streamlit Python
+    // Set hidden bridge input to pass exact data directly to Streamlit Python fragment (never dispatch popstate on window.parent, which would trigger a full-app rerun)
     try {
       if (pdoc) {
         var bridgeInput = pdoc.querySelector('.st-key-map_sync_bridge_payload input') ||

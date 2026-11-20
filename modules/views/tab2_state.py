@@ -35,18 +35,10 @@ def _reset_price_center_callback():
 
 
 def _sync_num_filter(payload_obj, payload_key, state_key, qp_key=None):
-    """Updates a numeric filter in session_state and keeps query_params aligned when explicitly cleared to 0."""
+    """Updates a numeric filter in session_state (browser URL is already updated silently by JS replaceState)."""
     if payload_key in payload_obj:
         val = max(0.0, _safe_float(payload_obj.get(payload_key), 0.0))
         st.session_state[state_key] = val
-        if qp_key:
-            try:
-                if val > 0:
-                    st.query_params[qp_key] = str(val)
-                else:
-                    st.query_params.pop(qp_key, None)
-            except Exception:
-                pass
 
 
 def _read_num_filter(state_key, qp_key=None):
@@ -111,10 +103,6 @@ def resolve_tab2_sync_and_filter_state(
                 p_prov = str(payload_obj.get("prov", "")).strip()
                 if p_prov and p_prov not in ("ALL", "__ALL__", "all", "-"):
                     st.session_state["tab2_filter_provinces"] = [p_prov]
-                    try:
-                        st.query_params["map_prov"] = p_prov
-                    except Exception:
-                        pass
                 else:
                     prov_explicitly_cleared = True
                     st.session_state["tab2_filter_provinces"] = []
@@ -122,61 +110,31 @@ def resolve_tab2_sync_and_filter_state(
                     st.session_state["tab2_filter_subdistricts"] = []
                     st.session_state["tab2_search_prop_id"] = ""
                     st.session_state.pop("tab2_ref_prop", None)
-                    for qk in ("map_prov", "map_dist", "map_subdist", "map_ref_id"):
-                        try:
-                            st.query_params.pop(qk, None)
-                        except Exception:
-                            pass
 
             dist_explicitly_cleared = prov_explicitly_cleared
             if "dist" in payload_obj and not prov_explicitly_cleared:
                 p_dist = str(payload_obj.get("dist", "")).strip()
                 if st.session_state.get("tab2_filter_provinces") and p_dist and p_dist not in ("ALL", "__ALL__", "all", "-"):
                     st.session_state["tab2_filter_districts"] = [p_dist]
-                    try:
-                        st.query_params["map_dist"] = p_dist
-                    except Exception:
-                        pass
                 else:
                     dist_explicitly_cleared = True
                     st.session_state["tab2_filter_districts"] = []
                     st.session_state["tab2_filter_subdistricts"] = []
-                    for qk in ("map_dist", "map_subdist"):
-                        try:
-                            st.query_params.pop(qk, None)
-                        except Exception:
-                            pass
 
             if "subdist" in payload_obj and not dist_explicitly_cleared:
                 p_subdist = str(payload_obj.get("subdist", "")).strip()
                 if st.session_state.get("tab2_filter_provinces") and st.session_state.get("tab2_filter_districts") and p_subdist and p_subdist not in ("ALL", "__ALL__", "all", "-"):
                     st.session_state["tab2_filter_subdistricts"] = [p_subdist]
-                    try:
-                        st.query_params["map_subdist"] = p_subdist
-                    except Exception:
-                        pass
                 else:
                     st.session_state["tab2_filter_subdistricts"] = []
-                    try:
-                        st.query_params.pop("map_subdist", None)
-                    except Exception:
-                        pass
 
             if "proj" in payload_obj:
                 p_proj = str(payload_obj.get("proj", "")).strip()
                 if p_proj and p_proj not in ("ALL", "__ALL__", "all", "-"):
                     p_list = [x.strip() for x in p_proj.split(",") if x.strip()]
                     st.session_state["tab2_filter_projects"] = p_list
-                    try:
-                        st.query_params["map_proj"] = p_proj
-                    except Exception:
-                        pass
                 else:
                     st.session_state["tab2_filter_projects"] = []
-                    try:
-                        st.query_params.pop("map_proj", None)
-                    except Exception:
-                        pass
 
             if "compare_ids" in payload_obj:
                 raw_cids = payload_obj.get("compare_ids", [])
@@ -184,22 +142,11 @@ def resolve_tab2_sync_and_filter_state(
                     st.session_state["tab2_compare_ids"] = [str(x).strip() for x in raw_cids if str(x).strip()]
                 elif isinstance(raw_cids, str):
                     st.session_state["tab2_compare_ids"] = [x.strip() for x in raw_cids.split(",") if x.strip()]
-                try:
-                    if st.session_state.get("tab2_compare_ids"):
-                        st.query_params["map_compare_ids"] = ",".join(st.session_state["tab2_compare_ids"])
-                    else:
-                        st.query_params.pop("map_compare_ids", None)
-                except Exception:
-                    pass
 
             if "id" in payload_obj:
                 p_id = str(payload_obj.get("id", "")).strip()
                 if p_id:
                     st.session_state["tab2_search_prop_id"] = p_id
-                    try:
-                        st.query_params["map_ref_id"] = p_id
-                    except Exception:
-                        pass
                     if df_raw is not None and not df_raw.empty and 'รหัสทรัพย์' in df_raw.columns:
                         m = df_raw[df_raw['รหัสทรัพย์'].astype(str).str.strip().str.lower() == p_id.lower()]
                         if not m.empty:
@@ -214,10 +161,6 @@ def resolve_tab2_sync_and_filter_state(
                 else:
                     st.session_state["tab2_search_prop_id"] = ""
                     st.session_state.pop("tab2_ref_prop", None)
-                    try:
-                        st.query_params.pop("map_ref_id", None)
-                    except Exception:
-                        pass
 
             if "price_center_id" in payload_obj:
                 if st.session_state.get("tab2_just_reset_price_center"):
@@ -226,10 +169,6 @@ def resolve_tab2_sync_and_filter_state(
                     p_price_id = str(payload_obj.get("price_center_id", "")).strip()
                 if p_price_id:
                     st.session_state["tab2_price_center_id"] = p_price_id
-                    try:
-                        st.query_params["map_price_ref_id"] = p_price_id
-                    except Exception:
-                        pass
                     if df_raw is not None and not df_raw.empty and 'รหัสทรัพย์' in df_raw.columns:
                         m_pr = df_raw[df_raw['รหัสทรัพย์'].astype(str).str.strip().str.lower() == p_price_id.lower()]
                         if not m_pr.empty:
@@ -239,10 +178,6 @@ def resolve_tab2_sync_and_filter_state(
                     st.session_state["tab2_price_center_id"] = ""
                     st.session_state.pop("tab2_price_ref_prop", None)
                     active_price_ref_prop = None
-                    try:
-                        st.query_params.pop("map_price_ref_id", None)
-                    except Exception:
-                        pass
 
             if "lat" in payload_obj or "lon" in payload_obj:
                 p_lat_f = _safe_float(payload_obj.get("lat"), 0.0)
@@ -254,66 +189,29 @@ def resolve_tab2_sync_and_filter_state(
                     st.session_state["tab2_ref_lon"] = active_ref_lon
                     st.session_state["tab2_compared_lat"] = active_ref_lat
                     st.session_state["tab2_compared_lon"] = active_ref_lon
-                    try:
-                        st.query_params["map_ref_lat"] = f"{active_ref_lat:.6f}"
-                        st.query_params["map_ref_lon"] = f"{active_ref_lon:.6f}"
-                    except Exception:
-                        pass
                 else:
                     active_ref_lat = None
                     active_ref_lon = None
-                    for sk in ("tab2_ref_lat", "tab2_ref_lon", "tab2_compared_lat", "tab2_compared_lon"):
+                    st.session_state["tab2_ref_lat"] = 0.0
+                    st.session_state["tab2_ref_lon"] = 0.0
+                    for sk in ("tab2_compared_lat", "tab2_compared_lon"):
                         st.session_state.pop(sk, None)
-                    for qk in ("map_ref_lat", "map_ref_lon"):
-                        try:
-                            st.query_params.pop(qk, None)
-                        except Exception:
-                            pass
 
             if "radius" in payload_obj and payload_obj.get("radius"):
                 rad_v = _safe_float(payload_obj.get("radius"), 0.0)
                 if rad_v > 0:
                     active_ref_radius = min(50.0, max(0.5, rad_v))
                     st.session_state["tab2_ref_radius"] = active_ref_radius
-                    try:
-                        st.query_params["map_ref_radius"] = str(active_ref_radius)
-                    except Exception:
-                        pass
 
             if "mode" in payload_obj and payload_obj.get("mode"):
                 st.session_state["tab2_pin_mode"] = str(payload_obj.get("mode")).strip()
-                try:
-                    st.query_params["map_pin_mode"] = st.session_state["tab2_pin_mode"]
-                except Exception:
-                    pass
 
             if "cos" in payload_obj and isinstance(payload_obj["cos"], list):
                 st.session_state["tab2_map_filter_cos"] = payload_obj["cos"]
-                try:
-                    if payload_obj["cos"]:
-                        st.query_params["map_filter_cos"] = ",".join(payload_obj["cos"])
-                    else:
-                        st.query_params.pop("map_filter_cos", None)
-                except Exception:
-                    pass
             if "types" in payload_obj and isinstance(payload_obj["types"], list):
                 st.session_state["tab2_map_filter_types"] = payload_obj["types"]
-                try:
-                    if payload_obj["types"]:
-                        st.query_params["map_filter_types"] = ",".join(payload_obj["types"])
-                    else:
-                        st.query_params.pop("map_filter_types", None)
-                except Exception:
-                    pass
             if "sales" in payload_obj and isinstance(payload_obj["sales"], list):
                 st.session_state["tab2_map_filter_sales"] = payload_obj["sales"]
-                try:
-                    if payload_obj["sales"]:
-                        st.query_params["map_filter_sales"] = ",".join(payload_obj["sales"])
-                    else:
-                        st.query_params.pop("map_filter_sales", None)
-                except Exception:
-                    pass
 
             _sync_num_filter(payload_obj, "min_p", "tab2_map_filter_min_p", "map_filter_min_p")
             _sync_num_filter(payload_obj, "max_p", "tab2_map_filter_max_p", "map_filter_max_p")
@@ -331,13 +229,6 @@ def resolve_tab2_sync_and_filter_state(
 
             if "only_with_proj" in payload_obj:
                 st.session_state["tab2_map_filter_only_proj"] = bool(payload_obj["only_with_proj"])
-                try:
-                    if payload_obj["only_with_proj"]:
-                        st.query_params["map_filter_only_proj"] = "1"
-                    else:
-                        st.query_params.pop("map_filter_only_proj", None)
-                except Exception:
-                    pass
 
             if "floors" in payload_obj and isinstance(payload_obj["floors"], list):
                 st.session_state["tab2_map_filter_floors"] = payload_obj["floors"]
@@ -409,16 +300,10 @@ def resolve_tab2_sync_and_filter_state(
             if has_loc_synced:
                 st.session_state["tab2_compared_active"] = True
 
-    # 1. Recovery of reference coordinates & radius from query_params or session_state
-    q_lat_check = st.query_params.get("map_ref_lat")
-    if q_lat_check:
-        try:
-            if float(q_lat_check) > 0 and "map_ref_cleared" in st.query_params:
-                del st.query_params["map_ref_cleared"]
-        except (ValueError, TypeError):
-            pass
+    # 1. Recovery of reference coordinates & radius from session_state (or initial query_params before first bridge sync)
+    has_bridge_synced = bool(st.session_state.get("_tab2_last_processed_sync_raw"))
 
-    if st.query_params.get("map_ref_cleared") == "1":
+    if not has_bridge_synced and st.query_params.get("map_ref_cleared") == "1":
         active_ref_lat = 0.0
         active_ref_lon = 0.0
         active_ref_prop = None
@@ -429,27 +314,7 @@ def resolve_tab2_sync_and_filter_state(
         st.session_state["tab2_price_ref_prop"] = None
         st.session_state["tab2_price_center_id"] = ""
         st.session_state["tab2_compared_active"] = False
-        for qk in ("map_ref_cleared", "map_price_ref_id"):
-            try:
-                st.query_params.pop(qk, None)
-            except Exception:
-                pass
-    else:
-        q_lat = st.query_params.get("map_ref_lat")
-        q_lon = st.query_params.get("map_ref_lon")
-        if q_lat and q_lon and _is_valid_thai_coord(q_lat, q_lon):
-            active_ref_lat = float(q_lat)
-            active_ref_lon = float(q_lon)
-            st.session_state["tab2_ref_lat"] = active_ref_lat
-            st.session_state["tab2_ref_lon"] = active_ref_lon
-        q_rad = st.query_params.get("map_ref_radius")
-        if q_rad:
-            rad_v = _safe_float(q_rad, 0.0)
-            if rad_v > 0:
-                active_ref_radius = min(50.0, max(0.5, rad_v))
-                st.session_state["tab2_ref_radius"] = active_ref_radius
-
-    if not _is_valid_thai_coord(active_ref_lat, active_ref_lon):
+    elif "tab2_ref_lat" in st.session_state or "tab2_ref_lon" in st.session_state:
         s_lat = _safe_float(st.session_state.get("tab2_ref_lat"), 0.0)
         s_lon = _safe_float(st.session_state.get("tab2_ref_lon"), 0.0)
         if _is_valid_thai_coord(s_lat, s_lon):
@@ -458,18 +323,41 @@ def resolve_tab2_sync_and_filter_state(
         else:
             active_ref_lat = None
             active_ref_lon = None
+    else:
+        q_lat = st.query_params.get("map_ref_lat")
+        q_lon = st.query_params.get("map_ref_lon")
+        if q_lat and q_lon and _is_valid_thai_coord(q_lat, q_lon):
+            active_ref_lat = float(q_lat)
+            active_ref_lon = float(q_lon)
+            st.session_state["tab2_ref_lat"] = active_ref_lat
+            st.session_state["tab2_ref_lon"] = active_ref_lon
 
-    active_ref_radius = _safe_float(active_ref_radius, 0.0)
-    if active_ref_radius <= 0:
+    if not _is_valid_thai_coord(active_ref_lat, active_ref_lon):
+        active_ref_lat = None
+        active_ref_lon = None
+
+    if "tab2_ref_radius" in st.session_state:
         active_ref_radius = _safe_float(st.session_state.get("tab2_ref_radius"), 5.0)
+    else:
+        q_rad = st.query_params.get("map_ref_radius")
+        if q_rad:
+            rad_v = _safe_float(q_rad, 0.0)
+            if rad_v > 0:
+                active_ref_radius = min(50.0, max(0.5, rad_v))
+                st.session_state["tab2_ref_radius"] = active_ref_radius
+    active_ref_radius = _safe_float(active_ref_radius, 0.0)
     active_ref_radius = min(50.0, max(0.5, active_ref_radius if active_ref_radius > 0 else 5.0))
 
-    q_comp = st.query_params.get("map_compare_ids")
-    if q_comp and str(q_comp).strip():
-        st.session_state["tab2_compare_ids"] = [x.strip() for x in str(q_comp).split(",") if x.strip()]
+    if "tab2_compare_ids" not in st.session_state:
+        q_comp = st.query_params.get("map_compare_ids")
+        if q_comp and str(q_comp).strip():
+            st.session_state["tab2_compare_ids"] = [x.strip() for x in str(q_comp).split(",") if x.strip()]
 
     # Auto-resolve active_ref_prop
-    q_id = st.query_params.get("map_ref_id") or st.session_state.get("tab2_search_prop_id")
+    if "tab2_search_prop_id" in st.session_state:
+        q_id = st.session_state.get("tab2_search_prop_id")
+    else:
+        q_id = st.query_params.get("map_ref_id")
     if q_id and df_raw is not None and not df_raw.empty and 'รหัสทรัพย์' in df_raw.columns:
         clean_id = str(q_id).strip()
         if active_ref_prop is None or str(active_ref_prop.get('รหัสทรัพย์', '')).strip().lower() != clean_id.lower():
@@ -478,7 +366,7 @@ def resolve_tab2_sync_and_filter_state(
                 active_ref_prop = found.iloc[0].to_dict()
                 st.session_state["tab2_ref_prop"] = active_ref_prop
                 st.session_state["tab2_search_prop_id"] = clean_id
-    elif not q_id and not st.session_state.get("tab2_search_prop_id"):
+    elif not q_id:
         active_ref_prop = None
         st.session_state["tab2_search_prop_id"] = ""
         st.session_state.pop("tab2_ref_prop", None)
@@ -489,12 +377,11 @@ def resolve_tab2_sync_and_filter_state(
         active_price_ref_prop = None
         st.session_state["tab2_price_center_id"] = ""
         st.session_state.pop("tab2_price_ref_prop", None)
-        try:
-            st.query_params.pop("map_price_ref_id", None)
-        except Exception:
-            pass
     else:
-        q_price_id = st.query_params.get("map_price_ref_id") or st.session_state.get("tab2_price_center_id")
+        if "tab2_price_center_id" in st.session_state:
+            q_price_id = st.session_state.get("tab2_price_center_id")
+        else:
+            q_price_id = st.query_params.get("map_price_ref_id")
         if q_price_id and df_raw is not None and not df_raw.empty and 'รหัสทรัพย์' in df_raw.columns:
             clean_price_id = str(q_price_id).strip()
             if active_price_ref_prop is None or str(active_price_ref_prop.get('รหัสทรัพย์', '')).strip().lower() != clean_price_id.lower():
@@ -503,48 +390,56 @@ def resolve_tab2_sync_and_filter_state(
                     active_price_ref_prop = found_p.iloc[0].to_dict()
                     st.session_state["tab2_price_ref_prop"] = active_price_ref_prop
                     st.session_state["tab2_price_center_id"] = clean_price_id
-        elif not q_price_id and not st.session_state.get("tab2_price_center_id"):
+        elif not q_price_id:
             active_price_ref_prop = None
             st.session_state["tab2_price_center_id"] = ""
             st.session_state.pop("tab2_price_ref_prop", None)
 
-    # 2. Extract and resolve all current map filters
-    q_prov = st.query_params.get("map_prov", None)
-    if q_prov and str(q_prov).strip() not in ("ALL", "__ALL__", "all", "", "-"):
-        active_prov = [str(q_prov).strip()]
-        st.session_state["tab2_filter_provinces"] = active_prov
-    elif q_prov in ("ALL", "__ALL__", "all", "-"):
-        active_prov = []
-        st.session_state["tab2_filter_provinces"] = []
-    else:
+    # 2. Extract and resolve all current map filters (preferring session_state once initialized)
+    if "tab2_filter_provinces" in st.session_state:
         active_prov = st.session_state.get("tab2_filter_provinces", [])
-
-    q_dist = st.query_params.get("map_dist", None)
-    if active_prov and q_dist and str(q_dist).strip() not in ("ALL", "__ALL__", "all", "", "-"):
-        active_dist = [str(q_dist).strip()]
-        st.session_state["tab2_filter_districts"] = active_dist
-    elif q_dist in ("ALL", "__ALL__", "all", "-"):
-        active_dist = []
-        st.session_state["tab2_filter_districts"] = []
     else:
+        q_prov = st.query_params.get("map_prov", None)
+        if q_prov and str(q_prov).strip() not in ("ALL", "__ALL__", "all", "", "-"):
+            active_prov = [str(q_prov).strip()]
+            st.session_state["tab2_filter_provinces"] = active_prov
+        else:
+            active_prov = []
+            st.session_state["tab2_filter_provinces"] = []
+
+    if "tab2_filter_districts" in st.session_state:
         active_dist = st.session_state.get("tab2_filter_districts", []) if active_prov else []
-
-    q_subdist = st.query_params.get("map_subdist", None)
-    if active_prov and active_dist and q_subdist and str(q_subdist).strip() not in ("ALL", "__ALL__", "all", "", "-"):
-        active_subdist = [str(q_subdist).strip()]
-        st.session_state["tab2_filter_subdistricts"] = active_subdist
-    elif q_subdist in ("ALL", "__ALL__", "all", "-"):
-        active_subdist = []
-        st.session_state["tab2_filter_subdistricts"] = []
     else:
+        q_dist = st.query_params.get("map_dist", None)
+        if active_prov and q_dist and str(q_dist).strip() not in ("ALL", "__ALL__", "all", "", "-"):
+            active_dist = [str(q_dist).strip()]
+            st.session_state["tab2_filter_districts"] = active_dist
+        else:
+            active_dist = []
+            st.session_state["tab2_filter_districts"] = []
+
+    if "tab2_filter_subdistricts" in st.session_state:
         active_subdist = st.session_state.get("tab2_filter_subdistricts", []) if (active_prov and active_dist) else []
-
-    q_proj = st.query_params.get("map_proj", None)
-    if q_proj and str(q_proj).strip() not in ("ALL", "__ALL__", "all", ""):
-        active_proj = str(q_proj).strip()
     else:
+        q_subdist = st.query_params.get("map_subdist", None)
+        if active_prov and active_dist and q_subdist and str(q_subdist).strip() not in ("ALL", "__ALL__", "all", "", "-"):
+            active_subdist = [str(q_subdist).strip()]
+            st.session_state["tab2_filter_subdistricts"] = active_subdist
+        else:
+            active_subdist = []
+            st.session_state["tab2_filter_subdistricts"] = []
+
+    if "tab2_filter_projects" in st.session_state:
         proj_list = st.session_state.get("tab2_filter_projects", [])
         active_proj = ",".join(proj_list) if proj_list else None
+    else:
+        q_proj = st.query_params.get("map_proj", None)
+        if q_proj and str(q_proj).strip() not in ("ALL", "__ALL__", "all", ""):
+            active_proj = str(q_proj).strip()
+            st.session_state["tab2_filter_projects"] = [x.strip() for x in active_proj.split(",") if x.strip()]
+        else:
+            active_proj = None
+            st.session_state["tab2_filter_projects"] = []
 
     if "tab2_map_filter_cos" in st.session_state:
         map_cos = st.session_state.get("tab2_map_filter_cos", [])

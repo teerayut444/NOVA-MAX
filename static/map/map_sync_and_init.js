@@ -1117,7 +1117,7 @@ function clearReferencePoint() {
   }
 
   closePropertyCard();
-  applyInMapFilters();
+  applyInMapFilters(true);
   scheduleParentKpiUpdate();
 
   try {
@@ -1128,9 +1128,6 @@ function clearReferencePoint() {
     u.searchParams.delete('map_price_ref_id');
     u.searchParams.set('map_ref_cleared', '1');
     window.parent.history.replaceState({}, '', u.toString());
-    try {
-      window.parent.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-    } catch(pe) {}
   } catch(e) {}
   triggerStreamlitSync({
     prov: (currentSelectedProv && currentSelectedProv !== '__ALL__') ? currentSelectedProv.trim() : '',
@@ -1155,7 +1152,7 @@ function confirmPendingReferencePoint() {
     if (bubble) bubble.style.display = 'none';
     const bar = document.getElementById('ref-confirm-bar');
     if (bar) bar.style.display = 'none';
-    setReferencePoint(lon, lat, true);
+    setReferencePoint(lon, lat, true, false);
 
     // Synchronize to Streamlit analytics cards and table below map
     try {
@@ -1267,6 +1264,9 @@ async function initMap() {
         }
         if (pBound.subdistricts && (!window.ALL_SUBDISTRICTS_BOUNDARIES || Object.keys(window.ALL_SUBDISTRICTS_BOUNDARIES).length === 0)) {
           window.ALL_SUBDISTRICTS_BOUNDARIES = pBound.subdistricts;
+        }
+        if (currentSelectedProv && currentSelectedProv !== '__ALL__' && (!boundaryGeoJson || !boundaryGeoJson.features)) {
+          try { updateDistrictSubdistrictBoundaries(); } catch(e) {}
         }
       }
 

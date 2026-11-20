@@ -769,11 +769,11 @@
         } catch (_e) {}
       }
 
-      const initRefLatStr = "INIT_REF_LAT_PLACEHOLDER";
-      const initRefLonStr = "INIT_REF_LON_PLACEHOLDER";
-      const initRadiusStr = "INIT_RADIUS_PLACEHOLDER";
-      const initRefIdStr = "INIT_REF_ID_PLACEHOLDER";
-      const initPriceRefIdStr = "INIT_PRICE_REF_ID_PLACEHOLDER";
+      let initRefLatStr = "INIT_REF_LAT_PLACEHOLDER";
+      let initRefLonStr = "INIT_REF_LON_PLACEHOLDER";
+      let initRadiusStr = "INIT_RADIUS_PLACEHOLDER";
+      let initRefIdStr = "INIT_REF_ID_PLACEHOLDER";
+      let initPriceRefIdStr = "INIT_PRICE_REF_ID_PLACEHOLDER";
       let currentPriceCenterId = "";
       try {
         if (initPriceRefIdStr && initPriceRefIdStr !== ("INIT_PRICE_REF_ID_" + "PLACEHOLDER")) {
@@ -821,6 +821,14 @@
       try {
         if (!_forceFreshReset && window.parent) {
           const u = new URL(window.parent.location.href);
+          if (u.searchParams.get('map_ref_cleared') !== '1') {
+            const rLat = u.searchParams.get('map_ref_lat');
+            const rLon = u.searchParams.get('map_ref_lon');
+            if (!initRefLatStr && rLat && rLat.trim()) initRefLatStr = rLat.trim();
+            if (!initRefLonStr && rLon && rLon.trim()) initRefLonStr = rLon.trim();
+          }
+          const rRad = u.searchParams.get('map_ref_radius');
+          if ((!initRadiusStr || initRadiusStr === '5.0') && rRad && rRad.trim()) initRadiusStr = rRad.trim();
           const p = u.searchParams.get('map_prov');
           if (p && p.trim() && p !== '__ALL__') currentSelectedProv = p.trim();
           const d = u.searchParams.get('map_dist');
@@ -828,7 +836,10 @@
           const s = u.searchParams.get('map_subdist');
           if (s && s.trim() && s !== '__ALL__') currentSelectedSubdist = s.trim();
           const rid = u.searchParams.get('map_ref_id');
-          if (rid && rid.trim()) currentRefId = rid.trim();
+          if (rid && rid.trim()) {
+            currentRefId = rid.trim();
+            if (!initRefIdStr) initRefIdStr = rid.trim();
+          }
         }
       } catch(e) {}
 

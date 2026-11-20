@@ -93,46 +93,31 @@ def _inject_dynamic_map_placeholders(
     html_str,
     *,
     is_dark_mode,
-    active_ref_lat,
-    active_ref_lon,
-    active_ref_radius,
-    search_prop_id,
-    effective_provs,
-    effective_dists,
-    effective_subdists,
-    current_prov_str,
+    active_ref_lat=None,
+    active_ref_lon=None,
+    active_ref_radius=5.0,
+    search_prop_id="",
+    effective_provs=None,
+    effective_dists=None,
+    effective_subdists=None,
+    current_prov_str="",
     payload_url="",
 ):
-    """Injects runtime session/filter placeholders atomically in a single regex pass."""
+    """Injects runtime session placeholders while keeping map HTML invariant across in-map filter/pin clicks so Streamlit never reloads the iframe."""
     body_cls = "dark-theme" if is_dark_mode else ""
-    init_ref_id = str(
-        st.session_state.get("tab2_search_prop_id") or st.query_params.get("map_ref_id") or search_prop_id or ""
-    ).strip()
-    init_price_ref_id = str(
-        st.session_state.get("tab2_price_center_id") or st.query_params.get("map_price_ref_id") or ""
-    ).strip()
-    active_comp_ids = st.session_state.get("tab2_compare_ids", [])
-    comp_ids_json = _safe_json_inline(active_comp_ids)
-
-    boundary_obj = (
-        get_boundary_geojson_features(effective_provs, effective_dists, effective_subdists)
-        if effective_provs
-        else None
-    )
-    boundary_json = _safe_json_inline(boundary_obj) if boundary_obj else "null"
     day_str = _today_th_str()
     mtime_tok = f"{get_data_mtime_token(get_data_mtime())}|{day_str}"
 
     replacements = {
         "BODY_CLASS_PLACEHOLDER": body_cls,
-        "INIT_REF_LAT_PLACEHOLDER": _safe_float_str(active_ref_lat, ""),
-        "INIT_REF_LON_PLACEHOLDER": _safe_float_str(active_ref_lon, ""),
-        "INIT_RADIUS_PLACEHOLDER": _safe_float_str(active_ref_radius, "5.0"),
-        "INIT_REF_ID_PLACEHOLDER": _safe_js_inner_str(init_ref_id),
-        "INIT_PRICE_REF_ID_PLACEHOLDER": _safe_js_inner_str(init_price_ref_id),
-        "INIT_COMPARE_IDS_PLACEHOLDER": comp_ids_json,
-        "BOUNDARY_GEOJSON_PLACEHOLDER": boundary_json,
-        "CURRENT_PROV_PLACEHOLDER": _safe_js_inner_str(current_prov_str),
+        "INIT_REF_LAT_PLACEHOLDER": "",
+        "INIT_REF_LON_PLACEHOLDER": "",
+        "INIT_RADIUS_PLACEHOLDER": "5.0",
+        "INIT_REF_ID_PLACEHOLDER": "",
+        "INIT_PRICE_REF_ID_PLACEHOLDER": "",
+        "INIT_COMPARE_IDS_PLACEHOLDER": "[]",
+        "BOUNDARY_GEOJSON_PLACEHOLDER": "null",
+        "CURRENT_PROV_PLACEHOLDER": "",
         "CUSTOM_COMPANY_COLORS_PLACEHOLDER": _build_custom_company_colors_str(),
         "DATA_MTIME_PLACEHOLDER": _safe_js_inner_str(mtime_tok),
         "CACHE_BUILDER_VER_PLACEHOLDER": _safe_js_inner_str(get_cache_builder_version()),

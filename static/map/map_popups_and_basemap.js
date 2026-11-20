@@ -968,7 +968,7 @@ function setCardAsReferencePoint() {
     if (btnLoc) btnLoc.classList.toggle('active', false);
     if (btnRad) btnRad.classList.toggle('active', true);
   }
-  setReferencePoint(lon, lat, true);
+  setReferencePoint(lon, lat, true, false);
   showPropertyCard(activePropertyData, false);
 
   try {
@@ -991,9 +991,6 @@ function setCardAsReferencePoint() {
       u.searchParams.set('map_subdist', activePropertyData._subdistrict);
     }
     window.parent.history.replaceState({}, '', u.toString());
-    try {
-      window.parent.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-    } catch(pe) {}
   } catch(e) {
     console.warn('Sync to Streamlit error:', e);
   }
@@ -1045,7 +1042,7 @@ function setCardAsPriceCenter() {
     if (btnLoc) btnLoc.classList.toggle('active', false);
     if (btnRad) btnRad.classList.toggle('active', true);
   }
-  setReferencePoint(lon, lat, true);
+  setReferencePoint(lon, lat, true, false);
   showPropertyCard(activePropertyData, false);
 
   showToast(`<i class="fa-solid fa-scale-balanced" style="color:#e11d48; margin-right:6px;"></i>ตั้งเป็นศูนย์กลางราคา: <b>${escapeHtml(id)}</b> (รัศมี ${formatRadiusDisplay(currentRadiusKm)})`);
@@ -1070,9 +1067,6 @@ function setCardAsPriceCenter() {
       u.searchParams.set('map_subdist', activePropertyData._subdistrict);
     }
     window.parent.history.replaceState({}, '', u.toString());
-    try {
-      window.parent.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-    } catch(pe) {}
   } catch(e) {
     console.warn('Sync to Streamlit error:', e);
   }

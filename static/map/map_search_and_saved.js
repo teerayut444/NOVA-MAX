@@ -1124,9 +1124,13 @@ function loadBoundaryScriptsInBackground() {
       window.NovaMapCache.storeParentBoundaryCache('provinces', window.ALL_PROVINCES_BOUNDARIES);
     }
     if (currentSelectedProv && currentSelectedProv !== '__ALL__') {
+      const hadBoundaryBefore = !!(boundaryGeoJson && boundaryGeoJson.features && boundaryGeoJson.features.length > 0);
       try { updateDistrictSubdistrictBoundaries(); } catch(e) {}
       try { initDistrictDropdown(); } catch(e) {}
       try { updateSvgBoundaries(); } catch(e) {}
+      if (!hadBoundaryBefore && !referencePoint) {
+        try { flyToCurrentLocation(); } catch(e) {}
+      }
     }
   })();
 
@@ -1288,7 +1292,7 @@ function onMapProvinceChange(prov) {
     syncComboboxInputs();
 
     // 3. Immediately filter map points and update legend in memory (0.01 sec)
-    applyInMapFilters();
+    applyInMapFilters(true);
 
     // 4. Immediately redraw SVG boundaries
     updateSvgBoundaries();
@@ -1322,9 +1326,6 @@ function onMapProvinceChange(prov) {
         u.searchParams.delete('map_proj');
       }
       window.parent.history.replaceState({}, '', u.toString());
-      try {
-        window.parent.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-      } catch(pe) {}
     }
   } catch(e) {
     console.warn('onMapProvinceChange error:', e);
@@ -1390,7 +1391,7 @@ function onMapDistrictChange(dist) {
     syncComboboxInputs();
 
     // 3. Immediately filter map points in memory
-    applyInMapFilters();
+    applyInMapFilters(true);
 
     // 4. Immediately redraw SVG boundaries
     updateSvgBoundaries();
@@ -1416,9 +1417,6 @@ function onMapDistrictChange(dist) {
         u.searchParams.delete('map_proj');
       }
       window.parent.history.replaceState({}, '', u.toString());
-      try {
-        window.parent.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-      } catch(pe) {}
     }
   } catch(e) {
     console.warn('onMapDistrictChange error:', e);
@@ -1476,7 +1474,7 @@ function onMapSubdistrictChange(subdist) {
     syncComboboxInputs();
 
     // 1. Immediately filter map points in memory
-    applyInMapFilters();
+    applyInMapFilters(true);
 
     // 2. Immediately redraw SVG boundaries (highlights selected subdistrict polygon)
     updateSvgBoundaries();
@@ -1501,9 +1499,6 @@ function onMapSubdistrictChange(subdist) {
         u.searchParams.delete('map_proj');
       }
       window.parent.history.replaceState({}, '', u.toString());
-      try {
-        window.parent.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-      } catch(pe) {}
     }
   } catch(e) {
     console.warn('onMapSubdistrictChange error:', e);
@@ -1918,10 +1913,10 @@ function searchPropertyIdAsReference(idStr) {
 
     // 4. Display according to current pin mode (radius vs location)
     if (mapPinMode === 'radius') {
-      setReferencePoint(lon, lat, true);
+      setReferencePoint(lon, lat, true, false);
     } else {
       referencePoint = null;
-      applyInMapFilters();
+      applyInMapFilters(true);
       updateDeckLayers();
       updateSvgBoundaries();
       smoothFlyTo(lon, lat, 14.5, 1200);
@@ -1950,9 +1945,6 @@ function searchPropertyIdAsReference(idStr) {
           u.searchParams.set('map_subdist', match._subdistrict);
         }
         window.parent.history.replaceState({}, '', u.toString());
-        try {
-          window.parent.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-        } catch(pe) {}
       }
     } catch(e) {}
     triggerStreamlitSync({
