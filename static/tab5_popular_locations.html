@@ -1724,6 +1724,48 @@
         }, 200);
     });
 
+    function resolveStaticUrlCandidates(rawUrl) {
+        if (!rawUrl) return [];
+        const clean = String(rawUrl).replace(/^(\.\/|\/)+/, '').replace(/^~\/\+\//, '');
+        const out = [];
+        try {
+            const pLoc = (window.parent && window.parent.location && window.parent.location.origin && window.parent.location.origin !== 'null')
+                ? window.parent.location
+                : window.location;
+            let basePath = (pLoc && pLoc.pathname) ? pLoc.pathname : '/';
+            basePath = basePath.replace(/\/component\/.*$/, '/').replace(/\/index\.html$/, '/');
+            if (!basePath.endsWith('/')) basePath += '/';
+            if (pLoc && pLoc.origin && pLoc.origin !== 'null') {
+                out.push(pLoc.origin + basePath + clean);
+                if (basePath !== '/') {
+                    out.push(pLoc.origin + '/~/+/' + clean);
+                    out.push(pLoc.origin + '/' + clean);
+                }
+            }
+            out.push(basePath + clean);
+        } catch (_e) {}
+        out.push('/~/+/' + clean);
+        out.push('/' + clean);
+        out.push(clean);
+        return Array.from(new Set(out));
+    }
+
+    async function fetchStaticCandidate(rawUrl) {
+        const cands = resolveStaticUrlCandidates(rawUrl);
+        let lastStatus = 0;
+        for (let i = 0; i < cands.length; i++) {
+            try {
+                const r = await fetch(cands[i], { credentials: 'same-origin' });
+                lastStatus = r.status;
+                const ct = (r.headers && r.headers.get('content-type') || '').toLowerCase();
+                if (r.ok && !ct.includes('text/html')) {
+                    return r;
+                }
+            } catch (_e) {}
+        }
+        throw new Error('HTTP ' + lastStatus);
+    }
+
     // Async hydration for offloaded tokenized .gz projects payload & static province outer GeoJSON
     async function loadParentOrFetchGeo() {
         try {
@@ -1733,8 +1775,8 @@
                 mountProvOuterGeoJson(pHost.__NOVA_TAB5_GEO_CACHE__);
                 return;
             }
-            const resp = await fetch(PROV_GEO_URL, { credentials: 'same-origin' });
-            if (resp.ok) {
+            const resp = await fetchStaticCandidate(PROV_GEO_URL);
+            if (resp && resp.ok) {
                 const geoObj = await resp.json();
                 if (pHost) pHost.__NOVA_TAB5_GEO_CACHE__ = geoObj;
                 mountProvOuterGeoJson(geoObj);
@@ -1757,8 +1799,7 @@
             if (pHost && pHost.__NOVA_TAB5_CACHE__ && pHost.__NOVA_TAB5_CACHE__.url === TAB5_PAYLOAD_URL && Array.isArray(pHost.__NOVA_TAB5_CACHE__.projects)) {
                 ALL_PROJECTS = pHost.__NOVA_TAB5_CACHE__.projects;
             } else {
-                const resp = await fetch(TAB5_PAYLOAD_URL, { credentials: 'same-origin' });
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const resp = await fetchStaticCandidate(TAB5_PAYLOAD_URL);
                 let txt = '';
                 if (typeof DecompressionStream === 'function' && resp.body && typeof resp.body.pipeThrough === 'function') {
                     const ds = new DecompressionStream('gzip');

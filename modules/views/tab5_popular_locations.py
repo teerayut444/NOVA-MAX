@@ -35,12 +35,46 @@ _SLIM_PROJECT_KEYS = (
 )
 
 
-@st.cache_data(show_spinner=False, max_entries=2)
+@st.cache_resource(show_spinner=False, max_entries=2)
 def _load_tab5_html_template(template_mtime: float) -> str:
-    """Reads and caches static/tab5_popular_locations.html keyed by file mtime."""
+    """Reads and caches static/tab5_popular_locations.html, inlining Leaflet & FontAwesome for Cloud (/~/+/) compatibility."""
     _ = template_mtime
+    from modules.config.theme import get_fa_solid_data_uri
+
     with open(_TAB5_TEMPLATE_PATH, "r", encoding="utf-8") as f:
-        return f.read()
+        html_str = f.read()
+
+    html_str = html_str.replace("/app/static/fa-solid-900.ttf", get_fa_solid_data_uri())
+
+    def _read_static(rel_p):
+        p = os.path.join(_STATIC_DIR, rel_p)
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as fp:
+                return fp.read()
+        return ""
+
+    leaflet_css = _read_static(os.path.join("vendor", "leaflet", "leaflet.css"))
+    if leaflet_css:
+        html_str = html_str.replace(
+            '<link rel="stylesheet" href="/app/static/vendor/leaflet/leaflet.css" />',
+            f"<style>\n{leaflet_css}\n</style>",
+        )
+
+    leaflet_js = _read_static(os.path.join("vendor", "leaflet", "leaflet.js"))
+    if leaflet_js:
+        html_str = html_str.replace(
+            '<script src="/app/static/vendor/leaflet/leaflet.js"></script>',
+            f"<script>\n{leaflet_js}\n</script>",
+        )
+
+    heat_js = _read_static("leaflet-heat.js")
+    if heat_js:
+        html_str = html_str.replace(
+            '<script src="/app/static/leaflet-heat.js"></script>',
+            f"<script>\n{heat_js}\n</script>",
+        )
+
+    return html_str
 
 
 def _render_tab5_template(replacements: dict[str, str]) -> str:
@@ -57,12 +91,14 @@ def _strip_unused_project_fields(projects):
 
 
 def get_static_tab5_payload_meta(data_mtime=None, th_date=None):
-    """Returns 128-bit tokenized static payload metadata for Tab 5 Livinginsider projects."""
+    """Returns deterministic 128-bit tokenized static payload metadata for Tab 5 Livinginsider projects."""
+    from modules.services.data_loader import get_data_size_token
     mtime_token = get_data_mtime_token(data_mtime)
     day_str = str(th_date or _today_th_str())
+    size_token = get_data_size_token()
     token_hex = hmac.new(
         _SERVER_PAYLOAD_SECRET,
-        f"tab5|{mtime_token}|{day_str}".encode("utf-8"),
+        f"tab5|sz={size_token}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()[:32]
     filename = f"tab5_payload_{token_hex}.gz"

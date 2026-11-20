@@ -89,14 +89,33 @@ def update_welcome_progress(placeholder, pct, status_text):
     """)
 
 
+@st.cache_resource(show_spinner=False)
+def _load_prewarmer_inline_scripts():
+    """Reads d3.js and map_cache_builder.js once so the welcome prewarmer never 404s under Cloud (/~/+/)."""
+    scripts = []
+    for rel in ("static/d3.js", "static/map_cache_builder.js"):
+        p = os.path.join(_BASE_DIR, rel)
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    scripts.append(f.read())
+            except Exception:
+                pass
+    return "\n".join(scripts)
+
+
 def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
     """Renders a hidden 0px runner that warms window.parent.__NOVA_MAP_CACHE__ from the tokenized .gz payload."""
     mtime_token = f"{payload_meta['mtime']}|{payload_meta['th_date']}"
     payload_url = payload_meta["url"]
+    inline_core_js = _load_prewarmer_inline_scripts()
     prewarm_html = f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
 <body>
+<script>
+{inline_core_js}
+</script>
 <script>
 (function () {{
   const MTIME_TOKEN = {json.dumps(mtime_token)};
@@ -148,14 +167,23 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
   }}
 
   function loadScript(src) {{
-    return new Promise((resolve) => {{
-      const s = document.createElement('script');
-      s.src = src;
-      s.async = true;
-      s.onload = () => resolve(true);
-      s.onerror = () => resolve(false);
-      document.head.appendChild(s);
-    }});
+    const cands = (typeof window.resolveStaticUrlCandidates === 'function' && String(src).includes('app/static'))
+      ? window.resolveStaticUrlCandidates(src)
+      : [src];
+    return (async () => {{
+      for (let i = 0; i < cands.length; i++) {{
+        const ok = await new Promise((resolve) => {{
+          const s = document.createElement('script');
+          s.src = cands[i];
+          s.async = true;
+          s.onload = () => resolve(true);
+          s.onerror = () => resolve(false);
+          document.head.appendChild(s);
+        }});
+        if (ok) return true;
+      }}
+      return false;
+    }})();
   }}
 
   function hasValidParentCacheFast() {{
@@ -176,20 +204,17 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
     try {{
       if (hasValidParentCacheFast()) {{
         clearTimeout(safetyTimer);
-        updateParentProgress(100, '✓ โหลดข้อมูลครบทั้ง 5 แท็บ และแผนที่พร้อมใช้งาน');
+        updateParentProgress(100, '✓ โหลดข้อมูลและแผนที่พร้อมใช้งาน');
         setTimeout(triggerPortalEnter, 40);
         return;
       }}
 
-      const boundaryPromise = Promise.all([
-        loadScript('/app/static/provinces_geojson.js?v=20261001'),
-        loadScript('/app/static/subdistricts_geojson.js?v=20261001')
-      ]).catch(() => null);
-
-      await Promise.all([
-        loadScript('/app/static/d3.js'),
-        loadScript('/app/static/map_cache_builder.js?v=' + encodeURIComponent(BUILDER_VER))
-      ]);
+      if (!window.NovaMapCache) {{
+        await Promise.all([
+          loadScript('/app/static/d3.js'),
+          loadScript('/app/static/map_cache_builder.js?v=' + encodeURIComponent(BUILDER_VER))
+        ]);
+      }}
 
       if (window.NovaMapCache && typeof window.NovaMapCache.fetchAndBuildParentCache === 'function' && PAYLOAD_URL) {{
         await window.NovaMapCache.fetchAndBuildParentCache(
@@ -199,18 +224,8 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
         );
       }}
 
-      await Promise.race([boundaryPromise, new Promise((r) => setTimeout(r, 250))]);
-      if (window.NovaMapCache) {{
-        if (window.ALL_PROVINCES_BOUNDARIES) {{
-          window.NovaMapCache.storeParentBoundaryCache('provinces', window.ALL_PROVINCES_BOUNDARIES);
-        }}
-        if (window.ALL_SUBDISTRICTS_BOUNDARIES) {{
-          window.NovaMapCache.storeParentBoundaryCache('subdistricts', window.ALL_SUBDISTRICTS_BOUNDARIES);
-        }}
-      }}
-
       clearTimeout(safetyTimer);
-      updateParentProgress(100, '✓ โหลดข้อมูลครบทั้ง 5 แท็บ และแผนที่พร้อมใช้งาน');
+      updateParentProgress(100, '✓ โหลดข้อมูลและแผนที่พร้อมใช้งาน');
       setTimeout(triggerPortalEnter, 80);
     }} catch (err) {{
       console.warn('Browser map prewarm fallback:', err);
@@ -409,23 +424,10 @@ def render_welcome_screen():
         cur_mtime = get_data_mtime()
         builder_ver = get_cache_builder_version()
         payload_meta = get_static_map_payload_meta(data_mtime=cur_mtime)
-        payload_preload_tag = (
-            f'<link rel="preload" href="{payload_meta["url"]}" as="fetch" crossorigin="anonymous">'
-            if payload_meta and os.path.exists(payload_meta["path"])
-            else ""
-        )
-        preload_links_html = f"""
-<!-- Preload heavy map & chart JS libraries into browser HTTP cache during Welcome Screen -->
-<link rel="preload" href="/app/static/d3.js" as="script">
-<link rel="preload" href="/app/static/map_cache_builder.js?v={builder_ver}" as="script">
-{payload_preload_tag}
-<link rel="preload" href="/app/static/deck.gl.js" as="script">
-<link rel="preload" href="/app/static/provinces_geojson.js?v=20261001" as="script">
-<link rel="preload" href="/app/static/subdistricts_geojson.js?v=20261001" as="script">
-<link rel="preload" href="/app/static/vendor/leaflet/leaflet.css" as="style">
-<link rel="preload" href="/app/static/vendor/leaflet/leaflet.js" as="script">
-<link rel="preload" href="/app/static/leaflet-heat.js" as="script">
-"""
+        preload_links_html = ""
+
+    from modules.config.theme import get_inlined_fa_local_css
+    fa_inlined_css = get_inlined_fa_local_css()
 
     stage_w, stage_h, img_size, title_size, title_margin = (
         ("320px", "310px", "300px", "5.2rem", "18px 0 4px 16px")
@@ -439,10 +441,9 @@ def render_welcome_screen():
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&family=Outfit:wght@600;700;800;900&family=Noto+Sans+Thai:wght@500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/app/static/fa-local.css">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&family=Outfit:wght@600;700;800;900&family=Noto+Sans+Thai:wght@500;600;700;800&display=swap');
-@import url('/app/static/fa-local.css');
+{fa_inlined_css}
 header[data-testid="stHeader"] {{
     background: transparent !important;
 }}

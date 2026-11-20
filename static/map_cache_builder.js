@@ -847,6 +847,32 @@
     );
   }
 
+  function resolveStaticUrlCandidates(rawUrl) {
+    if (!rawUrl) return [];
+    const clean = String(rawUrl).replace(/^(\.\/|\/)+/, '').replace(/^~\/\+\//, '');
+    const out = [];
+    try {
+      const pLoc = (global.parent && global.parent.location && global.parent.location.origin && global.parent.location.origin !== 'null')
+        ? global.parent.location
+        : global.location;
+      let basePath = (pLoc && pLoc.pathname) ? pLoc.pathname : '/';
+      basePath = basePath.replace(/\/component\/.*$/, '/').replace(/\/index\.html$/, '/');
+      if (!basePath.endsWith('/')) basePath += '/';
+      if (pLoc && pLoc.origin && pLoc.origin !== 'null') {
+        out.push(pLoc.origin + basePath + clean);
+        if (basePath !== '/') {
+          out.push(pLoc.origin + '/~/+/' + clean);
+          out.push(pLoc.origin + '/' + clean);
+        }
+      }
+      out.push(basePath + clean);
+    } catch (e) {}
+    out.push('/~/+/' + clean);
+    out.push('/' + clean);
+    out.push(clean);
+    return Array.from(new Set(out));
+  }
+
   async function fetchAndBuildParentCache(mtimeToken, payloadUrl, onProgress) {
     const mtimeStr = mtimeToken ? String(mtimeToken) : '';
     const existing = getValidParentCache(mtimeStr);
@@ -872,9 +898,22 @@
       if (typeof DecompressionStream !== 'function') {
         throw new Error('เบราว์เซอร์รุ่นนี้ไม่รองรับ DecompressionStream กรุณาอัปเดต Chrome/Edge');
       }
-      const resp = await fetch(payloadUrl, { credentials: 'same-origin' });
-      if (!resp.ok) {
-        throw new Error('ไม่สามารถโหลดไฟล์แคชข้อมูลแผนที่ได้ (HTTP ' + resp.status + ')');
+      const candidates = resolveStaticUrlCandidates(payloadUrl);
+      let resp = null;
+      let lastStatus = 0;
+      for (let i = 0; i < candidates.length; i++) {
+        try {
+          const r = await fetch(candidates[i], { credentials: 'same-origin' });
+          lastStatus = r.status;
+          const ct = (r.headers && r.headers.get('content-type') || '').toLowerCase();
+          if (r.ok && !ct.includes('text/html')) {
+            resp = r;
+            break;
+          }
+        } catch (_err) {}
+      }
+      if (!resp) {
+        throw new Error('ไม่สามารถโหลดไฟล์แคชข้อมูลแผนที่ได้ (HTTP ' + lastStatus + ')');
       }
       let jsonText = '';
       if (resp.body && typeof resp.body.pipeThrough === 'function') {
@@ -914,6 +953,7 @@
   global.normalizeProjectKeyword = normalizeProjectKeyword;
   global.decompressGzip = decompressGzip;
   global.buildSpatialGrid = buildSpatialGrid;
+  global.resolveStaticUrlCandidates = resolveStaticUrlCandidates;
 
   global.NovaMapCache = {
     GRID_CELL_SIZE: GRID_CELL_SIZE,
@@ -928,6 +968,7 @@
     buildAndStoreParentCache: buildAndStoreParentCache,
     fetchAndBuildParentCache: fetchAndBuildParentCache,
     getParentBoundaryCache: getParentBoundaryCache,
-    storeParentBoundaryCache: storeParentBoundaryCache
+    storeParentBoundaryCache: storeParentBoundaryCache,
+    resolveStaticUrlCandidates: resolveStaticUrlCandidates
   };
 })(typeof window !== 'undefined' ? window : globalThis);

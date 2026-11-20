@@ -76,11 +76,25 @@ def _safe_hover_label(val):
     return html.escape(str(val or ""), quote=True).replace("%", "&#37;")
 
 
+@st.cache_resource(show_spinner=False)
 def _highcharts_script_tags():
-    """Local-First Highcharts script tags served directly from /app/static/vendor/highcharts/ (zero CDN delay)."""
+    """Inlines local Highcharts & Highcharts-3D scripts so Tab 3 charts work under Cloud (/~/+/) without 404."""
+    import os
+    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    tags = []
+    for rel in ("static/vendor/highcharts/highcharts.js", "static/vendor/highcharts/highcharts-3d.js"):
+        p = os.path.join(root_dir, rel)
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    tags.append(f"<script>\n{f.read()}\n</script>")
+            except Exception:
+                pass
+    if tags:
+        return "\n".join(tags)
     return (
-        '<script src="/app/static/vendor/highcharts/highcharts.js"></script>\n'
-        '        <script src="/app/static/vendor/highcharts/highcharts-3d.js"></script>'
+        '<script src="https://code.highcharts.com/highcharts.js"></script>\n'
+        '<script src="https://code.highcharts.com/highcharts-3d.js"></script>'
     )
 
 

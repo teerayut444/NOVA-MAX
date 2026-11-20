@@ -549,13 +549,52 @@ def get_sam_project_options(_df, cache_key=None, return_meta=False):
     return sorted_projs, labels
 
 
-@st.cache_data(show_spinner=False, max_entries=4)
+@st.cache_resource(show_spinner=False, max_entries=2)
 def get_base_map_html(mtime=None):
-    """Load and cache the base HTML template for Leaflet/Deck.gl interactive map."""
+    """Load and cache the base HTML template for Deck.gl interactive map, inlining CSS/JS for Cloud (/~/+/) compatibility."""
     try:
+        from modules.config.theme import get_inlined_fa_local_css
+
         tmpl_path = _resolve_root_file("static/map_template.html")
         with open(tmpl_path, "r", encoding="utf-8") as f:
-            return f.read()
+            html_str = f.read()
+
+        def _read_static_text(rel_p):
+            p = _resolve_root_file(rel_p)
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as fp:
+                    return fp.read()
+            return ""
+
+        fa_css = get_inlined_fa_local_css()
+        if fa_css:
+            html_str = html_str.replace(
+                '<link rel="stylesheet" href="/app/static/fa-local.css">',
+                f"<style>\n{fa_css}\n</style>",
+            )
+
+        map_css = _read_static_text("static/map/map_styles.css")
+        if map_css:
+            html_str = html_str.replace(
+                '<link rel="stylesheet" href="/app/static/map/map_styles.css?v=CACHE_BUILDER_VER_PLACEHOLDER">',
+                f"<style>\n{map_css}\n</style>",
+            )
+
+        script_replacements = [
+            ('<script src="/app/static/d3.js"></script>', "static/d3.js"),
+            ('<script src="/app/static/map_cache_builder.js?v=CACHE_BUILDER_VER_PLACEHOLDER"></script>', "static/map_cache_builder.js"),
+            ('<script src="/app/static/deck.gl.js"></script>', "static/deck.gl.js"),
+            ('<script src="/app/static/map/map_popups_and_basemap.js?v=CACHE_BUILDER_VER_PLACEHOLDER"></script>', "static/map/map_popups_and_basemap.js"),
+            ('<script src="/app/static/map/map_search_and_saved.js?v=CACHE_BUILDER_VER_PLACEHOLDER"></script>', "static/map/map_search_and_saved.js"),
+            ('<script src="/app/static/map/map_layers_and_filters.js?v=CACHE_BUILDER_VER_PLACEHOLDER"></script>', "static/map/map_layers_and_filters.js"),
+            ('<script src="/app/static/map/map_sync_and_init.js?v=CACHE_BUILDER_VER_PLACEHOLDER"></script>', "static/map/map_sync_and_init.js"),
+        ]
+        for tag_str, rel_js in script_replacements:
+            js_code = _read_static_text(rel_js)
+            if js_code:
+                html_str = html_str.replace(tag_str, f"<script>\n{js_code}\n</script>")
+
+        return html_str
     except Exception:
         return ""
 

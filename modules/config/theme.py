@@ -1,5 +1,37 @@
+import base64
 import os
 import streamlit as st
+
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+@st.cache_resource(show_spinner=False)
+def get_fa_solid_data_uri() -> str:
+    """Returns a base64 data URI for static/fa-solid-900.ttf so FontAwesome works under any Cloud subpath (/~/+/)."""
+    ttf_path = os.path.join(_ROOT_DIR, "static", "fa-solid-900.ttf")
+    if os.path.exists(ttf_path):
+        try:
+            with open(ttf_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("ascii")
+            return f"data:font/ttf;base64,{b64}"
+        except Exception:
+            pass
+    return "/app/static/fa-solid-900.ttf"
+
+
+@st.cache_resource(show_spinner=False)
+def get_inlined_fa_local_css() -> str:
+    """Returns static/fa-local.css with fa-solid-900.ttf embedded as a data URI (zero external /app/static/ requests)."""
+    fa_css_path = os.path.join(_ROOT_DIR, "static", "fa-local.css")
+    if not os.path.exists(fa_css_path):
+        return ""
+    try:
+        with open(fa_css_path, "r", encoding="utf-8") as f:
+            css = f.read()
+        data_uri = get_fa_solid_data_uri()
+        return css.replace("/app/static/fa-solid-900.ttf", data_uri)
+    except Exception:
+        return ""
 
 def get_root_css_variables(is_dark_mode=False):
     """Construct root CSS custom properties based on theme toggle selection (Emerald Green Palette)."""
@@ -106,53 +138,52 @@ def style_plotly_fig(fig, is_dark_mode=False):
         fig.update_annotations(font=dict(color=font_c, family="Noto Sans Thai, Inter, sans-serif"))
     return fig
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def _read_cached_css_template(css_file: str, mtime: float) -> str:
-    """Reads and caches static CSS template keyed by modification timestamp."""
+    """Reads and caches static CSS template keyed by modification timestamp, embedding Base64 FontAwesome."""
     with open(css_file, "r", encoding="utf-8") as f:
-        return f.read()
+        raw = f.read()
+    return raw.replace("/app/static/fa-solid-900.ttf", get_fa_solid_data_uri())
 
 def load_global_css_template():
     """Loads static CSS template from static/style.css with mtime-based cache invalidation."""
-    css_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "static", "style.css")
+    css_file = os.path.join(_ROOT_DIR, "static", "style.css")
     if os.path.exists(css_file):
         try:
             return _read_cached_css_template(css_file, os.path.getmtime(css_file))
         except Exception:
             with open(css_file, "r", encoding="utf-8") as f:
-                return f.read()
+                return f.read().replace("/app/static/fa-solid-900.ttf", get_fa_solid_data_uri())
     return ""
 
 def inject_global_theme_css(is_dark_mode=False):
-    """Injects Google Fonts (Inter, Noto Sans Thai, Material Symbols), local FontAwesome, root variables, and CSS."""
+    """Injects Google Fonts (Inter, Noto Sans Thai, Material Symbols), inlined Base64 FontAwesome, root variables, and CSS."""
     root_vars = get_root_css_variables(is_dark_mode)
     css_template = load_global_css_template()
+    fa_inlined_css = get_inlined_fa_local_css()
     head_links = (
         '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
         '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
         '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">\n'
-        '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />\n'
-        '<link rel="stylesheet" href="/app/static/fa-local.css">'
+        '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />'
     )
     font_imports = (
         "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap');\n"
         "@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');\n"
-        "@import url('/app/static/fa-local.css');\n"
     )
     if css_template:
         if "<style>" in css_template:
-            # Backwards compatibility if a style block is present
             if "ROOT_VARS_PLACEHOLDER" in css_template:
                 full_css = css_template.replace("ROOT_VARS_PLACEHOLDER", root_vars)
             else:
-                full_css = css_template.replace("<style>", f"<style>\n{font_imports}:root {{ {root_vars} }}\n", 1)
+                full_css = css_template.replace("<style>", f"<style>\n{font_imports}{fa_inlined_css}\n:root {{ {root_vars} }}\n", 1)
             st.html(f"{head_links}\n{full_css}")
         else:
             if "ROOT_VARS_PLACEHOLDER" in css_template:
                 rendered_css = css_template.replace("ROOT_VARS_PLACEHOLDER", root_vars)
             else:
                 rendered_css = f":root {{ {root_vars} }}\n{css_template}"
-            st.html(f"{head_links}\n<style>\n{font_imports}{rendered_css}\n</style>")
+            st.html(f"{head_links}\n<style>\n{font_imports}{fa_inlined_css}\n{rendered_css}\n</style>")
     else:
-        st.html(f"{head_links}\n<style>\n{font_imports}:root {{ {root_vars} }}\n</style>")
+        st.html(f"{head_links}\n<style>\n{font_imports}{fa_inlined_css}\n:root {{ {root_vars} }}\n</style>")
 

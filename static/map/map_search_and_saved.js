@@ -1062,14 +1062,23 @@ function initSubdistrictDropdown() {
 }
 
 function _loadScriptAsync(src) {
-  return new Promise((resolve) => {
-    const s = document.createElement('script');
-    s.src = src;
-    s.async = true;
-    s.onload = () => resolve(true);
-    s.onerror = () => resolve(false);
-    document.head.appendChild(s);
-  });
+  const cands = (typeof window.resolveStaticUrlCandidates === 'function' && String(src).includes('app/static'))
+    ? window.resolveStaticUrlCandidates(src)
+    : [src];
+  return (async () => {
+    for (let i = 0; i < cands.length; i++) {
+      const ok = await new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.src = cands[i];
+        s.async = true;
+        s.onload = () => resolve(true);
+        s.onerror = () => resolve(false);
+        document.head.appendChild(s);
+      });
+      if (ok) return true;
+    }
+    return false;
+  })();
 }
 
 function loadBoundaryScriptsInBackground() {
@@ -1091,20 +1100,14 @@ function loadBoundaryScriptsInBackground() {
       await _loadScriptAsync('/app/static/provinces_geojson.js?v=20261001');
     }
     if (!window.ALL_PROVINCES_BOUNDARIES || Object.keys(window.ALL_PROVINCES_BOUNDARIES).length === 0) {
-      await _loadScriptAsync('provinces_geojson.js?v=20261001');
-    }
-    if (!window.ALL_PROVINCES_BOUNDARIES || Object.keys(window.ALL_PROVINCES_BOUNDARIES).length === 0) {
-      const _bUrls = [
-        '/app/static/provinces_geojson.json',
-        '/static/provinces_geojson.json',
-        'provinces_geojson.json',
-        './provinces_geojson.json',
-        'static/provinces_geojson.json'
-      ];
+      const _bUrls = (typeof window.resolveStaticUrlCandidates === 'function')
+        ? window.resolveStaticUrlCandidates('/app/static/provinces_geojson.json')
+        : ['/app/static/provinces_geojson.json', '/~/+/app/static/provinces_geojson.json'];
       for (const u of _bUrls) {
         try {
           const resp = await fetch(u);
-          if (resp.ok) {
+          const ct = (resp.headers && resp.headers.get('content-type') || '').toLowerCase();
+          if (resp.ok && !ct.includes('text/html')) {
             window.ALL_PROVINCES_BOUNDARIES = await resp.json();
             break;
           }
@@ -1127,20 +1130,14 @@ function loadBoundaryScriptsInBackground() {
       await _loadScriptAsync('/app/static/subdistricts_geojson.js?v=20261001');
     }
     if (!window.ALL_SUBDISTRICTS_BOUNDARIES || Object.keys(window.ALL_SUBDISTRICTS_BOUNDARIES).length === 0) {
-      await _loadScriptAsync('subdistricts_geojson.js?v=20261001');
-    }
-    if (!window.ALL_SUBDISTRICTS_BOUNDARIES || Object.keys(window.ALL_SUBDISTRICTS_BOUNDARIES).length === 0) {
-      const _subUrls = [
-        '/app/static/subdistricts_geojson.json?v=20261001',
-        '/static/subdistricts_geojson.json?v=20261001',
-        'subdistricts_geojson.json?v=20261001',
-        './subdistricts_geojson.json?v=20261001',
-        'static/subdistricts_geojson.json?v=20261001'
-      ];
+      const _subUrls = (typeof window.resolveStaticUrlCandidates === 'function')
+        ? window.resolveStaticUrlCandidates('/app/static/subdistricts_geojson.json?v=20261001')
+        : ['/app/static/subdistricts_geojson.json?v=20261001', '/~/+/app/static/subdistricts_geojson.json?v=20261001'];
       for (const u of _subUrls) {
         try {
           const resp = await fetch(u);
-          if (resp.ok) {
+          const ct = (resp.headers && resp.headers.get('content-type') || '').toLowerCase();
+          if (resp.ok && !ct.includes('text/html')) {
             window.ALL_SUBDISTRICTS_BOUNDARIES = await resp.json();
             break;
           }
