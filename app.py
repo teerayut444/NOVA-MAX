@@ -197,9 +197,12 @@ def _render_lazy_tab_watcher(tab_id, label_text, is_dark_mode=False):
     stc.html(
         f"""<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
         (function() {{
-            let triggered = false;
+            // A click can be dropped when Streamlit is mid-rerun (e.g. map sync) while this iframe survives,
+            // which previously left the spinner stuck forever. Retry only while the placeholder is still
+            // on screen AND the app is idle, with a small cap to avoid click loops.
+            let lastClickAt = 0;
+            let clickCount = 0;
             function checkAndTrigger() {{
-                if (triggered) return;
                 try {{
                     const pdoc = window.parent && window.parent.document;
                     if (!pdoc) return;
@@ -211,9 +214,14 @@ def _render_lazy_tab_watcher(tab_id, label_text, is_dark_mode=False):
                         const rect = panel.getBoundingClientRect();
                         if (rect.width <= 0 || rect.height <= 0) return;
                     }}
+                    if (clickCount >= 8) return;
+                    const now = Date.now();
+                    if (now - lastClickAt < 2500) return;
+                    if (clickCount > 0 && pdoc.querySelector('[data-testid="stStatusWidget"]')) return;
                     const btn = wrap.tagName === 'BUTTON' ? wrap : wrap.querySelector('button');
                     if (btn) {{
-                        triggered = true;
+                        lastClickAt = now;
+                        clickCount++;
                         btn.click();
                     }}
                 }} catch (e) {{}}
