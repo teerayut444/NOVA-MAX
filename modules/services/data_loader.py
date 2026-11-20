@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 import base64
+import gc
 import gzip
 import hashlib
 import hmac
@@ -471,7 +472,7 @@ def _build_map_payload_raw_from_df(
     if not valid_coord_mask.any():
         return b"", {}, "", 0
 
-    map_data = df.loc[valid_coord_mask].copy()
+    map_data = df.loc[valid_coord_mask]
     lat_vals = lat_num.loc[valid_coord_mask].to_numpy(dtype='float64')
     lon_vals = lon_num.loc[valid_coord_mask].to_numpy(dtype='float64')
 
@@ -753,6 +754,8 @@ def _build_map_payload_raw_from_df(
     })
 
     csv_utf8_bytes = csv_df.to_csv(index=False).encode('utf-8')
+    del csv_df
+    gc.collect()
     return csv_utf8_bytes, lookup_obj, legend_content, map_data_full_len
 
 
@@ -782,13 +785,16 @@ def build_map_payload_from_df(
         gzip.compress(json.dumps(lookup_obj, ensure_ascii=False, separators=(",", ":")).encode('utf-8'), compresslevel=1)
     ).decode('utf-8')
     csv_base64 = base64.b64encode(gzip.compress(csv_utf8_bytes, compresslevel=1)).decode('utf-8')
+    del csv_utf8_bytes, lookup_obj
+    gc.collect()
     return csv_base64, lookup_b64, legend_content, map_data_full_len
 
 
-@st.cache_data(show_spinner=False, max_entries=2)
-def _get_precomputed_map_payload_raw(data_mtime, th_date):
+@st.cache_resource(show_spinner=False, max_entries=1)
+def _ensure_static_map_bundle_cached(data_mtime, th_date):
+    """Builds the nationwide map payload, writes it to disk as .gz, and frees the ~80 MB raw CSV from RAM."""
     df = load_properties_data(data_mtime)
-    return _build_map_payload_raw_from_df(
+    csv_utf8_bytes, lookup_obj, legend_content, map_data_full_len = _build_map_payload_raw_from_df(
         df,
         df_project_source=df,
         data_mtime=data_mtime,
@@ -796,50 +802,63 @@ def _get_precomputed_map_payload_raw(data_mtime, th_date):
         custom_company="",
         custom_color="#6366f1",
     )
-
-
-@st.cache_data(show_spinner=False, max_entries=2)
-def _get_precomputed_map_payload_b64(data_mtime, th_date):
-    csv_utf8_bytes, lookup_obj, legend_content, map_data_full_len = _get_precomputed_map_payload_raw(data_mtime, th_date)
     if map_data_full_len == 0:
-        return "", "", "", 0
-    lookup_b64 = base64.b64encode(
-        gzip.compress(json.dumps(lookup_obj, ensure_ascii=False, separators=(",", ":")).encode('utf-8'), compresslevel=1)
-    ).decode('utf-8')
-    csv_base64 = base64.b64encode(gzip.compress(csv_utf8_bytes, compresslevel=1)).decode('utf-8')
-    return csv_base64, lookup_b64, legend_content, map_data_full_len
+        return "", 0, None, "", ""
+
+    static_meta = ensure_static_map_payload_gz(data_mtime, lookup_obj, csv_utf8_bytes, th_date=th_date)
+    if static_meta is not None:
+        csv_inject = ""
+        lut_inject = ""
+    else:
+        csv_inject = base64.b64encode(gzip.compress(csv_utf8_bytes, compresslevel=1)).decode('utf-8')
+        lut_inject = base64.b64encode(
+            gzip.compress(json.dumps(lookup_obj, ensure_ascii=False, separators=(",", ":")).encode('utf-8'), compresslevel=1)
+        ).decode('utf-8')
+
+    del csv_utf8_bytes, lookup_obj
+    gc.collect()
+    return legend_content, map_data_full_len, static_meta, csv_inject, lut_inject
 
 
 def get_precomputed_map_payload(data_mtime):
-    """Precomputes and caches GZIP+Base64 map payload keyed by (data_mtime, Thailand date)."""
-    return _get_precomputed_map_payload_b64(data_mtime, _today_th_str())
+    """Returns GZIP+Base64 map payload on demand without keeping 80 MB raw bytes in @st.cache_data."""
+    day_str = _today_th_str()
+    legend_content, map_data_full_len, static_meta, csv_inject, lut_inject = _ensure_static_map_bundle_cached(data_mtime, day_str)
+    if map_data_full_len == 0:
+        return "", "", "", 0
+    if csv_inject and lut_inject:
+        return csv_inject, lut_inject, legend_content, map_data_full_len
+    if static_meta and os.path.exists(static_meta["path"]):
+        try:
+            with gzip.open(static_meta["path"], "rb") as gz_in:
+                bundle = json.loads(gz_in.read().decode("utf-8"))
+            csv_b64 = base64.b64encode(gzip.compress(bundle.get("csv", "").encode("utf-8"), compresslevel=1)).decode("utf-8")
+            lut_b64 = base64.b64encode(
+                gzip.compress(json.dumps(bundle.get("lut", {}), ensure_ascii=False, separators=(",", ":")).encode("utf-8"), compresslevel=1)
+            ).decode("utf-8")
+            del bundle
+            gc.collect()
+            return csv_b64, lut_b64, legend_content, map_data_full_len
+        except Exception:
+            pass
+    df = load_properties_data(data_mtime)
+    return build_map_payload_from_df(df, df_project_source=df, data_mtime=data_mtime)
 
 
-@st.cache_resource(show_spinner=False, max_entries=2)
+@st.cache_resource(show_spinner=False, max_entries=1)
 def _build_full_map_html_v2(data_mtime, tmpl_mtime, cache_builder_ver="1", th_date=None):
     """Builds the slimmed nationwide map HTML once per (data, template, builder, day).
 
     Offloads the heavy nationwide payload to a 128-bit tokenized binary GZIP file under /app/static/
     (`map_payload_<token>.gz`) whose URL is only emitted into authenticated HTML, avoiding predictable
-    unauthenticated data dumps while slashing LAN payload size in half.
+    unauthenticated data dumps while slashing LAN and Cloud RAM footprint.
     """
     day_str = str(th_date or _today_th_str())
-    csv_utf8_bytes, lookup_obj, legend_content, map_data_full_len = _get_precomputed_map_payload_raw(data_mtime, day_str)
+    legend_content, map_data_full_len, static_meta, csv_inject, lut_inject = _ensure_static_map_bundle_cached(data_mtime, day_str)
     if map_data_full_len == 0:
         return None, 0, None
 
-    static_meta = ensure_static_map_payload_gz(data_mtime, lookup_obj, csv_utf8_bytes, th_date=day_str)
-    if static_meta is not None:
-        csv_inject = ""
-        lut_inject = ""
-        payload_url_inject = static_meta["url"]
-    else:
-        # Fallback to inline GZIP+Base64 if static directory is read-only
-        csv_inject = base64.b64encode(gzip.compress(csv_utf8_bytes, compresslevel=1)).decode('utf-8')
-        lut_inject = base64.b64encode(
-            gzip.compress(json.dumps(lookup_obj, ensure_ascii=False, separators=(",", ":")).encode('utf-8'), compresslevel=1)
-        ).decode('utf-8')
-        payload_url_inject = ""
+    payload_url_inject = static_meta["url"] if static_meta is not None else ""
 
     base_tmpl = get_base_map_html(tmpl_mtime)
     if not base_tmpl:
@@ -892,9 +911,9 @@ def precompute_full_map_html(data_mtime):
 
     # Self-heal if tokenized static payload file is missing even though resource/session cache exists
     if not os.path.exists(_payload_meta["path"]):
-        csv_bytes, lut_obj, _, _cnt = _get_precomputed_map_payload_raw(data_mtime, _day_str)
-        if _cnt > 0:
-            ensure_static_map_payload_gz(data_mtime, lut_obj, csv_bytes, th_date=_day_str)
+        _ensure_static_map_bundle_cached.clear()
+        _build_full_map_html_v2.clear()
+        _ensure_static_map_bundle_cached(data_mtime, _day_str)
 
     if (
         "cached_map_html_base" in st.session_state

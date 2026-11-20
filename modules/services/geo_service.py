@@ -757,13 +757,10 @@ def _calc_polygon_centroid(geometry):
 
 
 @st.cache_resource(show_spinner=False)
-def _get_indexed_gis_boundaries():
-    """Pre-indexes district & subdistrict GeoJSON features in memory with lazy centroid memoization."""
+def _get_indexed_districts_boundaries():
+    """Pre-indexes district GeoJSON features on demand with lazy centroid memoization."""
     dist_by_prov = {}
     dist_by_amp = {}
-    subdist_by_tam = {}
-    subdist_by_amp_prov = {}
-    subdist_by_amp = {}
     centroid_cache = {}
     centroid_lock = threading.Lock()
 
@@ -778,6 +775,23 @@ def _get_indexed_gis_boundaries():
                 dist_by_prov.setdefault(pro_th, []).append(rec)
             if amp_th:
                 dist_by_amp.setdefault(amp_th, []).append(rec)
+
+    return {
+        "dist_by_prov": dist_by_prov,
+        "dist_by_amp": dist_by_amp,
+        "centroid_cache": centroid_cache,
+        "centroid_lock": centroid_lock,
+    }
+
+
+@st.cache_resource(show_spinner=False)
+def _get_indexed_subdistricts_boundaries():
+    """Pre-indexes subdistrict GeoJSON features ONLY when a district/subdistrict filter is active."""
+    subdist_by_tam = {}
+    subdist_by_amp_prov = {}
+    subdist_by_amp = {}
+    centroid_cache = {}
+    centroid_lock = threading.Lock()
 
     sd_data = load_raw_subdistricts_geojson()
     if sd_data and 'features' in sd_data:
@@ -795,8 +809,6 @@ def _get_indexed_gis_boundaries():
                 subdist_by_amp.setdefault(amp_th, []).append(rec)
 
     return {
-        "dist_by_prov": dist_by_prov,
-        "dist_by_amp": dist_by_amp,
         "subdist_by_tam": subdist_by_tam,
         "subdist_by_amp_prov": subdist_by_amp_prov,
         "subdist_by_amp": subdist_by_amp,
@@ -878,22 +890,22 @@ def get_boundary_geojson_features(prov_list=None, dist_list=None, subdist_list=N
             return True
         return tam_th in bare_subdists
 
-    gis_idx = _get_indexed_gis_boundaries()
     district_labels = []
 
-    # Case 1: Subdistrict selected
+    # Case 1: Subdistrict selected (loads subdistricts GeoJSON lazily)
     if has_subdist_filter:
+        sd_idx = _get_indexed_subdistricts_boundaries()
         candidate_tams = bare_subdists | {t for t, _ in subdist_pairs}
         matched = []
         seen_keys = set()
         for tam_key in candidate_tams:
-            for rec_key, feat, tam_th, amp_th, pro_th in gis_idx["subdist_by_tam"].get(tam_key, ()):
+            for rec_key, feat, tam_th, amp_th, pro_th in sd_idx["subdist_by_tam"].get(tam_key, ()):
                 if rec_key in seen_keys:
                     continue
                 if _subdist_matches(tam_th, amp_th, pro_th):
                     seen_keys.add(rec_key)
                     matched.append(feat)
-                    centroid = _get_cached_centroid(gis_idx, rec_key, feat.get('geometry'))
+                    centroid = _get_cached_centroid(sd_idx, rec_key, feat.get('geometry'))
                     if centroid:
                         lbl_lon, lbl_lat = _adjust_subdistrict_label_coords(tam_th, pro_th, centroid)
                         district_labels.append({"name": tam_th, "lon": lbl_lon, "lat": lbl_lat})
@@ -905,16 +917,16 @@ def get_boundary_geojson_features(prov_list=None, dist_list=None, subdist_list=N
                 "district_labels": district_labels,
             }
 
-    # Case 2: District selected
+    # Case 2: District selected (loads subdistricts GeoJSON lazily; falls back to districts if needed)
     if has_dist_filter:
+        sd_idx = _get_indexed_subdistricts_boundaries()
         matched_sd = []
         seen_sd = set()
-        # Collect candidate subdistrict records via index
         cand_sd_recs = []
         for pair in dist_prov_pairs:
-            cand_sd_recs.extend(gis_idx["subdist_by_amp_prov"].get(pair, ()))
+            cand_sd_recs.extend(sd_idx["subdist_by_amp_prov"].get(pair, ()))
         for amp_k in bare_dists:
-            cand_sd_recs.extend(gis_idx["subdist_by_amp"].get(amp_k, ()))
+            cand_sd_recs.extend(sd_idx["subdist_by_amp"].get(amp_k, ()))
 
         for rec_key, feat, tam_th, amp_th, pro_th in cand_sd_recs:
             if rec_key in seen_sd:
@@ -922,7 +934,7 @@ def get_boundary_geojson_features(prov_list=None, dist_list=None, subdist_list=N
             if _dist_matches(amp_th, pro_th):
                 seen_sd.add(rec_key)
                 matched_sd.append(feat)
-                centroid = _get_cached_centroid(gis_idx, rec_key, feat.get('geometry'))
+                centroid = _get_cached_centroid(sd_idx, rec_key, feat.get('geometry'))
                 if centroid:
                     lbl_lon, lbl_lat = _adjust_subdistrict_label_coords(tam_th, pro_th, centroid)
                     district_labels.append({"name": tam_th, "lon": lbl_lon, "lat": lbl_lat})
@@ -934,18 +946,18 @@ def get_boundary_geojson_features(prov_list=None, dist_list=None, subdist_list=N
                 "district_labels": district_labels,
             }
 
-        # Fallback to district polygons if subdistrict GeoJSON had no matches
+        dist_idx = _get_indexed_districts_boundaries()
         matched_d = []
         seen_d = set()
         cand_amps = bare_dists | {a for a, _ in dist_prov_pairs}
         for amp_k in cand_amps:
-            for rec_key, feat, amp_th, pro_th in gis_idx["dist_by_amp"].get(amp_k, ()):
+            for rec_key, feat, amp_th, pro_th in dist_idx["dist_by_amp"].get(amp_k, ()):
                 if rec_key in seen_d:
                     continue
                 if _dist_matches(amp_th, pro_th):
                     seen_d.add(rec_key)
                     matched_d.append(feat)
-                    centroid = _get_cached_centroid(gis_idx, rec_key, feat.get('geometry'))
+                    centroid = _get_cached_centroid(dist_idx, rec_key, feat.get('geometry'))
                     if centroid:
                         district_labels.append({"name": amp_th, "lon": centroid[0], "lat": centroid[1]})
         if matched_d:
@@ -956,17 +968,18 @@ def get_boundary_geojson_features(prov_list=None, dist_list=None, subdist_list=N
                 "district_labels": district_labels,
             }
 
-    # Case 3: Province selected
+    # Case 3: Province selected (ONLY loads districts.geojson, never touches subdistricts.geojson!)
     if clean_provs:
+        dist_idx = _get_indexed_districts_boundaries()
         matched = []
         seen_d = set()
         for prov_k in clean_provs:
-            for rec_key, feat, amp_th, pro_th in gis_idx["dist_by_prov"].get(prov_k, ()):
+            for rec_key, feat, amp_th, pro_th in dist_idx["dist_by_prov"].get(prov_k, ()):
                 if rec_key in seen_d:
                     continue
                 seen_d.add(rec_key)
                 matched.append(feat)
-                centroid = _get_cached_centroid(gis_idx, rec_key, feat.get('geometry'))
+                centroid = _get_cached_centroid(dist_idx, rec_key, feat.get('geometry'))
                 if centroid:
                     district_labels.append({"name": amp_th, "lon": centroid[0], "lat": centroid[1]})
         if matched:

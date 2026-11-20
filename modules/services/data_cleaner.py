@@ -481,7 +481,7 @@ def format_to_rai_ngan_wah(val):
 
 def _parse_announcement_date(s):
     """Parse Thai/CE date strings (full date preferred over year-only); returns (datetime.date | None, year_only_diff | None)."""
-    # 1. Full d/m/yyyy (with optional HH:MM[:SS]) - handles BE years >= 2400
+    # 1. Full d/m/yyyy (with optional HH:MM[:SS]) - handles BE years >= 2400 and m/d/yyyy fallback
     m_dmy = re.match(r'^(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{4})(?:[T\s]+\d{1,2}:\d{2}(?::\d{2})?)?$', s)
     if m_dmy:
         d_i, m_i, y_i = int(m_dmy.group(1)), int(m_dmy.group(2)), int(m_dmy.group(3))
@@ -490,7 +490,11 @@ def _parse_announcement_date(s):
         try:
             return datetime.date(y_i, m_i, d_i), None
         except ValueError:
-            pass
+            if m_i > 12 and 1 <= d_i <= 12:
+                try:
+                    return datetime.date(y_i, d_i, m_i), None
+                except ValueError:
+                    pass
 
     # 2. ISO yyyy-mm-dd / timestamp (supports T or space separator and BE years)
     m_iso = re.match(r'^(\d{4})[-/\.](\d{1,2})[-/\.](\d{1,2})(?:[T\s].*)?$', s)
@@ -830,8 +834,8 @@ def _apply_led_legal_sold_prices(df):
 
                 sqw_col = 'พื้นที่_ตารางวา' if 'พื้นที่_ตารางวา' in df.columns else ('เนื้อที่ (ตร.ว.)' if 'เนื้อที่ (ตร.ว.)' in df.columns else None)
                 if sqw_col and 'ราคาต่อตารางวา' in df.columns:
-                    if df['ราคาต่อตารางวา'].dtype != 'float64':
-                        df['ราคาต่อตารางวา'] = pd.to_numeric(df['ราคาต่อตารางวา'], errors='coerce').astype('float64')
+                    if df['ราคาต่อตารางวา'].dtype != 'float32':
+                        df['ราคาต่อตารางวา'] = pd.to_numeric(df['ราคาต่อตารางวา'], errors='coerce').astype('float32')
                     if sqw_col == 'พื้นที่_ตารางวา':
                         sqw_vals = pd.to_numeric(df.loc[target_idx, sqw_col], errors='coerce')
                     else:
@@ -841,16 +845,16 @@ def _apply_led_legal_sold_prices(df):
                     valid_sqw = sqw_vals.notna() & (sqw_vals > 0) & (sold_p.loc[target_idx] > 0)
                     if valid_sqw.any():
                         v_idx = target_idx[valid_sqw.values]
-                        df.loc[v_idx, 'ราคาต่อตารางวา'] = (sold_p.loc[v_idx] / sqw_vals.loc[v_idx]).astype('float64')
+                        df.loc[v_idx, 'ราคาต่อตารางวา'] = (sold_p.loc[v_idx] / sqw_vals.loc[v_idx]).astype('float32')
 
                 if 'พื้นที่ใช้สอย (ตร.ม.)' in df.columns and 'ราคาต่อตารางเมตร' in df.columns:
-                    if df['ราคาต่อตารางเมตร'].dtype != 'float64':
-                        df['ราคาต่อตารางเมตร'] = pd.to_numeric(df['ราคาต่อตารางเมตร'], errors='coerce').astype('float64')
+                    if df['ราคาต่อตารางเมตร'].dtype != 'float32':
+                        df['ราคาต่อตารางเมตร'] = pd.to_numeric(df['ราคาต่อตารางเมตร'], errors='coerce').astype('float32')
                     sqm_vals = pd.to_numeric(df.loc[target_idx, 'พื้นที่ใช้สอย (ตร.ม.)'], errors='coerce')
                     valid_sqm = sqm_vals.notna() & (sqm_vals > 0) & (sold_p.loc[target_idx] > 0)
                     if valid_sqm.any():
                         v_idx = target_idx[valid_sqm.values]
-                        df.loc[v_idx, 'ราคาต่อตารางเมตร'] = (sold_p.loc[v_idx] / sqm_vals.loc[v_idx]).astype('float64')
+                        df.loc[v_idx, 'ราคาต่อตารางเมตร'] = (sold_p.loc[v_idx] / sqm_vals.loc[v_idx]).astype('float32')
     return df
 
 
@@ -900,9 +904,17 @@ def ensure_derived_cols(df, persist_cache=False):
                     df['is_centroid'] = df['is_centroid'].astype(object).fillna('').astype(str).str.strip().str.lower().isin({'true', '1', '1.0', 'yes', 't'})
             if 'โจทก์' in df.columns:
                 df['โจทก์'] = _clean_plaintiff_series_fast(df['โจทก์'])
-            for f64_col in ['ราคา', 'ราคาขายได้', 'ละติจูด', 'ลองจิจูด', 'พื้นที่_ตารางวา', 'พื้นที่ใช้สอย (ตร.ม.)', 'ราคาต่อตารางวา', 'ราคาต่อตารางเมตร']:
+            for f64_col in ['ราคา', 'ราคาขายได้', 'ละติจูด', 'ลองจิจูด']:
                 if f64_col in df.columns and df[f64_col].dtype != 'float64':
                     df[f64_col] = pd.to_numeric(df[f64_col], errors='coerce').astype('float64')
+            for f32_col in ['พื้นที่_ตารางวา', 'พื้นที่ใช้สอย (ตร.ม.)', 'ราคาต่อตารางวา', 'ราคาต่อตารางเมตร']:
+                if f32_col in df.columns and df[f32_col].dtype != 'float32':
+                    df[f32_col] = pd.to_numeric(df[f32_col], errors='coerce').astype('float32')
+            for i32_col in ['ยอดเข้าชม', 'ยอดคลิก']:
+                if i32_col in df.columns and str(df[i32_col].dtype) != 'Int32':
+                    num_s = pd.to_numeric(df[i32_col], errors='coerce')
+                    num_s = num_s.where(np.isfinite(num_s) & (num_s >= 0) & (num_s <= 2_147_483_647), np.nan)
+                    df[i32_col] = num_s.round(0).astype('Int32')
             if 'norm_project_name' not in df.columns:
                 if 'ชื่อโครงการ' in df.columns:
                     u_projs = df['ชื่อโครงการ'].dropna().unique()
@@ -1268,12 +1280,12 @@ def ensure_derived_cols(df, persist_cache=False):
 
     for _cnt_col in ('ยอดเข้าชม', 'ยอดคลิก'):
         if _cnt_col not in df.columns:
-            df[_cnt_col] = pd.Series(pd.NA, index=df.index, dtype='Int64')
+            df[_cnt_col] = pd.Series(pd.NA, index=df.index, dtype='Int32')
         else:
             num_s = pd.to_numeric(df[_cnt_col], errors='coerce')
             # Reject non-finite, negative, or scraper phone-number anomalies (> 2^31-1) cleanly without Int32 crash
             num_s = num_s.where(np.isfinite(num_s) & (num_s >= 0) & (num_s <= 2_147_483_647), np.nan)
-            df[_cnt_col] = num_s.round(0).astype('Int64')
+            df[_cnt_col] = num_s.round(0).astype('Int32')
 
     if 'อำเภอ' in df.columns:
         s_amp = df['อำเภอ'].astype(object).where(df['อำเภอ'].notna(), '').astype(str).str.strip().str.strip(" ,;.-'\"/\\")
@@ -1309,10 +1321,13 @@ def ensure_derived_cols(df, persist_cache=False):
         else:
             df['norm_project_name'] = ''
 
-    # Preserve float64 for high-value prices (>16.77M Baht), 5-6 decimal coordinates, areas, and unit rates
-    for f64_col in ['ราคา', 'ราคาขายได้', 'ละติจูด', 'ลองจิจูด', 'พื้นที่_ตารางวา', 'พื้นที่ใช้สอย (ตร.ม.)', 'ราคาต่อตารางวา', 'ราคาต่อตารางเมตร']:
+    # Preserve float64 for high-value prices (>16.77M Baht) and 5-6 decimal coordinates; use float32 for areas & unit rates
+    for f64_col in ['ราคา', 'ราคาขายได้', 'ละติจูด', 'ลองจิจูด']:
         if f64_col in df.columns:
             df[f64_col] = pd.to_numeric(df[f64_col], errors='coerce').astype('float64')
+    for f32_col in ['พื้นที่_ตารางวา', 'พื้นที่ใช้สอย (ตร.ม.)', 'ราคาต่อตารางวา', 'ราคาต่อตารางเมตร']:
+        if f32_col in df.columns:
+            df[f32_col] = pd.to_numeric(df[f32_col], errors='coerce').astype('float32')
 
     # Convert repeated string columns to category for 5x faster filtering and 70% less RAM
     for col in ['บริษัท', 'ประเภททรัพย์', 'จังหวัด', 'ภาค', 'ประเภทการขาย', 'อำเภอ', 'ตำบล']:

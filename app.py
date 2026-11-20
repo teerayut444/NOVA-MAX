@@ -4,6 +4,9 @@ import sys
 from PIL import Image
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as stc
+
+_fragment_decorator = getattr(st, "fragment", lambda f: f)
 
 # Ensure project root is in sys.path
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -158,7 +161,115 @@ inject_global_theme_css(is_dark_mode)
 # ----------------- GLOBAL FLOATING KPI CARDS -----------------
 render_floating_kpi_cards(df_raw, df_raw, is_dark_mode)
 
-# ----------------- MAIN NAVIGATION TABS (Keep All Tabs Mounted Client-Side — Eager) -----------------
+# ----------------- MAIN NAVIGATION TABS (Tab 1 & Tab 2 Eager; Tabs 3, 4, 5 Lazy via @st.fragment) -----------------
+def _render_lazy_tab_watcher(tab_id, label_text, is_dark_mode=False):
+    """Renders a lightweight placeholder + visibility observer that auto-loads the tab fragment when clicked."""
+    bg_card = "rgba(30, 41, 59, 0.55)" if is_dark_mode else "rgba(255, 255, 255, 0.85)"
+    text_col = "#94a3b8" if is_dark_mode else "#64748b"
+    border_col = "rgba(16, 185, 129, 0.22)" if is_dark_mode else "rgba(16, 185, 129, 0.18)"
+    st.markdown(
+        f"""
+        <style>
+        .st-key-btn_lazy_load_{tab_id},
+        div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_{tab_id}),
+        div[data-testid="stButton"]:has(.st-key-btn_lazy_load_{tab_id}) {{
+            position: fixed !important;
+            bottom: -9999px !important;
+            right: -9999px !important;
+            width: 1px !important;
+            height: 1px !important;
+            overflow: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            z-index: -9999 !important;
+        }}
+        @keyframes novaLazySpin {{
+            to {{ transform: rotate(360deg); }}
+        }}
+        </style>
+        <div style="margin: 36px auto; max-width: 460px; padding: 28px 24px; border-radius: 16px; background: {bg_card}; border: 1px solid {border_col}; text-align: center; box-shadow: 0 8px 24px rgba(0,0,0,0.04);">
+            <div style="width: 28px; height: 28px; margin: 0 auto 12px auto; border: 3px solid rgba(16,185,129,0.2); border-top-color: #10b981; border-radius: 50%; animation: novaLazySpin 0.8s linear infinite;"></div>
+            <div style="font-size: 0.92rem; font-weight: 600; color: {text_col};">{label_text}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    stc.html(
+        f"""<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
+        (function() {{
+            let triggered = false;
+            function checkAndTrigger() {{
+                if (triggered) return;
+                try {{
+                    const pdoc = window.parent && window.parent.document;
+                    if (!pdoc) return;
+                    const wrap = pdoc.querySelector('.st-key-btn_lazy_load_{tab_id}');
+                    if (!wrap) return;
+                    const panel = wrap.closest('[role="tabpanel"]');
+                    if (panel) {{
+                        if (panel.hasAttribute('hidden') || panel.getAttribute('aria-hidden') === 'true') return;
+                        const rect = panel.getBoundingClientRect();
+                        if (rect.width <= 0 || rect.height <= 0) return;
+                    }}
+                    const btn = wrap.tagName === 'BUTTON' ? wrap : wrap.querySelector('button');
+                    if (btn) {{
+                        triggered = true;
+                        btn.click();
+                    }}
+                }} catch (e) {{}}
+            }}
+            checkAndTrigger();
+            setInterval(checkAndTrigger, 180);
+            try {{
+                const pdoc = window.parent && window.parent.document;
+                if (pdoc) {{
+                    const wrap = pdoc.querySelector('.st-key-btn_lazy_load_{tab_id}');
+                    const panel = wrap && wrap.closest('[role="tabpanel"]');
+                    if (panel && window.MutationObserver) {{
+                        const mo = new MutationObserver(checkAndTrigger);
+                        mo.observe(panel, {{ attributes: true, attributeFilter: ['hidden', 'aria-hidden', 'style', 'class'] }});
+                    }}
+                }}
+            }} catch (e) {{}}
+        }})();
+        </script></body></html>""",
+        height=0,
+    )
+
+
+@_fragment_decorator
+def _render_lazy_tab3_fragment(df_raw, is_dark_mode):
+    if not st.session_state.get("_nova_lazy_ready_tab3", False):
+        if st.button("load_tab3", key="btn_lazy_load_tab3"):
+            st.session_state["_nova_lazy_ready_tab3"] = True
+    if st.session_state.get("_nova_lazy_ready_tab3", False):
+        render_tab3_analytics_view(df_raw, df_raw, is_dark_mode=is_dark_mode)
+        return
+    _render_lazy_tab_watcher("tab3", "กำลังโหลดข้อมูลสถิติ & วิเคราะห์ตลาด...", is_dark_mode=is_dark_mode)
+
+
+@_fragment_decorator
+def _render_lazy_tab4_fragment(df_raw, is_dark_mode):
+    if not st.session_state.get("_nova_lazy_ready_tab4", False):
+        if st.button("load_tab4", key="btn_lazy_load_tab4"):
+            st.session_state["_nova_lazy_ready_tab4"] = True
+    if st.session_state.get("_nova_lazy_ready_tab4", False):
+        render_tab4_inventory_view(df_raw, is_dark_mode=is_dark_mode)
+        return
+    _render_lazy_tab_watcher("tab4", "กำลังโหลดตารางรายการทรัพย์สิน...", is_dark_mode=is_dark_mode)
+
+
+@_fragment_decorator
+def _render_lazy_tab5_fragment(df_raw, is_dark_mode):
+    if not st.session_state.get("_nova_lazy_ready_tab5", False):
+        if st.button("load_tab5", key="btn_lazy_load_tab5"):
+            st.session_state["_nova_lazy_ready_tab5"] = True
+    if st.session_state.get("_nova_lazy_ready_tab5", False):
+        render_tab5_popular_locations_view(df_raw, is_dark_mode=is_dark_mode)
+        return
+    _render_lazy_tab_watcher("tab5", "กำลังโหลดแผนที่ทำเลยอดนิยม (Livinginsider)...", is_dark_mode=is_dark_mode)
+
+
 _tab_labels = [
     "ภาพรวม (Bubble Chart)",
     "แผนที่ (Interactive Map)",
@@ -167,6 +278,11 @@ _tab_labels = [
     "ทำเลยอดนิยม",
 ]
 _reset_nonce = int(st.session_state.get("_nova_reset_nonce", 0))
+if st.session_state.get("_nova_last_lazy_reset_nonce", 0) != _reset_nonce:
+    st.session_state["_nova_last_lazy_reset_nonce"] = _reset_nonce
+    for _lt in ("_nova_lazy_ready_tab3", "_nova_lazy_ready_tab4", "_nova_lazy_ready_tab5"):
+        st.session_state.pop(_lt, None)
+
 _default_tab = (
     _tab_labels[1]
     if (st.query_params.get("map_ref_id") or st.query_params.get("map_price_ref_id"))
@@ -185,22 +301,22 @@ has_custom_imports = bool(
     and not st.session_state["imported_custom_df"].empty
 )
 
-# Tab 1: 3D Bubble Chart
+# Tab 1: 3D Bubble Chart (Eager landing view)
 with tab1:
     render_tab1_bubble_view(df_raw, is_dark_mode=is_dark_mode, has_active_filters=has_custom_imports)
 
-# Tab 2: Interactive Deck.gl Map + Median Reference Analytics Fragment
+# Tab 2: Interactive Deck.gl Map + Median Reference Analytics Fragment (Eager preloaded view)
 with tab2:
     render_tab2_map_view(df_raw, df_raw, is_dark_mode=is_dark_mode)
 
-# Tab 3: Competitor & Market Analytics
+# Tab 3: Competitor & Market Analytics (Lazy-loaded on tab click)
 with tab3:
-    render_tab3_analytics_view(df_raw, df_raw, is_dark_mode=is_dark_mode)
+    _render_lazy_tab3_fragment(df_raw, is_dark_mode=is_dark_mode)
 
-# Tab 4: Property Listing / Inventory Table
+# Tab 4: Property Listing / Inventory Table (Lazy-loaded on tab click)
 with tab4:
-    render_tab4_inventory_view(df_raw, is_dark_mode=is_dark_mode)
+    _render_lazy_tab4_fragment(df_raw, is_dark_mode=is_dark_mode)
 
-# Tab 5: Popular Locations Map & Leaderboard (Livinginsider)
+# Tab 5: Popular Locations Map & Leaderboard (Lazy-loaded on tab click)
 with tab5:
-    render_tab5_popular_locations_view(df_raw, is_dark_mode=is_dark_mode)
+    _render_lazy_tab5_fragment(df_raw, is_dark_mode=is_dark_mode)

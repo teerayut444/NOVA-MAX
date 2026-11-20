@@ -654,22 +654,20 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
 
     pts_label = ""
     if not st.session_state.get("preload_done", False):
+        import gc
         from modules.ui.kpi_header import precompute_kpi_header
         from modules.views.tab2_fragment import precompute_tab2_default_analytics
-        from modules.views.tab3_analytics import precompute_tab3_analytics
-        from modules.views.tab4_inventory import precompute_tab4_inventory
-        from modules.views.tab5_popular_locations import precompute_tab5_popular_locations
 
         cur_dark_mode = bool(st.session_state.get("app_theme_mode", st.session_state.get("dark_mode", False)))
 
         # 1. Database & Global KPI Header
-        update_welcome_progress(progress_slot, 14, "กำลังโหลดฐานข้อมูลทรัพย์สิน และการ์ดสรุป KPI...")
+        update_welcome_progress(progress_slot, 20, "กำลังโหลดฐานข้อมูลทรัพย์สิน และการ์ดสรุป KPI...")
         df_p = load_properties_data(cur_mtime)
         if df_p is not None and not df_p.empty:
             precompute_kpi_header(df_p, data_mtime=cur_mtime)
 
-        # 2. Tab 1: 3D Glossy Bubble Chart (shared process-wide cache)
-        update_welcome_progress(progress_slot, 28, "กำลังเตรียม Tab 1: กราฟภาพรวม 3D Bubble Chart...")
+        # 2. Tab 1: 3D Glossy Bubble Chart (landing page, lightweight aggregation)
+        update_welcome_progress(progress_slot, 40, "กำลังเตรียม Tab 1: กราฟภาพรวม 3D Bubble Chart...")
         if df_p is not None and not df_p.empty:
             try:
                 get_cached_bubble_chart_html(
@@ -680,7 +678,7 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
             except Exception:
                 pass
 
-        # 3. Tab 2: Interactive Map & GeoJSON Boundaries
+        # 3. Tab 2: Interactive Map (GeoJSON boundaries lazy-loaded on filter selection)
         pts_label = ""
         if df_p is not None and not df_p.empty:
             try:
@@ -694,35 +692,19 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
             except Exception:
                 pts_label = f" {len(df_p):,} จุด"
 
-        update_welcome_progress(progress_slot, 46, f"กำลังเตรียม Tab 2: พิกัดแผนที่{pts_label}...")
-        load_raw_districts_geojson()
-        load_raw_subdistricts_geojson()
+        update_welcome_progress(progress_slot, 65, f"กำลังเตรียม Tab 2: พิกัดแผนที่{pts_label}...")
         payload_meta = precompute_full_map_html(cur_mtime) or payload_meta
         get_map_icon_atlas_and_mapping(include_session_custom=False)
         get_leaflet_logo_dict(include_session_custom=False)
         if df_p is not None and not df_p.empty:
             get_sam_project_options(df_p, cache_key=(cur_mtime, len(df_p), None), return_meta=True)
 
-        # 4. Tab 2: Nationwide Median Analytics & Property Table
-        update_welcome_progress(progress_slot, 60, "กำลังเตรียม Tab 2: ตารางวิเคราะห์ราคากลาง (Median)...")
+        # 4. Tab 2: Nationwide Median Analytics & Property Table (Tabs 3, 4, 5 are lazy-loaded on tab click)
+        update_welcome_progress(progress_slot, 82, "กำลังเตรียม Tab 2: ตารางวิเคราะห์ราคากลาง (Median)...")
         if df_p is not None and not df_p.empty:
             precompute_tab2_default_analytics(df_p, data_mtime=cur_mtime)
 
-        # 5. Tab 3: Competitor & Market Analytics (Sub-tabs 1, 2, 3)
-        update_welcome_progress(progress_slot, 72, "กำลังเตรียม Tab 3: กราฟสถิติและวิเคราะห์คู่แข่ง...")
-        if df_p is not None and not df_p.empty:
-            precompute_tab3_analytics(df_p, is_dark_mode=cur_dark_mode, data_mtime=cur_mtime)
-
-        # 6. Tab 4: Property Inventory Table Structure
-        update_welcome_progress(progress_slot, 80, "กำลังเตรียม Tab 4: โครงสร้างตารางรายการทรัพย์สิน...")
-        if df_p is not None and not df_p.empty:
-            precompute_tab4_inventory(df_p, data_mtime=cur_mtime)
-
-        # 7. Tab 5: Popular Locations (Livinginsider Heatmap & Leaderboard)
-        update_welcome_progress(progress_slot, 88, "กำลังเตรียม Tab 5: แผนที่ทำเลยอดนิยม (Livinginsider)...")
-        if df_p is not None and not df_p.empty:
-            precompute_tab5_popular_locations(df_p, is_dark_mode=cur_dark_mode, data_mtime=cur_mtime)
-
+        gc.collect()
         st.session_state["preload_done"] = True
 
     payload_meta = payload_meta or get_static_map_payload_meta(data_mtime=cur_mtime)
