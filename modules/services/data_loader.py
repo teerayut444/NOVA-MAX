@@ -1062,7 +1062,7 @@ def _build_full_map_html_v2(data_mtime, tmpl_mtime, cache_builder_ver="1", th_da
 
     payload_url_inject = static_meta["url"] if static_meta is not None else ""
 
-    base_tmpl = get_base_map_html(tmpl_mtime)
+    base_tmpl = get_base_map_html((tmpl_mtime, cache_builder_ver))
     if not base_tmpl:
         return None, 0, static_meta
 

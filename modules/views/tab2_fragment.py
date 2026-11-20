@@ -412,7 +412,17 @@ def render_tab2_reference_analytics_fragment(
 
         status_df = status_df.copy()
 
-    matched_count = len(status_df)
+    is_prov_only_waiting = bool(
+        active_prov
+        and not active_dist
+        and not active_subdist
+        and not active_proj
+        and not q_only_proj
+        and not has_ref_point
+        and not is_comparison_active
+        and (active_ref_prop is None)
+    )
+    matched_count = 0 if is_prov_only_waiting else len(status_df)
 
     # Human-readable labels
     if active_proj:
@@ -446,7 +456,7 @@ def render_tab2_reference_analytics_fragment(
         clean_d = active_dist[0].split(' (')[0].strip()
         loc_str = f"จ.{active_prov[0] if active_prov else '-'} > อ.{clean_d}"
     elif active_prov:
-        loc_str = f"จ.{active_prov[0]}"
+        loc_str = f"จ.{active_prov[0]} (รอเลือกอำเภอ/เขต)" if is_prov_only_waiting else f"จ.{active_prov[0]}"
     elif q_only_proj and map_cos and len(map_cos) >= 2:
         loc_str = f"โครงการร่วมกัน ({' + '.join(map_cos)}) ทั่วประเทศ"
     else:
@@ -602,7 +612,13 @@ def render_tab2_reference_analytics_fragment(
 
     # 4. Require at least one active location/pin, comparison selection, or in-map filter
     if not has_any_filter:
-        st.info("กรุณาปักหมุดบนแผนที่ หรือเลือกตัวกรอง/ทำเล เพื่อเริ่มดูข้อมูล", icon=":material/location_on:")
+        if active_prov and not active_dist and not active_subdist:
+            st.info(
+                f"จังหวัด{active_prov[0]}: กรุณาเลือก อำเภอ/เขต หรือ ตำบล/แขวง บนแผนที่เพื่อแสดงหมุดและตารางวิเคราะห์ราคากลาง",
+                icon=":material/location_on:",
+            )
+        else:
+            st.info("กรุณาปักหมุดบนแผนที่ หรือเลือกตัวกรอง/ทำเล เพื่อเริ่มดูข้อมูล", icon=":material/location_on:")
         return
 
     # 5. Scope Header

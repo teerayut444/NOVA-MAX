@@ -81,9 +81,13 @@ function calculateKpiStats(data) {
 function _getSharedActiveParentData() {
   const hasRef = !!referencePoint;
   const isRadiusMode = (mapPinMode === 'radius');
-  const hasProv = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
+  const hasDistOrSubdist = Boolean(
+    (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
+    (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
+  );
+  const hasOnlyProjFilter = !!(inMapFilterState && inMapFilterState.onlyWithProject);
   const hasProjFilter = inMapFilterState && ((inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) || (inMapFilterState.samProject && inMapFilterState.samProject !== ''));
-  if (hasProjFilter || (isRadiusMode && hasRef) || (mapPinMode === 'location' && hasProv)) {
+  if (hasProjFilter || (isRadiusMode && hasRef) || (mapPinMode === 'location' && (hasDistOrSubdist || hasOnlyProjFilter))) {
     return (currentNearbyData && currentNearbyData.length > 0) ? currentNearbyData : [];
   }
   return (cachedData || []).filter(filterItemPasses);
@@ -109,6 +113,11 @@ function updateParentKpiCards(sharedActiveData) {
   let subCountDesc = '';
   let subTotalDesc = '';
 
+  const hasDistOrSubdist = Boolean(
+    (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
+    (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
+  );
+  const hasOnlyProjFilter = !!(inMapFilterState && inMapFilterState.onlyWithProject);
   const hasProjFilter = inMapFilterState && ((inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) || (inMapFilterState.samProject && inMapFilterState.samProject !== ''));
   const hasOtherFilters = inMapFilterState && (
     (inMapFilterState.companies && inMapFilterState.companies.size > 0) ||
@@ -134,10 +143,11 @@ function updateParentKpiCards(sharedActiveData) {
     scopeBadgeText = projDesc;
     subCountDesc = `โครงการ: ${projDesc}`;
     subTotalDesc = `มูลค่ารวมในโครงการ`;
-  } else if (mapPinMode === 'location' && currentSelectedProv && currentSelectedProv !== '__ALL__') {
+  } else if (mapPinMode === 'location' && (hasDistOrSubdist || hasOnlyProjFilter)) {
     activeData = Array.isArray(sharedActiveData) ? sharedActiveData : ((currentNearbyData && currentNearbyData.length > 0) ? currentNearbyData : []);
-    let locDesc = currentSelectedProv;
+    let locDesc = (currentSelectedProv && currentSelectedProv !== '__ALL__') ? currentSelectedProv : 'ทั่วประเทศ';
     if (currentSelectedDist) locDesc += ' > ' + currentSelectedDist;
+    if (currentSelectedSubdist) locDesc += ' > ' + currentSelectedSubdist;
     scopeBadgeText = locDesc;
     subCountDesc = `ตามทำเล: ${locDesc}`;
     subTotalDesc = `มูลค่ารวมในพื้นที่เลือก`;
@@ -223,10 +233,16 @@ function updateParentFilterStatusBanner(sharedActiveData) {
     const hasRef = !!referencePoint;
     const isRadiusMode = (mapPinMode === 'radius');
     const hasProv = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
+    const hasDistOrSubdist = Boolean(
+      (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
+      (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
+    );
+    const hasOnlyProjFilter = !!(inMapFilterState && inMapFilterState.onlyWithProject);
     const hasProjFilter = inMapFilterState && ((inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) || (inMapFilterState.samProject && inMapFilterState.samProject !== ''));
+    const isProvOnlyWaitingForDist = !hasRef && !hasProjFilter && !hasOnlyProjFilter && mapPinMode === 'location' && hasProv && !hasDistOrSubdist;
     const activeData = Array.isArray(sharedActiveData) ? sharedActiveData : _getSharedActiveParentData();
 
-    const matchedCount = activeData.length;
+    const matchedCount = isProvOnlyWaitingForDist ? 0 : activeData.length;
 
     // 1. Mode Badge
     const modeBadgeEl = pdoc.getElementById('active-filter-mode-val');
@@ -270,7 +286,7 @@ function updateParentFilterStatusBanner(sharedActiveData) {
         const cleanD = dist.split(' (')[0].trim();
         locStr = `จ.${prov || '-'} > อ.${cleanD}`;
       } else if (prov) {
-        locStr = `จ.${prov}`;
+        locStr = isProvOnlyWaitingForDist ? `จ.${prov} (รอเลือกอำเภอ/เขต)` : `จ.${prov}`;
       }
 
       if (hasProjFilter) {

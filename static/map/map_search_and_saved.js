@@ -949,9 +949,15 @@ function setMapPinMode(mode) {
     referencePoint = null;
     updateDeckLayers();
     updateSvgBoundaries();
-    const hasProvSelected = currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__';
+    const hasProvSelected = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
+    const hasDistOrSubdistSelected = Boolean(
+      (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
+      (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
+    );
     if (!hasProvSelected) {
-      showToast('<i class="fa-solid fa-hand-pointer" style="color:#059669; margin-right:6px;"></i>กรุณาเลือกจังหวัดทางซ้ายบน เพื่อแสดงหมุดตามทำเล');
+      showToast('<i class="fa-solid fa-hand-pointer" style="color:#059669; margin-right:6px;"></i>กรุณาเลือกจังหวัดและอำเภอ/เขต ทางซ้ายบน เพื่อแสดงหมุดตามทำเล');
+    } else if (!hasDistOrSubdistSelected) {
+      showToast('<i class="fa-solid fa-hand-pointer" style="color:#059669; margin-right:6px;"></i>กรุณาเลือกอำเภอ/เขต ทางซ้ายบน เพื่อแสดงหมุดตามทำเล');
     }
   }
 
@@ -1236,8 +1242,8 @@ function flyToCurrentLocation() {
 }
 
 function onMapProvinceChange(prov) {
+  const selectedProv = (prov && prov.trim() !== '' && prov.trim() !== 'all' && prov.trim() !== '__ALL__') ? prov.trim() : '';
   try {
-    const selectedProv = (prov && prov.trim() !== '' && prov.trim() !== 'all' && prov.trim() !== '__ALL__') ? prov.trim() : '';
     currentSelectedProv = selectedProv;
     currentSelectedDist = '';
     currentSelectedSubdist = '';
@@ -1290,6 +1296,11 @@ function onMapProvinceChange(prov) {
     // 5. Center & Fly to province
     flyToCurrentLocation();
 
+    const hasActiveProj = inMapFilterState && ((inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) || (inMapFilterState.samProject && inMapFilterState.samProject !== '') || inMapFilterState.onlyWithProject);
+    if (selectedProv && !hasActiveProj) {
+      showToast(`<i class="fa-solid fa-map-location-dot" style="color:#059669; margin-right:6px;"></i>จังหวัด${escapeHtml(selectedProv)}: กรุณาเลือกอำเภอ/เขต เพื่อแสดงหมุดทรัพย์สิน`);
+    }
+
     // 6. Update Parent Window URL parameter quietly without page reload
     if (window.parent) {
       const u = new URL(window.parent.location.href);
@@ -1339,8 +1350,8 @@ function onMapProvinceChange(prov) {
 }
 
 function onMapDistrictChange(dist) {
+  const selectedDist = (dist && dist.trim() !== '' && dist.trim() !== 'all' && dist.trim() !== '__ALL__') ? dist.trim() : '';
   try {
-    const selectedDist = (dist && dist.trim() !== '' && dist.trim() !== 'all' && dist.trim() !== '__ALL__') ? dist.trim() : '';
     currentSelectedDist = selectedDist;
     currentSelectedSubdist = '';
     currentRefProp = null;
@@ -1430,8 +1441,8 @@ function onMapDistrictChange(dist) {
 }
 
 function onMapSubdistrictChange(subdist) {
+  const selectedSubdist = (subdist && subdist.trim() !== '' && subdist.trim() !== 'all' && subdist.trim() !== '__ALL__') ? subdist.trim() : '';
   try {
-    const selectedSubdist = (subdist && subdist.trim() !== '' && subdist.trim() !== 'all' && subdist.trim() !== '__ALL__') ? subdist.trim() : '';
     currentSelectedSubdist = selectedSubdist;
     currentRefProp = null;
     referencePoint = null;

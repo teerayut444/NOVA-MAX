@@ -381,11 +381,17 @@ function updateLegendContent() {
   ));
 
   let dataForLegend = [];
+  const hasProvSelectedForLegend = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
+  const hasDistOrSubdistForLegend = Boolean(
+    (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
+    (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
+  );
+  const hasOnlyProjForLegend = !!(inMapFilterState && inMapFilterState.onlyWithProject);
+
   if (hasProjFilter) {
     dataForLegend = (currentNearbyData && currentNearbyData.length > 0) ? currentNearbyData : (currentScopePool || []);
   } else if (mapPinMode === 'location') {
-    const hasProvSelected = currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__';
-    if (!hasProvSelected) {
+    if (!hasDistOrSubdistForLegend && !hasOnlyProjForLegend) {
       dataForLegend = [];
     } else {
       dataForLegend = currentNearbyData || [];
@@ -410,7 +416,13 @@ function updateLegendContent() {
     if (hasProjFilter) {
       emptyMsg = 'ไม่พบพิกัดทรัพย์สินในโครงการที่เลือก';
     } else if (mapPinMode === 'location') {
-      emptyMsg = (currentSelectedProv && currentSelectedProv !== '__ALL__') ? 'ไม่พบทรัพย์สินตามเงื่อนไขที่เลือก' : 'กรุณาเลือกจังหวัดในแถบด้านบน';
+      if (hasDistOrSubdistForLegend || hasOnlyProjForLegend) {
+        emptyMsg = 'ไม่พบทรัพย์สินตามเงื่อนไขที่เลือก';
+      } else if (hasProvSelectedForLegend) {
+        emptyMsg = 'กรุณาเลือกอำเภอ/เขต เพื่อแสดงหมุดทรัพย์สิน';
+      } else {
+        emptyMsg = 'กรุณาเลือกจังหวัดและอำเภอ/เขต ในแถบด้านบน';
+      }
     } else {
       emptyMsg = referencePoint ? 'ไม่พบทรัพย์สินในรัศมีที่กำหนด' : 'คลิกบนแผนที่เพื่อปักหมุดรัศมี';
     }
@@ -1824,27 +1836,39 @@ function applyInMapFilters(skipParentNotify = false) {
       countEl.innerText = `โครงการ: ${projDesc}${locDesc} (${currentNearbyData.length.toLocaleString()} รายการ)`;
     }
   } else if (mapPinMode === 'location') {
-    const hasProvSelected = currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__';
+    const hasProvSelected = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
+    const hasDistOrSubdistSelected = Boolean(
+      (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
+      (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
+    );
     const hasOnlyProjFilter = !!(inMapFilterState && inMapFilterState.onlyWithProject);
     const hasCompaniesFilter = !!(inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0);
-    const allowNationwidePins = hasOnlyProjFilter || (hasCompaniesFilter && inMapFilterState.companies.size <= 2);
 
-    if (!hasProvSelected && !allowNationwidePins) {
+    if (!hasDistOrSubdistSelected && !hasOnlyProjFilter) {
       currentScopePool = [];
       currentNearbyData = [];
       currentCoordMap = new Map();
       updateDuplicateStats(currentNearbyData, currentCoordMap);
 
       const statusEl = document.getElementById('radius-status-text');
-      if (statusEl) {
-        statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-map-location-dot" style="margin-right:4px;"></i> ทุกจังหวัด:</span> กรุณาเลือกจังหวัด เพื่อแสดงหมุดตามทำเล`;
-      }
       const countEl = document.getElementById('points-count');
-      if (countEl) {
-        countEl.innerText = `ทุกจังหวัด: กรุณาเลือกจังหวัดเพื่อแสดงหมุด`;
+      if (hasProvSelected) {
+        if (statusEl) {
+          statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-map-location-dot" style="margin-right:4px;"></i> ${escapeHtml(currentSelectedProv)}:</span> กรุณาเลือกอำเภอ/เขต เพื่อแสดงหมุดทรัพย์สิน`;
+        }
+        if (countEl) {
+          countEl.innerText = `${currentSelectedProv}: กรุณาเลือกอำเภอ/เขต เพื่อแสดงหมุดทรัพย์สิน`;
+        }
+      } else {
+        if (statusEl) {
+          statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-map-location-dot" style="margin-right:4px;"></i> ทุกจังหวัด:</span> กรุณาเลือกจังหวัดและอำเภอ/เขต เพื่อแสดงหมุดตามทำเล`;
+        }
+        if (countEl) {
+          countEl.innerText = `ทุกจังหวัด: กรุณาเลือกจังหวัดและอำเภอ/เขต เพื่อแสดงหมุด`;
+        }
       }
     } else {
-      // Location mode: either specific location or nationwide with specific filters (e.g. onlyWithProject)
+      // Location mode: district/subdistrict selected OR nationwide/province with onlyWithProject filter
       currentScopePool = hasProvSelected ? (cachedData || []).filter(isItemInCurrentLocation) : (cachedData || []);
       currentNearbyData = currentScopePool.filter(filterItemPasses);
       currentCoordMap = buildCoordMap(currentNearbyData);

@@ -413,7 +413,7 @@ def render_tab2_map_view(df_raw, df_filtered, is_dark_mode):
 
                 base_with_static = ""
                 if not map_data_empty:
-                    base_tmpl = get_base_map_html(_tmpl_mtime)
+                    base_tmpl = get_base_map_html((_tmpl_mtime, _cur_builder_ver))
                     atlas_uri, icon_mapping = get_map_icon_atlas_and_mapping(128, include_session_custom=has_custom_import)
                     company_logos_dict = get_leaflet_logo_dict(72, include_session_custom=has_custom_import)
                     base_with_static = _replace_placeholders_single_pass(

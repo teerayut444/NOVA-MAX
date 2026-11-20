@@ -402,8 +402,7 @@ def resolve_tab2_sync_and_filter_state(
                     st.session_state["tab2_filter_subdistricts"] = [r_subdist] if r_subdist not in _INVALID_LOC_TOKENS else []
 
             has_loc_synced = (
-                (q_prov is not None and str(q_prov).strip() not in ("", "ALL", "__ALL__", "all"))
-                or (q_dist is not None and str(q_dist).strip() not in ("", "ALL", "__ALL__", "all"))
+                (q_dist is not None and str(q_dist).strip() not in ("", "ALL", "__ALL__", "all"))
                 or (q_subdist is not None and str(q_subdist).strip() not in ("", "ALL", "__ALL__", "all"))
                 or bool(q_id)
             )
@@ -591,17 +590,31 @@ def resolve_tab2_sync_and_filter_state(
 
     pin_mode = st.session_state.get("tab2_pin_mode") or st.query_params.get("map_pin_mode", "radius")
     has_ref_point = _is_valid_thai_coord(active_ref_lat, active_ref_lon)
-    has_loc_filter = bool(active_prov or active_dist or active_subdist or active_proj)
+    has_loc_filter = bool(active_dist or active_subdist or active_proj)
     active_compare_ids = st.session_state.get("tab2_compare_ids", [])
 
-    has_any_filter = bool(
-        has_ref_point or has_loc_filter or map_cos or q_only_proj or map_types or map_sales
-        or (map_min_p > 0) or (map_max_p > 0) or (map_min_sqw > 0) or (map_max_sqw > 0)
-        or (map_min_sqm > 0) or (map_max_sqm > 0) or (map_min_puw > 0) or (map_max_puw > 0)
-        or (map_min_pum > 0) or (map_max_pum > 0) or map_floors or (map_min_fl > 0) or (map_max_fl > 0)
-        or map_beds or map_baths or map_pkgs or (map_max_age > 0)
-        or bool(active_compare_ids) or (active_ref_prop is not None)
+    is_prov_only_waiting = bool(
+        active_prov
+        and not active_dist
+        and not active_subdist
+        and not active_proj
+        and not q_only_proj
+        and not has_ref_point
+        and not active_compare_ids
+        and (active_ref_prop is None)
     )
+
+    if is_prov_only_waiting:
+        has_any_filter = False
+    else:
+        has_any_filter = bool(
+            has_ref_point or has_loc_filter or map_cos or q_only_proj or map_types or map_sales
+            or (map_min_p > 0) or (map_max_p > 0) or (map_min_sqw > 0) or (map_max_sqw > 0)
+            or (map_min_sqm > 0) or (map_max_sqm > 0) or (map_min_puw > 0) or (map_max_puw > 0)
+            or (map_min_pum > 0) or (map_max_pum > 0) or map_floors or (map_min_fl > 0) or (map_max_fl > 0)
+            or map_beds or map_baths or map_pkgs or (map_max_age > 0)
+            or bool(active_compare_ids) or (active_ref_prop is not None)
+        )
 
     return {
         "active_ref_lat": active_ref_lat,
