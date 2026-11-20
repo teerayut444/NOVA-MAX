@@ -133,13 +133,14 @@ def render_tab2_reference_analytics_fragment(
         except Exception:
             pass
 
-    # Ensure Tab 2 reference analytics strictly operates on properties with valid coordinates
+    # Ensure Tab 2 reference analytics strictly operates on properties with valid coordinates (avoid full copy if all valid)
     if df_raw is not None and not df_raw.empty and 'ละติจูด' in df_raw.columns and 'ลองจิจูด' in df_raw.columns:
         valid_coords_mask = (
             df_raw['ละติจูด'].notna() & df_raw['ลองจิจูด'].notna() &
             df_raw['ละติจูด'].between(5, 21) & df_raw['ลองจิจูด'].between(97, 106)
         )
-        df_raw = df_raw[valid_coords_mask]
+        if not bool(valid_coords_mask.all()):
+            df_raw = df_raw.loc[valid_coords_mask]
 
 
     # 0–2. Process map sync bridge and resolve all coordinates, reference props, and active filters

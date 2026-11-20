@@ -20,7 +20,7 @@ _TH_TZ = timezone(timedelta(hours=7))
 _STATIC_DIR = _ROOT_DIR / "static"
 _LEGACY_STATIC_MAP_PAYLOAD_PATH = str(_STATIC_DIR / "map_payload_cache.js")
 _STATIC_PAYLOAD_LOCK = threading.Lock()
-_SERVER_PAYLOAD_SECRET = secrets.token_bytes(32)
+_SERVER_PAYLOAD_SECRET = b"NOVA_NPA_STATIC_MAP_BUNDLE_V3_2026"
 
 from modules.config.constants import COMPANY_COLORS
 from modules.services.data_cleaner import (
@@ -88,8 +88,35 @@ def _default_company_map_rgb():
     return out
 
 
+_INVALID_STR_TOKENS = {'', 'nan', 'None', '<NA>', 'NaN', 'null', 'undefined'}
+
+
 def _safe_str_series(series, default=''):
     """Categorical-safe conversion to stripped string Series on Pandas 3.0."""
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        cats = [str(c).strip() for c in series.cat.categories]
+        cats = [default if c in _INVALID_STR_TOKENS else c for c in cats]
+        # Build deduplicated category list and remap codes without unpacking 461k object strings
+        seen = {}
+        new_cats = []
+        remap = np.empty(len(cats) + 1, dtype='int32')
+        for idx, c in enumerate(cats):
+            pos = seen.get(c)
+            if pos is None:
+                pos = len(new_cats)
+                seen[c] = pos
+                new_cats.append(c)
+            remap[idx] = pos
+        def_pos = seen.get(default)
+        if def_pos is None:
+            def_pos = len(new_cats)
+            seen[default] = def_pos
+            new_cats.append(default)
+        remap[len(cats)] = def_pos
+        codes = series.cat.codes.to_numpy(dtype='int32', copy=False)
+        safe_codes = np.where(codes >= 0, codes, len(cats))
+        mapped_codes = remap[safe_codes]
+        return pd.Series(pd.Categorical.from_codes(mapped_codes, categories=new_cats), index=series.index)
     s = series.astype(object).fillna(default).astype(str).str.strip()
     return s.replace({'': default, 'nan': default, 'None': default, '<NA>': default, 'NaN': default, 'null': default, 'undefined': default})
 
@@ -118,6 +145,17 @@ def get_data_mtime():
     if p.exists():
         return p.stat().st_mtime
     return 0
+
+
+def get_data_size_token():
+    """Deterministic dataset byte-size fingerprint identical across local machine and Streamlit Cloud git clone."""
+    p = get_latest_parquet_path()
+    if p.exists():
+        try:
+            return str(p.stat().st_size)
+        except Exception:
+            pass
+    return "0"
 
 
 def get_data_mtime_token(data_mtime=None):
@@ -153,28 +191,34 @@ def get_cache_builder_version():
 
 
 def get_static_map_payload_meta(data_mtime=None, th_date=None):
-    """Returns tokenized, unguessable 128-bit static payload metadata for the current server boot & dataset version."""
+    """Returns deterministic 128-bit static payload metadata keyed by dataset byte size so pre-built .gz works on Cloud."""
     mtime_token = get_data_mtime_token(data_mtime)
     day_str = str(th_date or _today_th_str())
+    size_token = get_data_size_token()
     token_hex = hmac.new(
         _SERVER_PAYLOAD_SECRET,
-        f"map|{mtime_token}|{day_str}".encode("utf-8"),
+        f"map|sz={size_token}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()[:32]
     filename = f"map_payload_{token_hex}.gz"
+    sidecar_filename = f"map_meta_{token_hex}.json.gz"
     full_path = str(_STATIC_DIR / filename)
+    sidecar_path = str(_STATIC_DIR / sidecar_filename)
     return {
         "filename": filename,
         "path": full_path,
+        "sidecar_filename": sidecar_filename,
+        "sidecar_path": sidecar_path,
         "url": f"/app/static/{filename}",
         "token": token_hex,
         "mtime": mtime_token,
         "th_date": day_str,
+        "size_token": size_token,
     }
 
 
-def _cleanup_stale_map_payload_files(keep_filename=None):
-    """Deletes legacy predictable map_payload_cache.js and any outdated tokenized map_payload_*.gz files."""
+def _cleanup_stale_map_payload_files(keep_filename=None, keep_sidecar=None):
+    """Deletes legacy predictable map_payload_cache.js and any outdated tokenized map_payload_*.gz / map_meta_*.gz files."""
     try:
         if os.path.exists(_LEGACY_STATIC_MAP_PAYLOAD_PATH):
             os.remove(_LEGACY_STATIC_MAP_PAYLOAD_PATH)
@@ -184,9 +228,9 @@ def _cleanup_stale_map_payload_files(keep_filename=None):
         if _STATIC_DIR.exists():
             for p in _STATIC_DIR.iterdir():
                 name = p.name
-                if name == keep_filename:
+                if name in (keep_filename, keep_sidecar):
                     continue
-                if (name.startswith("map_payload_") and (name.endswith(".gz") or name.endswith(".js") or ".tmp." in name)):
+                if (name.startswith(("map_payload_", "map_meta_")) and (name.endswith(".gz") or name.endswith(".js") or ".tmp." in name)):
                     try:
                         p.unlink()
                     except Exception:
@@ -195,51 +239,66 @@ def _cleanup_stale_map_payload_files(keep_filename=None):
         pass
 
 
-def ensure_static_map_payload_gz(data_mtime, lookup_obj, csv_utf8_bytes, th_date=None):
-    """Writes a single-pass GZIP JSON bundle to a tokenized 128-bit static path under /app/static/.
-
-    Uses threading.Lock + temp-file + os.replace so concurrent LAN requests never race or see partial writes,
-    and automatically deletes legacy predictable map_payload_cache.js and stale tokenized payloads.
-    """
+def ensure_static_map_payload_gz(data_mtime, lookup_obj, csv_utf8_bytes, th_date=None, legend_content="", map_data_full_len=0, sam_project_options=None):
+    """Writes a single-pass GZIP JSON bundle and lightweight metadata sidecar under /app/static/."""
     if not csv_utf8_bytes:
         return None
     meta = get_static_map_payload_meta(data_mtime=data_mtime, th_date=th_date)
     target = meta["path"]
+    sidecar_target = meta["sidecar_path"]
 
     with _STATIC_PAYLOAD_LOCK:
-        try:
-            if os.path.exists(target) and os.path.getsize(target) > 0:
-                _cleanup_stale_map_payload_files(keep_filename=meta["filename"])
-                return meta
-        except Exception:
-            pass
-
         os.makedirs(os.path.dirname(target), exist_ok=True)
-        tmp_path = f"{target}.tmp.{os.getpid()}.{threading.get_ident()}"
-        try:
-            csv_str = csv_utf8_bytes.decode("utf-8") if isinstance(csv_utf8_bytes, (bytes, bytearray)) else str(csv_utf8_bytes)
-            payload_bytes = json.dumps(
-                {
-                    "mtime": meta["mtime"],
-                    "th_date": meta["th_date"],
-                    "lut": lookup_obj or {},
-                    "csv": csv_str,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8")
-            with gzip.open(tmp_path, "wb", compresslevel=6) as gz_out:
-                gz_out.write(payload_bytes)
-            os.replace(tmp_path, target)
-            _cleanup_stale_map_payload_files(keep_filename=meta["filename"])
-            return meta
-        except Exception:
+        if not (os.path.exists(target) and os.path.getsize(target) > 0):
+            tmp_path = f"{target}.tmp.{os.getpid()}.{threading.get_ident()}"
             try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+                csv_str = csv_utf8_bytes.decode("utf-8") if isinstance(csv_utf8_bytes, (bytes, bytearray)) else str(csv_utf8_bytes)
+                payload_bytes = json.dumps(
+                    {
+                        "mtime": meta["mtime"],
+                        "th_date": meta["th_date"],
+                        "lut": lookup_obj or {},
+                        "csv": csv_str,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                with gzip.open(tmp_path, "wb", compresslevel=6) as gz_out:
+                    gz_out.write(payload_bytes)
+                os.replace(tmp_path, target)
             except Exception:
-                pass
-            return None
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
+                return None
+
+        if legend_content or map_data_full_len > 0 or sam_project_options is not None:
+            tmp_sc = f"{sidecar_target}.tmp.{os.getpid()}.{threading.get_ident()}"
+            try:
+                sc_bytes = json.dumps(
+                    {
+                        "size_token": meta["size_token"],
+                        "legend_content": legend_content,
+                        "map_data_full_len": int(map_data_full_len),
+                        "sam_project_options": list(sam_project_options) if sam_project_options is not None else None,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                with gzip.open(tmp_sc, "wb", compresslevel=6) as gz_sc:
+                    gz_sc.write(sc_bytes)
+                os.replace(tmp_sc, sidecar_target)
+            except Exception:
+                try:
+                    if os.path.exists(tmp_sc):
+                        os.remove(tmp_sc)
+                except Exception:
+                    pass
+
+        _cleanup_stale_map_payload_files(keep_filename=meta["filename"], keep_sidecar=meta["sidecar_filename"])
+        return meta
 
 
 def ensure_static_map_payload_file(data_mtime, lookup_b64, csv_base64, th_date=None):
@@ -295,11 +354,25 @@ def load_properties_data(data_version=0):
 load_properties_data.clear = _load_properties_data_cached.clear
 
 
-@st.cache_data(show_spinner=False, max_entries=8)
+@st.cache_resource(show_spinner=False, max_entries=4)
 def _get_sam_project_options_cached(_df, cache_key=None):
     """Single cached computation returning full 5-tuple project inventory so Welcome Screen and Tab 2 share 1 entry."""
     if _df is None or _df.empty or 'ชื่อโครงการ' not in _df.columns or 'บริษัท' not in _df.columns:
         return [], {}, [], [], {}
+
+    # Fast-path: load precomputed project options from sidecar if base dataset (no custom upload)
+    is_base_dataset = (not isinstance(cache_key, tuple)) or (len(cache_key) < 3) or (cache_key[2] is None)
+    if is_base_dataset:
+        try:
+            meta = get_static_map_payload_meta()
+            if os.path.exists(meta["sidecar_path"]):
+                with gzip.open(meta["sidecar_path"], "rb") as gz_sc:
+                    sc_data = json.loads(gz_sc.read().decode("utf-8"))
+                spo = sc_data.get("sam_project_options")
+                if isinstance(spo, list) and len(spo) == 5 and spo[0]:
+                    return spo[0], spo[1], spo[2], spo[3], spo[4]
+        except Exception:
+            pass
 
     from modules.services.data_cleaner import (
         is_invalid_project_name,
@@ -308,32 +381,96 @@ def _get_sam_project_options_cached(_df, cache_key=None):
         clean_display_project_name,
     )
 
-    df_sub = _df[['ชื่อโครงการ', 'บริษัท']].dropna().copy()
-    p_clean_s = _safe_str_series(df_sub['ชื่อโครงการ'], '')
-    df_sub['p_clean'] = p_clean_s
-    unique_projs = p_clean_s.unique()
-    p_to_norm = {
-        p: normalize_project_name(p)
-        for p in unique_projs
-        if p and not is_invalid_project_name(p)
-    }
-    df_sub['norm_k'] = p_clean_s.map(p_to_norm).fillna('')
-    # Filter by non-empty norm_k (length > 2) directly without scanning 461k rows via is_invalid_project_name again
-    df_sub = df_sub[df_sub['norm_k'].str.len() > 2]
-    if df_sub.empty:
+    has_norm_col = 'norm_project_name' in _df.columns
+    if has_norm_col:
+        pair_vc = _df.groupby(['ชื่อโครงการ', 'norm_project_name', 'บริษัท'], observed=True).size()
+        pair_vc = pair_vc[pair_vc > 0]
+    else:
+        pair_vc = _df.groupby(['ชื่อโครงการ', 'บริษัท'], observed=True).size()
+        pair_vc = pair_vc[pair_vc > 0]
+
+    if pair_vc.empty:
         return [], {}, [], [], {}
 
-    is_sam = df_sub['บริษัท'].astype(str).str.strip().str.upper() == 'SAM'
-    sam_sub = df_sub[is_sam]
-    comp_sub = df_sub[~is_sam]
+    sam_counts = {}
+    comp_counts = {}
+    comp_companies_sets = {}
+    norm_groups = {}
+    raw_counts = {}
+    sam_raw_counts = {}
+    invalid_cache = {}
+    norm_cache = {}
 
-    sam_counts = sam_sub.groupby('norm_k').size()
-    comp_counts = comp_sub.groupby('norm_k').size()
-    comp_companies_sets = comp_sub.groupby('norm_k')['บริษัท'].apply(lambda s: set(s.astype(str))).to_dict()
+    if has_norm_col:
+        for (raw_p, raw_nk, raw_co), cnt in pair_vc.items():
+            p = str(raw_p).strip()
+            if not p or p in _INVALID_STR_TOKENS:
+                continue
+            nk = str(raw_nk).strip()
+            if len(nk) <= 2 or nk in _INVALID_STR_TOKENS:
+                continue
+            inv = invalid_cache.get(p)
+            if inv is None:
+                inv = is_invalid_project_name(p)
+                invalid_cache[p] = inv
+            if inv:
+                continue
+            cnt_i = int(cnt)
+            raw_counts[p] = raw_counts.get(p, 0) + cnt_i
+            ng = norm_groups.get(nk)
+            if ng is None:
+                norm_groups[nk] = [p]
+            elif p not in ng:
+                ng.append(p)
+            co_s = str(raw_co).strip()
+            if co_s.upper() == 'SAM':
+                sam_counts[nk] = sam_counts.get(nk, 0) + cnt_i
+                sam_raw_counts[p] = sam_raw_counts.get(p, 0) + cnt_i
+            else:
+                comp_counts[nk] = comp_counts.get(nk, 0) + cnt_i
+                cs = comp_companies_sets.get(nk)
+                if cs is None:
+                    comp_companies_sets[nk] = {co_s}
+                else:
+                    cs.add(co_s)
+    else:
+        for (raw_p, raw_co), cnt in pair_vc.items():
+            p = str(raw_p).strip()
+            if not p or p in _INVALID_STR_TOKENS:
+                continue
+            inv = invalid_cache.get(p)
+            if inv is None:
+                inv = is_invalid_project_name(p)
+                invalid_cache[p] = inv
+            if inv:
+                continue
+            nk = norm_cache.get(p)
+            if nk is None:
+                nk = normalize_project_name(p)
+                norm_cache[p] = nk
+            if len(nk) <= 2:
+                continue
+            cnt_i = int(cnt)
+            raw_counts[p] = raw_counts.get(p, 0) + cnt_i
+            ng = norm_groups.get(nk)
+            if ng is None:
+                norm_groups[nk] = [p]
+            elif p not in ng:
+                ng.append(p)
+            co_s = str(raw_co).strip()
+            if co_s.upper() == 'SAM':
+                sam_counts[nk] = sam_counts.get(nk, 0) + cnt_i
+                sam_raw_counts[p] = sam_raw_counts.get(p, 0) + cnt_i
+            else:
+                comp_counts[nk] = comp_counts.get(nk, 0) + cnt_i
+                cs = comp_companies_sets.get(nk)
+                if cs is None:
+                    comp_companies_sets[nk] = {co_s}
+                else:
+                    cs.add(co_s)
 
-    norm_groups = df_sub.groupby('norm_k')['p_clean'].unique().to_dict()
-    raw_counts = df_sub['p_clean'].value_counts().to_dict()
-    sam_raw_counts = sam_sub['p_clean'].value_counts().to_dict()
+    if not norm_groups:
+        return [], {}, [], [], {}
 
     # Merge canonical display collisions instead of dropping later groups
     canonical_agg = {}  # can_p -> {"sam": int, "comp": int, "comp_cos": set}
@@ -792,7 +929,24 @@ def build_map_payload_from_df(
 
 @st.cache_resource(show_spinner=False, max_entries=1)
 def _ensure_static_map_bundle_cached(data_mtime, th_date):
-    """Builds the nationwide map payload, writes it to disk as .gz, and frees the ~80 MB raw CSV from RAM."""
+    """Loads pre-built static .gz map bundle & sidecar metadata from disk in <20ms (0 GB RAM spike), or builds once if missing."""
+    meta = get_static_map_payload_meta(data_mtime=data_mtime, th_date=th_date)
+    if (
+        os.path.exists(meta["path"])
+        and os.path.getsize(meta["path"]) > 0
+        and os.path.exists(meta["sidecar_path"])
+        and os.path.getsize(meta["sidecar_path"]) > 0
+    ):
+        try:
+            with gzip.open(meta["sidecar_path"], "rb") as gz_sc:
+                sc_data = json.loads(gz_sc.read().decode("utf-8"))
+            leg = str(sc_data.get("legend_content") or "")
+            cnt = int(sc_data.get("map_data_full_len") or 0)
+            if leg and cnt > 0:
+                return leg, cnt, meta, "", ""
+        except Exception:
+            pass
+
     df = load_properties_data(data_mtime)
     csv_utf8_bytes, lookup_obj, legend_content, map_data_full_len = _build_map_payload_raw_from_df(
         df,
@@ -805,7 +959,16 @@ def _ensure_static_map_bundle_cached(data_mtime, th_date):
     if map_data_full_len == 0:
         return "", 0, None, "", ""
 
-    static_meta = ensure_static_map_payload_gz(data_mtime, lookup_obj, csv_utf8_bytes, th_date=th_date)
+    spo = get_sam_project_options(df, cache_key=(data_mtime, len(df), None), return_meta=True)
+    static_meta = ensure_static_map_payload_gz(
+        data_mtime,
+        lookup_obj,
+        csv_utf8_bytes,
+        th_date=th_date,
+        legend_content=legend_content,
+        map_data_full_len=map_data_full_len,
+        sam_project_options=spo,
+    )
     if static_meta is not None:
         csv_inject = ""
         lut_inject = ""
@@ -909,11 +1072,10 @@ def precompute_full_map_html(data_mtime):
     _day_str = _today_th_str()
     _payload_meta = get_static_map_payload_meta(data_mtime=data_mtime, th_date=_day_str)
 
-    # Self-heal if tokenized static payload file is missing even though resource/session cache exists
-    if not os.path.exists(_payload_meta["path"]):
+    # Self-heal if tokenized static payload or sidecar file is missing even though resource/session cache exists
+    if not os.path.exists(_payload_meta["path"]) or not os.path.exists(_payload_meta["sidecar_path"]):
         _ensure_static_map_bundle_cached.clear()
         _build_full_map_html_v2.clear()
-        _ensure_static_map_bundle_cached(data_mtime, _day_str)
 
     if (
         "cached_map_html_base" in st.session_state

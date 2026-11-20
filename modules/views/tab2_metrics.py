@@ -131,32 +131,51 @@ def _fmt_coord_val(row, coord_col):
         return '-'
 
 
+_PURE_LAND_POS_RE = re.compile(r'ที่ดินเปล่า|ที่ดิน')
+_PURE_LAND_NEG_RE = re.compile(r'บ้าน|อาคาร|ทาวน์|คอนโด|ตึก|โรงงาน|พาณิชย์|หอพัก|สิ่งปลูกสร้าง|พร้อมสิ่งปลูกสร้าง')
+
+
 def _check_pure_land_mask_global(s_types):
+    if isinstance(s_types.dtype, pd.CategoricalDtype):
+        pure_cats = [
+            c for c in s_types.cat.categories
+            if _PURE_LAND_POS_RE.search(str(c)) and not _PURE_LAND_NEG_RE.search(str(c))
+        ]
+        return s_types.isin(pure_cats).fillna(False).astype(bool)
     p = s_types.astype(str)
     return p.str.contains('ที่ดินเปล่า|ที่ดิน', regex=True, na=False) & \
         ~p.str.contains('บ้าน|อาคาร|ทาวน์|คอนโด|ตึก|โรงงาน|พาณิชย์|หอพัก|สิ่งปลูกสร้าง|พร้อมสิ่งปลูกสร้าง', regex=True, na=False)
 
 
-def _extract_pure_land_pool_global(df_cand):
+def _extract_pure_land_pool_global(df_cand, slim_columns=False):
     if df_cand is None or df_cand.empty or 'ประเภททรัพย์' not in df_cand.columns or 'ราคา' not in df_cand.columns:
         return pd.DataFrame(), pd.Series(dtype=float)
     is_pure = _check_pure_land_mask_global(df_cand['ประเภททรัพย์'])
     p_num = pd.to_numeric(df_cand['ราคา'], errors='coerce')
-    pure_df = df_cand[is_pure & (p_num > 0)].copy()
-    if pure_df.empty:
-        return pure_df, pd.Series(dtype=float)
+    mask = is_pure & (p_num > 0)
+    if not mask.any():
+        return pd.DataFrame(), pd.Series(dtype=float)
 
-    rates = _sqw_rate_from_df(pure_df)
-    pure_df['rate_per_sqw'] = rates
-    pure_df['ราคาต่อหน่วย'] = rates
-    valid_mask = pure_df['rate_per_sqw'].notna() & (pure_df['rate_per_sqw'] > 0)
-    valid_rates = pure_df.loc[valid_mask, 'rate_per_sqw']
-    return pure_df.loc[valid_mask], valid_rates
+    sub_df = df_cand.loc[mask]
+    rates = _sqw_rate_from_df(sub_df, price_vals=p_num.loc[mask])
+    valid_mask = rates.notna() & (rates > 0)
+    if not valid_mask.any():
+        return pd.DataFrame(), pd.Series(dtype=float)
+
+    valid_rates = rates.loc[valid_mask]
+    if slim_columns:
+        cols_keep = [c for c in ('บริษัท', 'ระยะทาง (กม.)') if c in sub_df.columns]
+        pure_df = sub_df.loc[valid_mask, cols_keep].copy()
+    else:
+        pure_df = sub_df.loc[valid_mask].copy()
+    pure_df['rate_per_sqw'] = valid_rates
+    pure_df['ราคาต่อหน่วย'] = valid_rates
+    return pure_df, valid_rates
 
 
-@st.cache_data(show_spinner=False, max_entries=4)
+@st.cache_resource(show_spinner=False, max_entries=2)
 def _get_cached_nationwide_pure_land(_df_raw, cache_key=None):
-    return _extract_pure_land_pool_global(_df_raw)
+    return _extract_pure_land_pool_global(_df_raw, slim_columns=True)
 
 
 def _clean_str_series(s, default='-'):

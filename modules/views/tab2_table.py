@@ -391,20 +391,23 @@ def _build_tab2_show_df_cached(
 
 
 def precompute_tab2_default_analytics(df_raw, data_mtime=0):
-    """Pre-warms only the nationwide pure-land benchmark cache hit by Tab 2 filters (removes 0%-hit table build)."""
+    """Pre-warms only the nationwide pure-land benchmark cache hit by Tab 2 filters (without copying 461k rows)."""
     if df_raw is None or df_raw.empty:
         return
-    if 'ละติจูด' in df_raw.columns and 'ลองจิจูด' in df_raw.columns:
+    needed_cols = [c for c in ('บริษัท', 'ประเภททรัพย์', 'ราคา', 'พื้นที่_ตารางวา', 'เนื้อที่ (ตร.ว.)', 'ราคาต่อตารางวา', 'ราคาต่อหน่วย', 'ละติจูด', 'ลองจิจูด') if c in df_raw.columns]
+    df_sub = df_raw[needed_cols]
+    if 'ละติจูด' in df_sub.columns and 'ลองจิจูด' in df_sub.columns:
         valid_coords_mask = (
-            df_raw['ละติจูด'].notna() & df_raw['ลองจิจูด'].notna() &
-            df_raw['ละติจูด'].between(5, 21) & df_raw['ลองจิจูด'].between(97, 106)
+            df_sub['ละติจูด'].notna() & df_sub['ลองจิจูด'].notna() &
+            df_sub['ละติจูด'].between(5, 21) & df_sub['ลองจิจูด'].between(97, 106)
         )
-        df_raw = df_raw[valid_coords_mask]
-    if df_raw.empty:
+        if not bool(valid_coords_mask.all()):
+            df_sub = df_sub.loc[valid_coords_mask]
+    if df_sub.empty:
         return
 
-    base_key = (data_mtime, len(df_raw), None)
-    _get_cached_nationwide_pure_land(df_raw, cache_key=base_key)
+    base_key = (data_mtime, len(df_sub), None)
+    _get_cached_nationwide_pure_land(df_sub, cache_key=base_key)
 
 
 def render_tab2_nearby_table_and_export(

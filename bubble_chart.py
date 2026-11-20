@@ -322,23 +322,33 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
         }
     }
 
-    # Aggregate company stats in one fast vectorized pass (aligning positive price & LED_SOLD semantics with KPI Header)
+    # Aggregate company stats in one fast categorical pass (avoids unpacking 461k object strings in RAM)
+    def _norm_co_key(k):
+        s = str(k).strip()
+        return 'LED Legal' if s in ('LED_SOLD', 'LED_Legal', 'LED Legal') else s
+
     comp_stats = {}
     if df_filtered is not None and not df_filtered.empty and 'บริษัท' in df_filtered.columns:
-        co_series = df_filtered['บริษัท'].astype(object).fillna('-').astype(str).str.strip()
-        # Normalize legacy 'LED_SOLD' alias into 'LED Legal' for unified display
-        co_norm = co_series.replace({'LED_SOLD': 'LED Legal', 'LED_Legal': 'LED Legal'})
+        co_col = df_filtered['บริษัท']
         prices_num = pd.to_numeric(df_filtered['ราคา'], errors='coerce') if 'ราคา' in df_filtered.columns else pd.Series(float('nan'), index=df_filtered.index)
         pos_prices = prices_num.where(prices_num > 0)
         if 'ราคาขายได้' in df_filtered.columns:
-            legal_m = co_norm == 'LED Legal'
+            legal_m = co_col.isin(['LED Legal', 'LED_Legal', 'LED_SOLD'])
             if legal_m.any():
                 sold_num = pd.to_numeric(df_filtered.loc[legal_m, 'ราคาขายได้'], errors='coerce')
                 pos_prices = pos_prices.copy()
                 pos_prices.loc[legal_m] = sold_num.where(sold_num > 0).fillna(pos_prices.loc[legal_m])
 
-        co_counts_map = co_norm.value_counts().to_dict()
-        co_sums_map = pos_prices.groupby(co_norm, observed=True).sum().to_dict()
+        co_counts_map = {}
+        for k, v in co_col.value_counts().items():
+            nk = _norm_co_key(k)
+            co_counts_map[nk] = co_counts_map.get(nk, 0) + int(v)
+
+        co_sums_map = {}
+        for k, v in pos_prices.groupby(co_col, observed=True).sum().items():
+            nk = _norm_co_key(k)
+            co_sums_map[nk] = co_sums_map.get(nk, 0.0) + (float(v) if pd.notna(v) else 0.0)
+
         if co_sums_map:
             total_market_val = float(sum(float(v) for v in co_sums_map.values() if pd.notna(v) and v > 0))
         # Centroid counts per company (safe for both bool and string 'False' columns)
@@ -348,7 +358,10 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
                 centroid_mask = c_col.fillna(False).astype(bool)
             else:
                 centroid_mask = c_col.astype(object).fillna('').astype(str).str.strip().str.lower().isin({'true', '1', '1.0', 'yes', 't'})
-            co_centroid_map = co_norm[centroid_mask].value_counts().to_dict()
+            co_centroid_map = {}
+            for k, v in co_col[centroid_mask].value_counts().items():
+                nk = _norm_co_key(k)
+                co_centroid_map[nk] = co_centroid_map.get(nk, 0) + int(v)
         else:
             co_centroid_map = {}
     else:
@@ -360,19 +373,22 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
     if df_filtered is not None and not df_filtered.empty and 'วันที่ดึงข้อมูล' in df_filtered.columns and 'บริษัท' in df_filtered.columns:
         try:
             from modules.services.data_cleaner import _parse_announcement_date
-            _co_s = df_filtered['บริษัท'].astype(object).fillna('-').astype(str).str.strip().replace({'LED_SOLD': 'LED Legal', 'LED_Legal': 'LED Legal'})
-            _dt_pairs = pd.DataFrame({'co': _co_s, 'dt': df_filtered['วันที่ดึงข้อมูล']}).dropna().drop_duplicates()
-            _u_dts = _dt_pairs['dt'].unique()
+            _dt_vc = df_filtered.groupby(['บริษัท', 'วันที่ดึงข้อมูล'], observed=True).size()
+            _dt_vc = _dt_vc[_dt_vc > 0]
             _parsed_lut = {}
-            for _raw_v in _u_dts:
-                _sv = str(_raw_v).strip()
+            _co_dt_buckets = {}
+            for (raw_co, raw_dt), _ in _dt_vc.items():
+                _sv = str(raw_dt).strip()
                 if not _sv or _sv in ('', 'nan', 'None', '-', '<NA>', 'NaT'):
                     continue
-                _d_obj, _ = _parse_announcement_date(_sv)
+                if raw_dt not in _parsed_lut:
+                    _d_obj, _ = _parse_announcement_date(_sv)
+                    _parsed_lut[raw_dt] = _d_obj
+                _d_obj = _parsed_lut[raw_dt]
                 if _d_obj is not None:
-                    _parsed_lut[_raw_v] = _d_obj
-            for c_key, grp_dt in _dt_pairs.groupby('co', observed=True)['dt']:
-                parsed_list = [_parsed_lut[v] for v in grp_dt if v in _parsed_lut]
+                    nk = _norm_co_key(raw_co)
+                    _co_dt_buckets.setdefault(nk, []).append(_d_obj)
+            for c_key, parsed_list in _co_dt_buckets.items():
                 if parsed_list:
                     min_d = min(parsed_list)
                     m_str = thai_short_m[min_d.month - 1]
@@ -386,7 +402,7 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
     if df_filtered is not None and not df_filtered.empty and 'วันที่ขาย' in df_filtered.columns and 'บริษัท' in df_filtered.columns:
         try:
             from modules.services.data_cleaner import parse_sold_date_value
-            ls_mask = df_filtered['บริษัท'].astype(str).str.strip().isin(['LED Legal', 'LED_Legal', 'LED_SOLD'])
+            ls_mask = df_filtered['บริษัท'].isin(['LED Legal', 'LED_Legal', 'LED_SOLD'])
             u_sales = df_filtered.loc[ls_mask, 'วันที่ขาย'].dropna().unique()
             months_set = set()
             for raw_s in u_sales:
