@@ -1594,13 +1594,13 @@ section[data-testid="stSidebar"] div[data-testid="stToggle"] label p {
     transform: translateY(-1px);
 }
 
-/* iPad / Touch Tablet: keep Tab 2 map height comfortably below viewport height so page scrolling stays effortless */
+/* iPad / Touch Tablet: large comfortable map (~80% viewport) while keeping page scrolling effortless */
 @media (pointer: coarse) and (max-width: 1366px) {
     .st-key-tab_map iframe,
     .st-key-tab_map [data-testid="stIFrame"] {
-        height: clamp(440px, 68dvh, 600px) !important;
-        min-height: 440px !important;
-        max-height: 600px !important;
+        height: clamp(580px, 80dvh, 780px) !important;
+        min-height: 580px !important;
+        max-height: 780px !important;
         border-radius: 14px !important;
     }
     .st-key-tab_map [data-testid="stElementContainer"]:has(iframe) {
