@@ -883,6 +883,9 @@ let _deferredBoundaryTimer = null;
 
 function _triggerImmediateMapRedraw() {
   if (!deckglInstance) return;
+  if (typeof armInstantBackdropSafetyTimer === 'function') {
+    armInstantBackdropSafetyTimer();
+  }
   if (_mapResizeRaf) cancelAnimationFrame(_mapResizeRaf);
   _mapResizeRaf = requestAnimationFrame(() => {
     _mapResizeRaf = null;
@@ -1000,6 +1003,8 @@ function cleanupMapResources() {
     if (_deferredBoundaryTimer) { clearTimeout(_deferredBoundaryTimer); _deferredBoundaryTimer = null; }
     if (_ttObserverInstance) { _ttObserverInstance.disconnect(); _ttObserverInstance = null; }
     if (_mapResizeObserver) { _mapResizeObserver.disconnect(); _mapResizeObserver = null; }
+    if (typeof dismissInstantMapBackdrop === 'function') { dismissInstantMapBackdrop(); }
+    if (typeof clearDecodedTileBitmaps === 'function') { clearDecodedTileBitmaps(); }
     if (window.parent && typeof window.parent.__NOVA_TAB_LISTENER_CLEANUP__ === 'function') {
       window.parent.__NOVA_TAB_LISTENER_CLEANUP__();
       window.parent.__NOVA_TAB_LISTENER_CLEANUP__ = null;
@@ -1016,6 +1021,8 @@ window.addEventListener('pagehide', cleanupMapResources);
 window.addEventListener('beforeunload', cleanupMapResources);
 
 function setReferencePoint(lon, lat, flyTo = true, triggerSync = true) {
+  if (typeof _userInteractedWithMap !== 'undefined') _userInteractedWithMap = true;
+  if (typeof dismissInstantMapBackdrop === 'function') dismissInstantMapBackdrop();
   referencePoint = [lon, lat];
   updateSavedCoordsPillsActiveState(lat, lon);
   pendingReferencePoint = null;
@@ -1255,6 +1262,8 @@ function setInspectionRadius(radiusKm, btnEl, syncSlider = true) {
 }
 
 function setBasemapStyle(styleName) {
+  if (typeof _userInteractedWithMap !== 'undefined') _userInteractedWithMap = true;
+  if (typeof dismissInstantMapBackdrop === 'function') dismissInstantMapBackdrop();
   currentStyle = styleName;
   updateActiveButtons(styleName);
   updateDeckLayers();
@@ -1433,6 +1442,11 @@ async function initMap() {
       pitch: 0
     };
 
+    // Stitch preloaded Thailand basemap tiles into the Frame-0 instant 2D canvas & pre-decode ImageBitmaps in Tab 2 realm
+    if (typeof prepareInstantMapBackdropAndPredecode === 'function') {
+      prepareInstantMapBackdropAndPredecode(currentStyle, currentViewState);
+    }
+
     const initialBoundaryL = createBoundaryLayer();
     const initialLayers = [basemapLayer];
     if (initialBoundaryL) initialLayers.push(initialBoundaryL);
@@ -1446,6 +1460,8 @@ async function initMap() {
       onHover: handleMapHover,
       onClick: handleMapClick,
       onViewStateChange: ({ viewState, interactionState }) => {
+        if (typeof _userInteractedWithMap !== 'undefined') _userInteractedWithMap = true;
+        if (typeof dismissInstantMapBackdrop === 'function') dismissInstantMapBackdrop();
         if (interactionState && (interactionState.isDragging || interactionState.isPanning || interactionState.isZooming || interactionState.isRotating)) {
           if (mapAnimRaf) {
             cancelAnimationFrame(mapAnimRaf);
@@ -1494,7 +1510,7 @@ async function initMap() {
           _mapResizeObserver.observe(mapContainer);
         }
 
-        // If Tab 2 is mounted hidden (e.g. ?portal=skip while Tab 1 is open), warm tiles in background
+        // If Tab 2 is mounted hidden (e.g. ?portal=skip while Tab 1 is open), warm tiles & stitch instant backdrop in background
         if ((mapContainer.clientWidth || 0) === 0 && window.NovaMapCache && typeof window.NovaMapCache.preloadBasemapTiles === 'function') {
           window.NovaMapCache.preloadBasemapTiles(currentStyle, {
             lon: initialLon,
@@ -1502,6 +1518,10 @@ async function initMap() {
             zoom: initialZoom,
             height: 870,
             concurrency: 16
+          }).then(() => {
+            if (typeof prepareInstantMapBackdropAndPredecode === 'function') {
+              prepareInstantMapBackdropAndPredecode(currentStyle, currentViewState);
+            }
           }).catch(() => {});
         }
       }

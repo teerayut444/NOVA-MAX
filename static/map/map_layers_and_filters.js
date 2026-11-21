@@ -2351,6 +2351,8 @@ function hideParentSyncButton() {
 let mapAnimRaf = null;
 function smoothFlyTo(targetLon, targetLat, targetZoom, duration, onComplete) {
   if (!deckglInstance) return;
+  if (typeof _userInteractedWithMap !== 'undefined') _userInteractedWithMap = true;
+  if (typeof dismissInstantMapBackdrop === 'function') dismissInstantMapBackdrop();
   if (mapAnimRaf) {
     cancelAnimationFrame(mapAnimRaf);
     mapAnimRaf = null;

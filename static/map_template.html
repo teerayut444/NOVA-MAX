@@ -10,6 +10,10 @@
   <body class="BODY_CLASS_PLACEHOLDER">
     <div id="loader"><div class="spinner"></div> <span id="loader-text">กำลังโหลดและจัดเตรียมข้อมูลแผนที่...</span></div>
     <div id="map"></div>
+    <!-- Instant pixel-aligned Thailand basemap backdrop (eliminates Frame-0 gray flash & tile pop-in on Tab 2 switch) -->
+    <div id="map-instant-backdrop-wrap" style="position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 2; display: none;">
+      <canvas id="map-instant-backdrop"></canvas>
+    </div>
     <!-- Vector-Crisp SVG Boundary Overlay (Dashed District Lines) -->
     <svg id="boundary-svg" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; overflow: hidden;"></svg>
     <!-- District & Subdistrict Centroid Name Badges -->

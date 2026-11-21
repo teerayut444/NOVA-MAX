@@ -1164,6 +1164,47 @@ function updateActiveButtons(styleName) {
 
 let _tileErrorCount = 0;
 let _tileFallbackTriggered = false;
+const _decodedTileBitmapCache = new Map();
+let _instantBackdropActive = false;
+let _deckFirstViewportLoaded = false;
+let _userInteractedWithMap = false;
+let _instantBackdropSafetyTimer = null;
+
+function dismissInstantMapBackdrop() {
+  _instantBackdropActive = false;
+  if (_instantBackdropSafetyTimer) {
+    clearTimeout(_instantBackdropSafetyTimer);
+    _instantBackdropSafetyTimer = null;
+  }
+  try {
+    const wrap = document.getElementById('map-instant-backdrop-wrap');
+    if (wrap) wrap.style.display = 'none';
+    const canvas = document.getElementById('map-instant-backdrop');
+    if (canvas && (canvas.width > 1 || canvas.height > 1)) {
+      canvas.width = 1;
+      canvas.height = 1;
+    }
+  } catch (_e) {}
+}
+
+function armInstantBackdropSafetyTimer() {
+  if (!_instantBackdropActive || _instantBackdropSafetyTimer) return;
+  _instantBackdropSafetyTimer = setTimeout(() => {
+    _instantBackdropSafetyTimer = null;
+    dismissInstantMapBackdrop();
+  }, 1500);
+}
+
+function clearDecodedTileBitmaps() {
+  try {
+    _decodedTileBitmapCache.forEach((img) => {
+      if (img && typeof img.close === 'function') {
+        try { img.close(); } catch (_e) {}
+      }
+    });
+    _decodedTileBitmapCache.clear();
+  } catch (_e) {}
+}
 
 async function _decodeTileBlobInRealm(blob) {
   if (!blob) return null;
@@ -1187,6 +1228,149 @@ async function _decodeTileBlobInRealm(blob) {
   });
 }
 
+async function prepareInstantMapBackdropAndPredecode(styleName, viewState) {
+  try {
+    if (!window.NovaMapCache || typeof window.NovaMapCache.getParentTileCache !== 'function') return;
+    if (!viewState || styleName !== 'google_hybrid') return;
+
+    const store = window.NovaMapCache.getParentTileCache();
+    if (!store || !store.blobs) return;
+
+    // Wait briefly for any still-inflight Welcome preload tiles for this style
+    if (store.inflight && store.inflight.size > 0) {
+      const pending = [];
+      store.inflight.forEach((p, k) => {
+        if (String(k).startsWith(styleName + '/')) pending.push(p.catch(() => null));
+      });
+      if (pending.length > 0) {
+        await Promise.race([
+          Promise.all(pending),
+          new Promise((r) => setTimeout(r, 800))
+        ]);
+      }
+    }
+
+    const prefixZ6 = styleName + '/6/';
+    const prefixZ5 = styleName + '/5/';
+    const z6Entries = [];
+    const z5Entries = [];
+
+    store.blobs.forEach((blob, key) => {
+      if (!blob) return;
+      if (key.startsWith(prefixZ6)) {
+        const parts = key.split('/');
+        const x = parseInt(parts[2], 10);
+        const y = parseInt(parts[3], 10);
+        if (Number.isInteger(x) && Number.isInteger(y)) z6Entries.push({ key, x, y, blob });
+      } else if (key.startsWith(prefixZ5)) {
+        const parts = key.split('/');
+        const x = parseInt(parts[2], 10);
+        const y = parseInt(parts[3], 10);
+        if (Number.isInteger(x) && Number.isInteger(y)) z5Entries.push({ key, x, y, blob });
+      }
+    });
+
+    if (z6Entries.length === 0) return;
+
+    // Decode all cached z=6 and z=5 tiles into Tab 2's own JS realm in parallel
+    const allEntries = z6Entries.concat(z5Entries);
+    const decodedList = await Promise.all(
+      allEntries.map(async (item) => {
+        try {
+          const bmp = await _decodeTileBlobInRealm(item.blob);
+          return bmp ? { key: item.key, x: item.x, y: item.y, isZ6: item.key.startsWith(prefixZ6), bmp } : null;
+        } catch (_e) {
+          return null;
+        }
+      })
+    );
+
+    const decodedZ6 = [];
+    for (let i = 0; i < decodedList.length; i++) {
+      const d = decodedList[i];
+      if (!d) continue;
+      if (d.isZ6) decodedZ6.push(d);
+      if (!_decodedTileBitmapCache.has(d.key)) {
+        _decodedTileBitmapCache.set(d.key, d.bmp);
+      } else if (d.bmp && typeof d.bmp.close === 'function') {
+        try { d.bmp.close(); } catch (_e) {}
+      }
+    }
+
+    // Only stitch & show the instant 2D backdrop for the default Thailand overview view before first live WebGL render
+    const isDefaultOverview = (
+      Math.abs((viewState.longitude || 0) - 100.5) < 0.01 &&
+      Math.abs((viewState.latitude || 0) - 13.5) < 0.01 &&
+      Math.abs((viewState.zoom || 0) - 5.2) < 0.01 &&
+      (!boundaryGeoJson || !boundaryGeoJson.features || boundaryGeoJson.features.length === 0)
+    );
+    if (!isDefaultOverview || _deckFirstViewportLoaded || _userInteractedWithMap || decodedZ6.length < 4) {
+      return;
+    }
+
+    const wrap = document.getElementById('map-instant-backdrop-wrap');
+    const canvas = document.getElementById('map-instant-backdrop');
+    if (!wrap || !canvas) return;
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < decodedZ6.length; i++) {
+      const t = decodedZ6[i];
+      if (t.x < minX) minX = t.x;
+      if (t.x > maxX) maxX = t.x;
+      if (t.y < minY) minY = t.y;
+      if (t.y > maxY) maxY = t.y;
+    }
+
+    const cols = maxX - minX + 1;
+    const rows = maxY - minY + 1;
+    if (cols <= 0 || rows <= 0 || cols > 16 || rows > 12) return;
+
+    canvas.width = cols * 256;
+    canvas.height = rows * 256;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    for (let i = 0; i < decodedZ6.length; i++) {
+      const t = decodedZ6[i];
+      const imgObj = _decodedTileBitmapCache.get(t.key) || t.bmp;
+      if (imgObj) {
+        try {
+          ctx.drawImage(imgObj, (t.x - minX) * 256, (t.y - minY) * 256, 256, 256);
+        } catch (_e) {}
+      }
+    }
+
+    // Align stitched z=6 grid pixel-for-pixel with Deck.gl WebMercatorViewport at (lon, lat, zoom)
+    const lon = viewState.longitude;
+    const lat = viewState.latitude;
+    const zoom = viewState.zoom;
+    const n = 64; // 2^6
+    const cx = ((lon + 180) / 360) * n;
+    const latRad = (lat * Math.PI) / 180;
+    const cy = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
+    const tileScreenPx = 256 * Math.pow(2, zoom + 1 - 6);
+    const centerOffsetX = (cx - minX) * tileScreenPx;
+    const centerOffsetY = (cy - minY) * tileScreenPx;
+
+    canvas.style.position = 'absolute';
+    canvas.style.left = '50%';
+    canvas.style.top = '50%';
+    canvas.style.width = (cols * tileScreenPx) + 'px';
+    canvas.style.height = (rows * tileScreenPx) + 'px';
+    canvas.style.transform = `translate(${-centerOffsetX}px, ${-centerOffsetY}px)`;
+    canvas.style.display = 'block';
+
+    if (!_deckFirstViewportLoaded && !_userInteractedWithMap) {
+      wrap.style.display = 'block';
+      _instantBackdropActive = true;
+      const mapEl = document.getElementById('map');
+      if (mapEl && mapEl.clientWidth > 0 && mapEl.clientHeight > 0) {
+        armInstantBackdropSafetyTimer();
+      }
+    }
+  } catch (_e) {}
+}
+
 function createBasemapLayer(styleName) {
   const isGoogle = styleName && styleName.startsWith('google_');
   const layerOpts = {
@@ -1195,9 +1379,19 @@ function createBasemapLayer(styleName) {
     minZoom: 0,
     maxZoom: isGoogle ? 20 : 19,
     tileSize: 256,
-    maxRequests: 20,
+    maxRequests: 64,
     maxCacheSize: 300,
     refinementStrategy: 'best-available',
+    onViewportLoad: () => {
+      const mapEl = document.getElementById('map');
+      if (mapEl && mapEl.clientWidth > 0 && mapEl.clientHeight > 0) {
+        _deckFirstViewportLoaded = true;
+        if (_instantBackdropActive) {
+          // Wait 1 paint frame so WebGL composites all loaded tiles before removing the pixel-identical backdrop
+          requestAnimationFrame(() => dismissInstantMapBackdrop());
+        }
+      }
+    },
     onTileError: (err) => {
       if (err && err.name === 'AbortError') return;
       _tileErrorCount++;
@@ -1224,6 +1418,13 @@ function createBasemapLayer(styleName) {
       const idx = (tile && tile.index) ? tile.index : tile;
       if (!idx || !Number.isInteger(idx.x) || !Number.isInteger(idx.y) || !Number.isInteger(idx.z)) {
         return null;
+      }
+      const key = window.NovaMapCache.getTileCacheKey(styleName, idx.z, idx.x, idx.y);
+      const predecoded = _decodedTileBitmapCache.get(key);
+      if (predecoded) {
+        // Transfer single ownership to DeckGL so tile unload cannot affect other consumers
+        _decodedTileBitmapCache.delete(key);
+        return predecoded;
       }
       const blob = await window.NovaMapCache.fetchAndCacheTileBlob(
         styleName,
