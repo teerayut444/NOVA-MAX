@@ -1261,6 +1261,45 @@ function setInspectionRadius(radiusKm, btnEl, syncSlider = true) {
   notifyParentFilterChange();
 }
 
+function scrollParentPage(target) {
+  try {
+    const pWin = window.parent;
+    const pDoc = pWin && pWin.document;
+    if (!pDoc) return;
+
+    const scrollEl =
+      pDoc.querySelector('section[data-testid="stMain"]') ||
+      pDoc.querySelector('div[data-testid="stAppViewContainer"]') ||
+      pDoc.scrollingElement ||
+      pDoc.documentElement;
+
+    if (target === 'top') {
+      if (scrollEl && typeof scrollEl.scrollTo === 'function') {
+        scrollEl.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      if (typeof pWin.scrollTo === 'function') {
+        pWin.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      return;
+    }
+
+    // Scroll down to Median analytics cards / nearby table right below the map
+    const anchor =
+      pDoc.getElementById('map-active-filters-banner') ||
+      pDoc.getElementById('median-card-1') ||
+      pDoc.getElementById('median-table-title');
+    if (anchor && typeof anchor.scrollIntoView === 'function') {
+      anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    if (scrollEl && typeof scrollEl.scrollBy === 'function') {
+      scrollEl.scrollBy({ top: 620, behavior: 'smooth' });
+    } else if (typeof pWin.scrollBy === 'function') {
+      pWin.scrollBy({ top: 620, behavior: 'smooth' });
+    }
+  } catch (_e) {}
+}
+
 function setBasemapStyle(styleName) {
   if (typeof _userInteractedWithMap !== 'undefined') _userInteractedWithMap = true;
   if (typeof dismissInstantMapBackdrop === 'function') dismissInstantMapBackdrop();

@@ -718,6 +718,17 @@
       </div>
     </div>
 
+    <!-- Touch-Only Quick Page Scroll Pill (Hidden on Desktop; visible on iPad/Tablets) -->
+    <div id="touch-scroll-pill" aria-label="เลื่อนหน้าเว็บขึ้นลง">
+      <button type="button" class="touch-scroll-btn" onclick="scrollParentPage('top')" title="เลื่อนขึ้นด้านบน">
+        <i class="fa-solid fa-arrow-up"></i><span>ด้านบน</span>
+      </button>
+      <div class="touch-scroll-sep"></div>
+      <button type="button" class="touch-scroll-btn" onclick="scrollParentPage('table')" title="เลื่อนลงไปดูตารางด้านล่าง">
+        <i class="fa-solid fa-arrow-down"></i><span>ตาราง</span>
+      </button>
+    </div>
+
     <!-- Load local core libraries and shared cache builder (GeoJSON boundaries load non-blockingly in background) -->
     <script src="/app/static/d3.js"></script>
     <script src="/app/static/map_cache_builder.js?v=CACHE_BUILDER_VER_PLACEHOLDER"></script>
