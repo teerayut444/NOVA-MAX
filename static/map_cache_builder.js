@@ -941,126 +941,99 @@
     return Array.from(new Set(out));
   }
 
-  async function _readResponseTextAutoGzip(resp, onProgress) {
-    const contentLengthHeader = resp.headers && resp.headers.get('content-length');
-    const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
-    const hasTotal = Number.isFinite(totalBytes) && totalBytes > 0;
-    let receivedBytes = 0;
+  async function _readStreamToUtf8Text(readableStream, onProgress, progressPrefix) {
+    const reader = readableStream.getReader();
+    const decoder = new TextDecoder('utf-8');
+    const parts = [];
+    let decodedBytes = 0;
     let lastEmitAt = 0;
-
-    const emitDownloadProgress = (force) => {
-      if (typeof onProgress !== 'function') return;
-      const now = Date.now();
-      if (!force && now - lastEmitAt < 180) return;
-      lastEmitAt = now;
-      const mbDone = (receivedBytes / 1048576).toFixed(1);
-      if (hasTotal) {
-        const ratio = Math.min(1, receivedBytes / totalBytes);
-        const pct = Math.min(94, 90 + Math.round(ratio * 4));
-        const mbTotal = (totalBytes / 1048576).toFixed(1);
-        onProgress(pct, 'กำลังดาวน์โหลดแคชแผนที่ (' + mbDone + ' / ' + mbTotal + ' MB)...');
-      } else {
-        onProgress(92, 'กำลังดาวน์โหลดแคชแผนที่ (' + mbDone + ' MB)...');
-      }
-    };
-
-    if (resp.body && typeof resp.body.getReader === 'function' && typeof ReadableStream === 'function') {
-      const reader = resp.body.getReader();
-      const headChunks = [];
-      let headLen = 0;
-      let streamDone = false;
-
-      // Peek first >= 2 bytes to detect raw gzip (0x1f 0x8b) vs proxy-auto-decompressed JSON
-      while (headLen < 2) {
+    try {
+      while (true) {
         const { value, done } = await reader.read();
-        if (done) {
-          streamDone = true;
-          break;
-        }
+        if (done) break;
         if (value && value.byteLength > 0) {
-          headChunks.push(value);
-          headLen += value.byteLength;
-          receivedBytes += value.byteLength;
-          emitDownloadProgress(false);
-        }
-      }
-
-      if (headLen === 0) {
-        return '';
-      }
-
-      let b0 = 0;
-      let b1 = 0;
-      if (headChunks[0].byteLength >= 2) {
-        b0 = headChunks[0][0];
-        b1 = headChunks[0][1];
-      } else {
-        b0 = headChunks[0][0];
-        b1 = headChunks.length > 1 ? headChunks[1][0] : 0;
-      }
-      const isGzip = (b0 === 0x1f && b1 === 0x8b);
-
-      let headIdx = 0;
-      const passthroughStream = new ReadableStream({
-        async pull(controller) {
-          if (headIdx < headChunks.length) {
-            controller.enqueue(headChunks[headIdx]);
-            headChunks[headIdx] = null;
-            headIdx += 1;
-            if (headIdx >= headChunks.length && streamDone) {
-              emitDownloadProgress(true);
-              controller.close();
+          decodedBytes += value.byteLength;
+          parts.push(decoder.decode(value, { stream: true }));
+          if (typeof onProgress === 'function') {
+            const now = Date.now();
+            if (now - lastEmitAt >= 200) {
+              lastEmitAt = now;
+              const mb = (decodedBytes / 1048576).toFixed(1);
+              onProgress(92, (progressPrefix || 'กำลังดาวน์โหลดและถอดรหัสแคชแผนที่') + ' (' + mb + ' MB)...');
             }
-            return;
           }
-          if (streamDone) {
-            emitDownloadProgress(true);
-            controller.close();
-            return;
-          }
-          const { value, done } = await reader.read();
-          if (done) {
-            streamDone = true;
-            emitDownloadProgress(true);
-            controller.close();
-            return;
-          }
-          if (value && value.byteLength > 0) {
-            receivedBytes += value.byteLength;
-            emitDownloadProgress(false);
-            controller.enqueue(value);
-          }
-        },
-        cancel(reason) {
-          try { reader.cancel(reason); } catch (_e) {}
         }
-      });
-
-      if (isGzip) {
-        if (typeof DecompressionStream !== 'function') {
-          try { await reader.cancel(); } catch (_e) {}
-          throw new Error('เบราว์เซอร์รุ่นนี้ไม่รองรับ DecompressionStream กรุณาอัปเดต Chrome/Edge');
-        }
-        const ds = new DecompressionStream('gzip');
-        return await new Response(passthroughStream.pipeThrough(ds)).text();
       }
-      return await new Response(passthroughStream).text();
+      const tail = decoder.decode();
+      if (tail) parts.push(tail);
+    } finally {
+      try { reader.releaseLock(); } catch (_e) {}
+    }
+    if (typeof onProgress === 'function') {
+      const mb = (decodedBytes / 1048576).toFixed(1);
+      onProgress(94, (progressPrefix || 'กำลังดาวน์โหลดและถอดรหัสแคชแผนที่') + ' (' + mb + ' MB)...');
+    }
+    return parts.join('');
+  }
+
+  async function _readResponseTextAutoGzip(resp, onProgress, forceBufferedMagicCheck) {
+    const ct = (resp.headers && resp.headers.get('content-type') || '').toLowerCase();
+    const ce = (resp.headers && resp.headers.get('content-encoding') || '').toLowerCase();
+    const looksAlreadyDecoded = ct.includes('application/json') || ct.includes('text/plain') || ce.includes('gzip');
+
+    // WebKit/Safari-safe native streaming path: NEVER wrap a JS ReadableStream into new Response(...).text()
+    // (doing so triggers WebKit's "TypeError: Load failed" on iPadOS Safari).
+    if (!forceBufferedMagicCheck && resp.body && typeof resp.body.getReader === 'function') {
+      if (looksAlreadyDecoded) {
+        return await _readStreamToUtf8Text(resp.body, onProgress, 'กำลังดาวน์โหลดแคชแผนที่');
+      }
+      if (typeof resp.body.pipeThrough === 'function' && typeof DecompressionStream === 'function') {
+        const ds = new DecompressionStream('gzip');
+        return await _readStreamToUtf8Text(resp.body.pipeThrough(ds), onProgress, 'กำลังดาวน์โหลดและแตกไฟล์แคชแผนที่');
+      }
     }
 
-    // Fallback when ReadableStream / getReader is unavailable
+    // Buffered fallback & magic-byte auto-detection (handles unannounced proxy auto-decompression or stream drops)
+    if (typeof onProgress === 'function') {
+      onProgress(91, 'กำลังดาวน์โหลดแคชแผนที่...');
+    }
     const buf = await resp.arrayBuffer();
-    receivedBytes = buf.byteLength;
-    emitDownloadProgress(true);
     const bytes = new Uint8Array(buf);
+    if (bytes.length === 0) return '';
     const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
     if (isGzip) {
       if (typeof DecompressionStream !== 'function') {
-        throw new Error('เบราว์เซอร์รุ่นนี้ไม่รองรับ DecompressionStream กรุณาอัปเดต Chrome/Edge');
+        throw new Error('เบราว์เซอร์รุ่นนี้ไม่รองรับ DecompressionStream กรุณาอัปเดต Chrome/Edge/Safari');
       }
       const ds = new DecompressionStream('gzip');
-      return await new Response(new Blob([bytes]).stream().pipeThrough(ds)).text();
+      const blobStream = new Blob([bytes]).stream().pipeThrough(ds);
+      return await _readStreamToUtf8Text(blobStream, onProgress, 'กำลังแตกไฟล์แคชแผนที่');
     }
     return new TextDecoder('utf-8').decode(bytes);
+  }
+
+  async function _fetchStaticPayloadResponse(candidates) {
+    let lastStatus = 0;
+    let lastErr = null;
+    for (let i = 0; i < candidates.length; i++) {
+      try {
+        const r = await fetch(candidates[i], { credentials: 'same-origin' });
+        lastStatus = r.status;
+        const ct = (r.headers && r.headers.get('content-type') || '').toLowerCase();
+        if (r.ok && !ct.includes('text/html')) {
+          return { resp: r, url: candidates[i] };
+        }
+        if (r.body && typeof r.body.cancel === 'function') {
+          r.body.cancel().catch(() => {});
+        }
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (lastStatus > 0) {
+      throw new Error('ไม่สามารถโหลดไฟล์แคชข้อมูลแผนที่ได้ (HTTP ' + lastStatus + ')');
+    }
+    throw lastErr || new Error('ไม่สามารถโหลดไฟล์แคชข้อมูลแผนที่ได้ (HTTP 0)');
   }
 
   async function fetchAndBuildParentCache(mtimeToken, payloadUrl, onProgress) {
@@ -1077,7 +1050,19 @@
     const host = getParentHost();
     const inflightKey = mtimeStr + '|' + String(payloadUrl);
     if (host && host.__NOVA_MAP_CACHE_PROMISE__ && host.__NOVA_MAP_CACHE_PROMISE_KEY__ === inflightKey) {
-      return await host.__NOVA_MAP_CACHE_PROMISE__;
+      try {
+        const shared = await host.__NOVA_MAP_CACHE_PROMISE__;
+        if (shared && shared.data && shared.data.length > 0) {
+          return shared;
+        }
+      } catch (_sharedErr) {
+        // If an earlier iframe (e.g. Welcome prewarmer) was unmounted mid-download, Safari aborts its
+        // fetch with "Load failed". Clear the dead promise and perform a fresh fetch in this active iframe.
+        if (host.__NOVA_MAP_CACHE_PROMISE_KEY__ === inflightKey) {
+          host.__NOVA_MAP_CACHE_PROMISE__ = null;
+          host.__NOVA_MAP_CACHE_PROMISE_KEY__ = '';
+        }
+      }
     }
 
     const workPromise = (async () => {
@@ -1086,26 +1071,30 @@
         await yieldIfVisible();
       }
       const candidates = resolveStaticUrlCandidates(payloadUrl);
-      let resp = null;
-      let lastStatus = 0;
-      for (let i = 0; i < candidates.length; i++) {
+      let jsonText = '';
+      let lastReadErr = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const r = await fetch(candidates[i], { credentials: 'same-origin' });
-          lastStatus = r.status;
-          const ct = (r.headers && r.headers.get('content-type') || '').toLowerCase();
-          if (r.ok && !ct.includes('text/html')) {
-            resp = r;
+          const { resp } = await _fetchStaticPayloadResponse(candidates);
+          // Attempt 0: native streaming pipeThrough; Attempt 1: buffered arrayBuffer + magic-byte check
+          jsonText = await _readResponseTextAutoGzip(resp, onProgress, attempt === 1);
+          if (jsonText && jsonText.length > 2) {
+            lastReadErr = null;
             break;
           }
-          if (r.body && typeof r.body.cancel === 'function') {
-            r.body.cancel().catch(() => {});
+        } catch (err) {
+          lastReadErr = err;
+          if (attempt === 0) {
+            if (typeof onProgress === 'function') {
+              onProgress(90, 'กำลังเชื่อมต่อดาวน์โหลดแคชแผนที่ใหม่...');
+            }
+            await new Promise((r) => setTimeout(r, 350));
           }
-        } catch (_err) {}
+        }
       }
-      if (!resp) {
-        throw new Error('ไม่สามารถโหลดไฟล์แคชข้อมูลแผนที่ได้ (HTTP ' + lastStatus + ')');
+      if (lastReadErr || !jsonText) {
+        throw lastReadErr || new Error('ไม่สามารถอ่านข้อมูลแคชแผนที่ได้');
       }
-      let jsonText = await _readResponseTextAutoGzip(resp, onProgress);
       if (typeof onProgress === 'function') {
         onProgress(94, 'กำลังอ่านโครงสร้างข้อมูลแผนที่ (JSON)...');
         await yieldIfVisible();

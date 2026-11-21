@@ -1636,7 +1636,8 @@ async function initMap() {
       }, 100);
     }
   } catch(err) {
-    loaderText.innerHTML = `<span style="color: #ef4444;"><i class="fa-solid fa-circle-xmark" style="margin-right: 6px;"></i>โหลดแผนที่ล้มเหลว: ${escapeHtml(err && err.message ? err.message : String(err))}</span>`;
+    loader.style.display = 'flex';
+    loaderText.innerHTML = `<span style="color: #ef4444;"><i class="fa-solid fa-circle-xmark" style="margin-right: 6px;"></i>โหลดแผนที่ล้มเหลว: ${escapeHtml(err && err.message ? err.message : String(err))}</span> <button type="button" onclick="loaderText.innerText='กำลังลองโหลดแผนที่ใหม่...'; initMap();" style="margin-left: 10px; padding: 4px 12px; border-radius: 9999px; border: none; background: #059669; color: #ffffff; font-weight: 700; font-size: 12px; cursor: pointer;">ลองโหลดใหม่</button>`;
     console.error(err);
   }
 }
