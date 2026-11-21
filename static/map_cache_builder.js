@@ -705,11 +705,37 @@
     return typeCounts;
   }
 
+  function buildIdLookupIndex(data) {
+    const idExactLookupMap = new Map();
+    const idStrippedLookupMap = new Map();
+    if (!data || !data.length) {
+      return { idExactLookupMap, idStrippedLookupMap };
+    }
+    for (let i = 0; i < data.length; i++) {
+      const d = data[i];
+      const raw = (d._id || '').trim().toLowerCase();
+      if (!raw) continue;
+      if (!idExactLookupMap.has(raw)) idExactLookupMap.set(raw, d);
+      const stripped = raw.replace(/[^a-z0-9\u0E00-\u0E7F]/g, '');
+      if (stripped && !idStrippedLookupMap.has(stripped)) idStrippedLookupMap.set(stripped, d);
+    }
+    return { idExactLookupMap, idStrippedLookupMap };
+  }
+
   function getParentHost() {
     try {
       if (global.parent && global.parent !== global) {
-        // Verify same-origin explicitly before sharing cache host
-        if (global.location && global.parent.location.origin === global.location.origin) {
+        // Accessing parent.location.href & parent.document throws SecurityError on cross-origin frames.
+        // Note: Inside Streamlit st.components.v1.html (<iframe srcdoc="...">), global.location.origin is
+        // "null" and href is "about:srcdoc" even though allow-same-origin grants same-origin parent access.
+        const pHref = global.parent.location && global.parent.location.href;
+        const pDoc = global.parent.document;
+        if (!pHref || !pDoc) return null;
+        const gHref = (global.location && global.location.href) || '';
+        const gOrigin = (global.location && global.location.origin) || '';
+        const pOrigin = (global.parent.location && global.parent.location.origin) || '';
+        const isSrcdoc = !gOrigin || gOrigin === 'null' || gHref === 'about:srcdoc' || gHref === 'about:blank';
+        if (isSrcdoc || (pOrigin && pOrigin === gOrigin)) {
           return global.parent;
         }
       }
@@ -775,6 +801,7 @@
     const spatialGrid = buildSpatialGrid(data);
     const projIndex = buildProjectIndex(data, _lut);
     const typeCounts = computeTypeCounts(data);
+    const idLookup = buildIdLookupIndex(data);
 
     const cacheObj = {
       mtime: mtimeStr || '',
@@ -783,6 +810,8 @@
       spatialGrid: spatialGrid,
       projIndex: projIndex,
       typeCounts: typeCounts,
+      idExactLookupMap: idLookup.idExactLookupMap,
+      idStrippedLookupMap: idLookup.idStrippedLookupMap,
       builtAt: Date.now()
     };
 
@@ -851,26 +880,161 @@
     if (!rawUrl) return [];
     const clean = String(rawUrl).replace(/^(\.\/|\/)+/, '').replace(/^~\/\+\//, '');
     const out = [];
+    const addOriginBase = (origin, pathname) => {
+      if (!origin || origin === 'null') return;
+      let basePath = pathname || '/';
+      basePath = basePath.replace(/\/component\/.*$/, '/').replace(/\/index\.html$/, '/');
+      if (!basePath.endsWith('/')) basePath += '/';
+      out.push(origin + basePath + clean);
+      out.push(origin + '/~/+/' + clean);
+      out.push(origin + '/' + clean);
+    };
     try {
       const pLoc = (global.parent && global.parent.location && global.parent.location.origin && global.parent.location.origin !== 'null')
         ? global.parent.location
         : global.location;
-      let basePath = (pLoc && pLoc.pathname) ? pLoc.pathname : '/';
-      basePath = basePath.replace(/\/component\/.*$/, '/').replace(/\/index\.html$/, '/');
-      if (!basePath.endsWith('/')) basePath += '/';
       if (pLoc && pLoc.origin && pLoc.origin !== 'null') {
-        out.push(pLoc.origin + basePath + clean);
-        if (basePath !== '/') {
-          out.push(pLoc.origin + '/~/+/' + clean);
-          out.push(pLoc.origin + '/' + clean);
-        }
+        addOriginBase(pLoc.origin, pLoc.pathname);
       }
-      out.push(basePath + clean);
-    } catch (e) {}
+      if (pLoc && pLoc.pathname && pLoc.pathname !== 'srcdoc' && pLoc.pathname !== 'blank') {
+        let basePath = pLoc.pathname.replace(/\/component\/.*$/, '/').replace(/\/index\.html$/, '/');
+        if (!basePath.endsWith('/')) basePath += '/';
+        out.push(basePath + clean);
+      }
+    } catch (_e) {}
+    // Fallback to document.referrer when embedded under cross-origin wrappers (e.g. Cloud iframe)
+    try {
+      if (typeof document !== 'undefined' && document.referrer) {
+        const refUrl = new URL(document.referrer);
+        addOriginBase(refUrl.origin, refUrl.pathname);
+      }
+    } catch (_e) {}
     out.push('/~/+/' + clean);
     out.push('/' + clean);
     out.push(clean);
     return Array.from(new Set(out));
+  }
+
+  async function _readResponseTextAutoGzip(resp, onProgress) {
+    const contentLengthHeader = resp.headers && resp.headers.get('content-length');
+    const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+    const hasTotal = Number.isFinite(totalBytes) && totalBytes > 0;
+    let receivedBytes = 0;
+    let lastEmitAt = 0;
+
+    const emitDownloadProgress = (force) => {
+      if (typeof onProgress !== 'function') return;
+      const now = Date.now();
+      if (!force && now - lastEmitAt < 180) return;
+      lastEmitAt = now;
+      const mbDone = (receivedBytes / 1048576).toFixed(1);
+      if (hasTotal) {
+        const ratio = Math.min(1, receivedBytes / totalBytes);
+        const pct = Math.min(94, 90 + Math.round(ratio * 4));
+        const mbTotal = (totalBytes / 1048576).toFixed(1);
+        onProgress(pct, 'กำลังดาวน์โหลดแคชแผนที่ (' + mbDone + ' / ' + mbTotal + ' MB)...');
+      } else {
+        onProgress(92, 'กำลังดาวน์โหลดแคชแผนที่ (' + mbDone + ' MB)...');
+      }
+    };
+
+    if (resp.body && typeof resp.body.getReader === 'function' && typeof ReadableStream === 'function') {
+      const reader = resp.body.getReader();
+      const headChunks = [];
+      let headLen = 0;
+      let streamDone = false;
+
+      // Peek first >= 2 bytes to detect raw gzip (0x1f 0x8b) vs proxy-auto-decompressed JSON
+      while (headLen < 2) {
+        const { value, done } = await reader.read();
+        if (done) {
+          streamDone = true;
+          break;
+        }
+        if (value && value.byteLength > 0) {
+          headChunks.push(value);
+          headLen += value.byteLength;
+          receivedBytes += value.byteLength;
+          emitDownloadProgress(false);
+        }
+      }
+
+      if (headLen === 0) {
+        return '';
+      }
+
+      let b0 = 0;
+      let b1 = 0;
+      if (headChunks[0].byteLength >= 2) {
+        b0 = headChunks[0][0];
+        b1 = headChunks[0][1];
+      } else {
+        b0 = headChunks[0][0];
+        b1 = headChunks.length > 1 ? headChunks[1][0] : 0;
+      }
+      const isGzip = (b0 === 0x1f && b1 === 0x8b);
+
+      let headIdx = 0;
+      const passthroughStream = new ReadableStream({
+        async pull(controller) {
+          if (headIdx < headChunks.length) {
+            controller.enqueue(headChunks[headIdx]);
+            headChunks[headIdx] = null;
+            headIdx += 1;
+            if (headIdx >= headChunks.length && streamDone) {
+              emitDownloadProgress(true);
+              controller.close();
+            }
+            return;
+          }
+          if (streamDone) {
+            emitDownloadProgress(true);
+            controller.close();
+            return;
+          }
+          const { value, done } = await reader.read();
+          if (done) {
+            streamDone = true;
+            emitDownloadProgress(true);
+            controller.close();
+            return;
+          }
+          if (value && value.byteLength > 0) {
+            receivedBytes += value.byteLength;
+            emitDownloadProgress(false);
+            controller.enqueue(value);
+          }
+        },
+        cancel(reason) {
+          try { reader.cancel(reason); } catch (_e) {}
+        }
+      });
+
+      if (isGzip) {
+        if (typeof DecompressionStream !== 'function') {
+          try { await reader.cancel(); } catch (_e) {}
+          throw new Error('เบราว์เซอร์รุ่นนี้ไม่รองรับ DecompressionStream กรุณาอัปเดต Chrome/Edge');
+        }
+        const ds = new DecompressionStream('gzip');
+        return await new Response(passthroughStream.pipeThrough(ds)).text();
+      }
+      return await new Response(passthroughStream).text();
+    }
+
+    // Fallback when ReadableStream / getReader is unavailable
+    const buf = await resp.arrayBuffer();
+    receivedBytes = buf.byteLength;
+    emitDownloadProgress(true);
+    const bytes = new Uint8Array(buf);
+    const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+    if (isGzip) {
+      if (typeof DecompressionStream !== 'function') {
+        throw new Error('เบราว์เซอร์รุ่นนี้ไม่รองรับ DecompressionStream กรุณาอัปเดต Chrome/Edge');
+      }
+      const ds = new DecompressionStream('gzip');
+      return await new Response(new Blob([bytes]).stream().pipeThrough(ds)).text();
+    }
+    return new TextDecoder('utf-8').decode(bytes);
   }
 
   async function fetchAndBuildParentCache(mtimeToken, payloadUrl, onProgress) {
@@ -892,11 +1056,8 @@
 
     const workPromise = (async () => {
       if (typeof onProgress === 'function') {
-        onProgress(92, 'กำลังดาวน์โหลดและถอดรหัส GZIP ข้อมูลแผนที่...');
+        onProgress(90, 'กำลังดาวน์โหลดและถอดรหัสแคชข้อมูลแผนที่...');
         await yieldIfVisible();
-      }
-      if (typeof DecompressionStream !== 'function') {
-        throw new Error('เบราว์เซอร์รุ่นนี้ไม่รองรับ DecompressionStream กรุณาอัปเดต Chrome/Edge');
       }
       const candidates = resolveStaticUrlCandidates(payloadUrl);
       let resp = null;
@@ -910,19 +1071,18 @@
             resp = r;
             break;
           }
+          if (r.body && typeof r.body.cancel === 'function') {
+            r.body.cancel().catch(() => {});
+          }
         } catch (_err) {}
       }
       if (!resp) {
         throw new Error('ไม่สามารถโหลดไฟล์แคชข้อมูลแผนที่ได้ (HTTP ' + lastStatus + ')');
       }
-      let jsonText = '';
-      if (resp.body && typeof resp.body.pipeThrough === 'function') {
-        const ds = new DecompressionStream('gzip');
-        jsonText = await new Response(resp.body.pipeThrough(ds)).text();
-      } else {
-        const buf = await resp.arrayBuffer();
-        const ds = new DecompressionStream('gzip');
-        jsonText = await new Response(new Blob([buf]).stream().pipeThrough(ds)).text();
+      let jsonText = await _readResponseTextAutoGzip(resp, onProgress);
+      if (typeof onProgress === 'function') {
+        onProgress(94, 'กำลังอ่านโครงสร้างข้อมูลแผนที่ (JSON)...');
+        await yieldIfVisible();
       }
       const parsed = JSON.parse(jsonText);
       jsonText = '';
@@ -963,7 +1123,9 @@
     hydrateMapRows: hydrateMapRows,
     buildSpatialGrid: buildSpatialGrid,
     buildProjectIndex: buildProjectIndex,
+    buildIdLookupIndex: buildIdLookupIndex,
     computeTypeCounts: computeTypeCounts,
+    getParentHost: getParentHost,
     getValidParentCache: getValidParentCache,
     buildAndStoreParentCache: buildAndStoreParentCache,
     fetchAndBuildParentCache: fetchAndBuildParentCache,

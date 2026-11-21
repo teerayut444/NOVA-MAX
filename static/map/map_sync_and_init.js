@@ -1291,7 +1291,12 @@ async function initMap() {
       _lut = cacheObj.lut;
       data = cacheObj.data;
       cachedData = data;
-      buildIdLookupIndex(data);
+      if (cacheObj.idExactLookupMap && cacheObj.idStrippedLookupMap) {
+        idExactLookupMap = cacheObj.idExactLookupMap;
+        idStrippedLookupMap = cacheObj.idStrippedLookupMap;
+      } else {
+        buildIdLookupIndex(data);
+      }
       spatialGrid = cacheObj.spatialGrid;
       applyPrebuiltProjectIndex(cacheObj.projIndex);
       restoreInMapFiltersFromParentUrl();

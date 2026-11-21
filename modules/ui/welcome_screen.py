@@ -89,9 +89,10 @@ def update_welcome_progress(placeholder, pct, status_text):
     """)
 
 
-@st.cache_resource(show_spinner=False)
-def _load_prewarmer_inline_scripts():
-    """Reads d3.js and map_cache_builder.js once so the welcome prewarmer never 404s under Cloud (/~/+/)."""
+@st.cache_resource(show_spinner=False, max_entries=2)
+def _load_prewarmer_inline_scripts(builder_ver=""):
+    """Reads d3.js and map_cache_builder.js once per builder version so the welcome prewarmer never 404s under Cloud (/~/+/)."""
+    _ = builder_ver
     scripts = []
     for rel in ("static/d3.js", "static/map_cache_builder.js"):
         p = os.path.join(_BASE_DIR, rel)
@@ -108,7 +109,7 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
     """Renders a hidden 0px runner that warms window.parent.__NOVA_MAP_CACHE__ from the tokenized .gz payload."""
     mtime_token = f"{payload_meta['mtime']}|{payload_meta['th_date']}"
     payload_url = payload_meta["url"]
-    inline_core_js = _load_prewarmer_inline_scripts()
+    inline_core_js = _load_prewarmer_inline_scripts(str(builder_ver))
     prewarm_html = f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
@@ -121,8 +122,39 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
   const MTIME_TOKEN = {json.dumps(mtime_token)};
   const BUILDER_VER = {json.dumps(str(builder_ver))};
   const PAYLOAD_URL = {json.dumps(payload_url)};
-  const TIMEOUT_MS = 25000;
-  let entered = false;
+  const STALL_TIMEOUT_MS = 25000;
+  const MAX_TOTAL_TIMEOUT_MS = 90000;
+  let enterRequested = false;
+  let enterTimer = null;
+  let stallTimer = null;
+  let maxTimer = null;
+
+  function clearTimers() {{
+    if (stallTimer) {{
+      clearTimeout(stallTimer);
+      stallTimer = null;
+    }}
+    if (maxTimer) {{
+      clearTimeout(maxTimer);
+      maxTimer = null;
+    }}
+  }}
+
+  function stopEnterRetry() {{
+    if (enterTimer) {{
+      clearInterval(enterTimer);
+      enterTimer = null;
+    }}
+  }}
+
+  window.addEventListener('pagehide', () => {{
+    clearTimers();
+    stopEnterRetry();
+  }});
+  window.addEventListener('beforeunload', () => {{
+    clearTimers();
+    stopEnterRetry();
+  }});
 
   function updateParentProgress(pct, text) {{
     try {{
@@ -144,26 +176,55 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
   }}
 
   function triggerPortalEnter() {{
-    if (entered) return;
-    entered = true;
-    const tryClick = () => {{
+    if (enterRequested) return;
+    enterRequested = true;
+    clearTimers();
+
+    let clickCount = 0;
+    let lastClickAt = 0;
+    let sawButton = false;
+
+    const attemptClick = () => {{
       try {{
         const pdoc = window.parent && window.parent.document;
-        const btn = pdoc && pdoc.querySelector('.st-key-btn_welcome_enter_portal button');
-        if (btn) {{
-          btn.click();
-          return true;
+        if (!pdoc) return;
+        const btn = pdoc.querySelector('.st-key-btn_welcome_enter_portal button');
+        if (!btn) {{
+          // Button unmounted after navigating into main portal
+          if (sawButton) stopEnterRetry();
+          return;
         }}
+        sawButton = true;
+        if (clickCount >= 10) {{
+          stopEnterRetry();
+          return;
+        }}
+        const now = Date.now();
+        if (clickCount > 0) {{
+          if (now - lastClickAt < 1400) return;
+          if (pdoc.querySelector('[data-testid="stStatusWidget"]')) return;
+        }}
+        lastClickAt = now;
+        clickCount += 1;
+        btn.click();
       }} catch (_e) {{}}
-      return false;
     }};
-    if (!tryClick()) {{
-      let tries = 0;
-      const timer = setInterval(() => {{
-        tries += 1;
-        if (tryClick() || tries >= 40) clearInterval(timer);
-      }}, 150);
-    }}
+
+    attemptClick();
+    enterTimer = setInterval(attemptClick, 250);
+  }}
+
+  function onTimeoutFallback(reason) {{
+    if (enterRequested) return;
+    console.warn('Browser map prewarm timeout fallback:', reason);
+    updateParentProgress(100, '✓ กำลังเข้าสู่หน้าหลัก...');
+    triggerPortalEnter();
+  }}
+
+  function bumpStallTimer() {{
+    if (enterRequested) return;
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => onTimeoutFallback('stall'), STALL_TIMEOUT_MS);
   }}
 
   function loadScript(src) {{
@@ -188,6 +249,9 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
 
   function hasValidParentCacheFast() {{
     try {{
+      if (window.NovaMapCache && typeof window.NovaMapCache.getValidParentCache === 'function') {{
+        return !!window.NovaMapCache.getValidParentCache(MTIME_TOKEN);
+      }}
       const c = window.parent && window.parent.__NOVA_MAP_CACHE__;
       return !!(c && c.data && c.data.length > 0 && c.spatialGrid && c.projIndex && String(c.mtime || '') === MTIME_TOKEN);
     }} catch (_e) {{
@@ -195,15 +259,13 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
     }}
   }}
 
-  const safetyTimer = setTimeout(() => {{
-    updateParentProgress(100, '✓ กำลังเข้าสู่หน้าหลัก...');
-    triggerPortalEnter();
-  }}, TIMEOUT_MS);
+  bumpStallTimer();
+  maxTimer = setTimeout(() => onTimeoutFallback('max_total'), MAX_TOTAL_TIMEOUT_MS);
 
   async function run() {{
     try {{
       if (hasValidParentCacheFast()) {{
-        clearTimeout(safetyTimer);
+        clearTimers();
         updateParentProgress(100, '✓ โหลดข้อมูลและแผนที่พร้อมใช้งาน');
         setTimeout(triggerPortalEnter, 40);
         return;
@@ -220,16 +282,19 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
         await window.NovaMapCache.fetchAndBuildParentCache(
           MTIME_TOKEN,
           PAYLOAD_URL,
-          (pct, msg) => updateParentProgress(pct, msg)
+          (pct, msg) => {{
+            bumpStallTimer();
+            updateParentProgress(pct, msg);
+          }}
         );
       }}
 
-      clearTimeout(safetyTimer);
+      clearTimers();
       updateParentProgress(100, '✓ โหลดข้อมูลและแผนที่พร้อมใช้งาน');
       setTimeout(triggerPortalEnter, 80);
     }} catch (err) {{
       console.warn('Browser map prewarm fallback:', err);
-      clearTimeout(safetyTimer);
+      clearTimers();
       updateParentProgress(100, '✓ โหลดข้อมูลครบทั้ง 5 แท็บ พร้อมใช้งาน');
       triggerPortalEnter();
     }}
