@@ -1105,6 +1105,197 @@
     }
   }
 
+  // =========================================================================
+  // PARENT-SHARED BASEMAP TILE BLOB CACHE (Zero-Latency Initial Map Display)
+  // Stores immutable Blobs on window.parent so Tab 2 decodes ImageBitmaps in
+  // its own realm (avoiding deck.gl cross-realm instanceof failures & leaks).
+  // =========================================================================
+  const MAX_CACHED_TILES = 240;
+  const _localTileStore = { blobs: new Map(), inflight: new Map() };
+  const BASEMAP_TILE_TEMPLATES = {
+    google_hybrid: [
+      'https://mt0.google.com/vt?lyrs=y&hl=th&x={x}&y={y}&z={z}',
+      'https://mt1.google.com/vt?lyrs=y&hl=th&x={x}&y={y}&z={z}',
+      'https://mt2.google.com/vt?lyrs=y&hl=th&x={x}&y={y}&z={z}',
+      'https://mt3.google.com/vt?lyrs=y&hl=th&x={x}&y={y}&z={z}'
+    ],
+    google_roadmap: [
+      'https://mt0.google.com/vt?lyrs=m&hl=th&x={x}&y={y}&z={z}',
+      'https://mt1.google.com/vt?lyrs=m&hl=th&x={x}&y={y}&z={z}',
+      'https://mt2.google.com/vt?lyrs=m&hl=th&x={x}&y={y}&z={z}',
+      'https://mt3.google.com/vt?lyrs=m&hl=th&x={x}&y={y}&z={z}'
+    ],
+    satellite: [
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+    ],
+    osm: [
+      'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+    ],
+    voyager: [
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}'
+    ]
+  };
+
+  function getParentTileCache() {
+    const host = getParentHost();
+    if (!host) return _localTileStore;
+    if (!host.__NOVA_TILE_CACHE__ || !(host.__NOVA_TILE_CACHE__.blobs && host.__NOVA_TILE_CACHE__.inflight)) {
+      host.__NOVA_TILE_CACHE__ = { blobs: new Map(), inflight: new Map() };
+    }
+    return host.__NOVA_TILE_CACHE__;
+  }
+
+  function getTileCacheKey(styleName, z, x, y) {
+    return String(styleName || 'google_hybrid') + '/' + z + '/' + x + '/' + y;
+  }
+
+  function _putTileBlobLRU(blobsMap, key, blob) {
+    if (!blobsMap || !blob) return;
+    if (blobsMap.has(key)) blobsMap.delete(key);
+    blobsMap.set(key, blob);
+    while (blobsMap.size > MAX_CACHED_TILES) {
+      const oldestKey = blobsMap.keys().next().value;
+      if (oldestKey === undefined) break;
+      blobsMap.delete(oldestKey);
+    }
+  }
+
+  function _resolveTileUrl(styleName, z, x, y, explicitUrl) {
+    if (explicitUrl) return explicitUrl;
+    const list = BASEMAP_TILE_TEMPLATES[styleName] || BASEMAP_TILE_TEMPLATES.google_hybrid;
+    const idx = Math.abs((x * 31 + y * 17 + z) | 0) % list.length;
+    return list[idx].replace('{x}', String(x)).replace('{y}', String(y)).replace('{z}', String(z));
+  }
+
+  async function fetchAndCacheTileBlob(styleName, z, x, y, explicitUrl, signal) {
+    const store = getParentTileCache();
+    const key = getTileCacheKey(styleName, z, x, y);
+
+    const cached = store.blobs.get(key);
+    if (cached) {
+      // Touch LRU position
+      store.blobs.delete(key);
+      store.blobs.set(key, cached);
+      return cached;
+    }
+
+    const pending = store.inflight.get(key);
+    if (pending) {
+      return await pending;
+    }
+
+    const url = _resolveTileUrl(styleName, z, x, y, explicitUrl);
+    const reqPromise = (async () => {
+      const fetchOpts = { mode: 'cors', credentials: 'omit' };
+      if (signal) fetchOpts.signal = signal;
+      const resp = await fetch(url, fetchOpts);
+      if (!resp.ok) {
+        throw new Error('Tile HTTP ' + resp.status);
+      }
+      const blob = await resp.blob();
+      if (!blob || blob.size === 0) {
+        throw new Error('Empty tile blob');
+      }
+      _putTileBlobLRU(store.blobs, key, blob);
+      return blob;
+    })();
+
+    store.inflight.set(key, reqPromise);
+    try {
+      return await reqPromise;
+    } finally {
+      if (store.inflight.get(key) === reqPromise) {
+        store.inflight.delete(key);
+      }
+    }
+  }
+
+  function _lonLatToTileXY(lon, lat, z) {
+    const n = Math.pow(2, z);
+    const x = ((lon + 180) / 360) * n;
+    const latRad = (lat * Math.PI) / 180;
+    const y = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
+    return { x, y };
+  }
+
+  function _computeInitialThailandTileSpecs(opts) {
+    const o = opts || {};
+    const lon = Number.isFinite(o.lon) ? o.lon : 100.5;
+    const lat = Number.isFinite(o.lat) ? o.lat : 13.5;
+    const viewZoom = Number.isFinite(o.zoom) ? o.zoom : 5.2;
+    const host = getParentHost();
+    const rawW = (host && host.innerWidth) || (global.innerWidth) || 1600;
+    const vpW = Math.max(1024, Math.min(2560, rawW));
+    const vpH = Number.isFinite(o.height) ? o.height : 870;
+
+    // Deck.gl Tileset2D uses tileZoom = Math.round(viewZoom + Math.log2(512 / tileSize))
+    // For tileSize = 256 and viewZoom = 5.2, primary zoom is z = 6; also warm coarse z = 5 fallback.
+    const primaryZ = Math.max(4, Math.min(18, Math.round(viewZoom + 1)));
+    const specs = [];
+    const seen = new Set();
+
+    const addZoomRing = (z, halfW, halfH, priorityWeight) => {
+      const n = Math.pow(2, z);
+      const c = _lonLatToTileXY(lon, lat, z);
+      const minX = Math.max(0, Math.floor(c.x - halfW));
+      const maxX = Math.min(n - 1, Math.floor(c.x + halfW));
+      const minY = Math.max(0, Math.floor(c.y - halfH));
+      const maxY = Math.min(n - 1, Math.floor(c.y + halfH));
+      for (let x = minX; x <= maxX; x++) {
+        for (let y = minY; y <= maxY; y++) {
+          const k = z + '/' + x + '/' + y;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          const dx = (x + 0.5) - c.x;
+          const dy = (y + 0.5) - c.y;
+          specs.push({ z, x, y, dist: priorityWeight + (dx * dx + dy * dy) });
+        }
+      }
+    };
+
+    const pxPerPrimaryTile = 256 * Math.pow(2, viewZoom + 1 - primaryZ);
+    const halfWPrimary = (vpW / 2) / pxPerPrimaryTile + 0.25;
+    const halfHPrimary = (vpH / 2) / pxPerPrimaryTile + 0.25;
+    // Primary zoom (z=6) gets priority 0 so visible initial tiles finish first; z=5 fallback gets priority 100
+    addZoomRing(primaryZ, halfWPrimary, halfHPrimary, 0);
+    if (primaryZ > 4) {
+      addZoomRing(primaryZ - 1, Math.max(1.6, halfWPrimary / 2), Math.max(0.9, halfHPrimary / 2), 100);
+    }
+
+    specs.sort((a, b) => a.dist - b.dist);
+    return specs;
+  }
+
+  async function preloadBasemapTiles(styleName, opts) {
+    const style = styleName || 'google_hybrid';
+    const specs = _computeInitialThailandTileSpecs(opts);
+    if (!specs.length) return { total: 0, loaded: 0 };
+
+    const concurrency = Math.max(4, Math.min(20, (opts && opts.concurrency) || 16));
+    let cursor = 0;
+    let loaded = 0;
+
+    async function worker() {
+      while (cursor < specs.length) {
+        const item = specs[cursor++];
+        try {
+          await fetchAndCacheTileBlob(style, item.z, item.x, item.y, null, null);
+          loaded += 1;
+        } catch (_err) {
+          // Non-fatal: firewall / transient tile error must never block Welcome screen
+        }
+      }
+    }
+
+    const workers = [];
+    const count = Math.min(concurrency, specs.length);
+    for (let i = 0; i < count; i++) {
+      workers.push(worker());
+    }
+    await Promise.all(workers);
+    return { total: specs.length, loaded: loaded };
+  }
+
   // Expose legacy global symbol names so map_template.html has zero duplicate definitions
   global.BRAND_TAG_RULES = BRAND_TAG_RULES;
   global.getBrandSearchTag = getBrandSearchTag;
@@ -1131,6 +1322,10 @@
     fetchAndBuildParentCache: fetchAndBuildParentCache,
     getParentBoundaryCache: getParentBoundaryCache,
     storeParentBoundaryCache: storeParentBoundaryCache,
+    getParentTileCache: getParentTileCache,
+    getTileCacheKey: getTileCacheKey,
+    fetchAndCacheTileBlob: fetchAndCacheTileBlob,
+    preloadBasemapTiles: preloadBasemapTiles,
     resolveStaticUrlCandidates: resolveStaticUrlCandidates
   };
 })(typeof window !== 'undefined' ? window : globalThis);

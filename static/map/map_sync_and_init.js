@@ -877,6 +877,24 @@ function updateParentMedianCards(sharedActiveData) {
 let kpiUpdateRaf = null;
 let _parentTabRetryTimer = null;
 let _ttObserverInstance = null;
+let _mapResizeObserver = null;
+let _mapResizeRaf = null;
+let _deferredBoundaryTimer = null;
+
+function _triggerImmediateMapRedraw() {
+  if (!deckglInstance) return;
+  if (_mapResizeRaf) cancelAnimationFrame(_mapResizeRaf);
+  _mapResizeRaf = requestAnimationFrame(() => {
+    _mapResizeRaf = null;
+    try {
+      window.dispatchEvent(new Event('resize'));
+      if (deckglInstance && typeof deckglInstance.redraw === 'function') {
+        deckglInstance.redraw(true);
+      }
+      updateSvgBoundaries();
+    } catch (_e) {}
+  });
+}
 
 function scheduleParentKpiUpdate() {
   if (kpiUpdateRaf) cancelAnimationFrame(kpiUpdateRaf);
@@ -914,16 +932,14 @@ function setupParentTabListeners() {
 
       tabs.forEach((t, idx) => {
         t.addEventListener('click', () => {
-          setTimeout(() => {
+          requestAnimationFrame(() => {
             if (idx === 1) {
               scheduleParentKpiUpdate();
-              if (deckglInstance) {
-                try { window.dispatchEvent(new Event('resize')); updateSvgBoundaries(); } catch(e) {}
-              }
+              _triggerImmediateMapRedraw();
             } else {
               restoreDefaultParentKpiCards();
             }
-          }, 40);
+          });
         }, listenerOpts);
       });
 
@@ -931,11 +947,7 @@ function setupParentTabListeners() {
         const isTab2Active = tabs[1] && tabs[1].getAttribute('aria-selected') === 'true';
         if (isTab2Active) {
           scheduleParentKpiUpdate();
-          if (deckglInstance) {
-            setTimeout(() => {
-              try { window.dispatchEvent(new Event('resize')); updateSvgBoundaries(); } catch(e) {}
-            }, 30);
-          }
+          _triggerImmediateMapRedraw();
         } else {
           restoreDefaultParentKpiCards();
         }
@@ -950,6 +962,7 @@ function setupParentTabListeners() {
       // If Tab 2 is already active right now, apply immediately
       if (tabs[1] && tabs[1].getAttribute('aria-selected') === 'true') {
         scheduleParentKpiUpdate();
+        _triggerImmediateMapRedraw();
       }
 
       return true;
@@ -974,6 +987,7 @@ function setupParentTabListeners() {
 function cleanupMapResources() {
   try {
     if (kpiUpdateRaf) { cancelAnimationFrame(kpiUpdateRaf); kpiUpdateRaf = null; }
+    if (_mapResizeRaf) { cancelAnimationFrame(_mapResizeRaf); _mapResizeRaf = null; }
     if (typeof mapAnimRaf !== 'undefined' && mapAnimRaf) { cancelAnimationFrame(mapAnimRaf); mapAnimRaf = null; }
     if (typeof hoverRaf !== 'undefined' && hoverRaf) { cancelAnimationFrame(hoverRaf); hoverRaf = null; }
     if (streamlitSyncTimer) { clearTimeout(streamlitSyncTimer); streamlitSyncTimer = null; }
@@ -983,7 +997,9 @@ function cleanupMapResources() {
     if (placeSearchTimer) { clearTimeout(placeSearchTimer); placeSearchTimer = null; }
     if (placeSearchAbortCtrl) { try { placeSearchAbortCtrl.abort(); } catch (_e) {} placeSearchAbortCtrl = null; }
     if (_parentTabRetryTimer) { clearInterval(_parentTabRetryTimer); _parentTabRetryTimer = null; }
+    if (_deferredBoundaryTimer) { clearTimeout(_deferredBoundaryTimer); _deferredBoundaryTimer = null; }
     if (_ttObserverInstance) { _ttObserverInstance.disconnect(); _ttObserverInstance = null; }
+    if (_mapResizeObserver) { _mapResizeObserver.disconnect(); _mapResizeObserver = null; }
     if (window.parent && typeof window.parent.__NOVA_TAB_LISTENER_CLEANUP__ === 'function') {
       window.parent.__NOVA_TAB_LISTENER_CLEANUP__();
       window.parent.__NOVA_TAB_LISTENER_CLEANUP__ = null;
@@ -1460,6 +1476,34 @@ async function initMap() {
           }
         });
         _ttObserverInstance.observe(mapContainer, { childList: true });
+
+        // Immediately resize & redraw DeckGL on the exact first frame Tab 2 becomes visible (0x0 -> real size)
+        if (typeof ResizeObserver === 'function') {
+          let lastW = mapContainer.clientWidth || 0;
+          let lastH = mapContainer.clientHeight || 0;
+          _mapResizeObserver = new ResizeObserver((entries) => {
+            const rect = entries && entries[0] && entries[0].contentRect;
+            const w = rect ? Math.round(rect.width) : (mapContainer.clientWidth || 0);
+            const h = rect ? Math.round(rect.height) : (mapContainer.clientHeight || 0);
+            if (w > 0 && h > 0 && (w !== lastW || h !== lastH)) {
+              lastW = w;
+              lastH = h;
+              _triggerImmediateMapRedraw();
+            }
+          });
+          _mapResizeObserver.observe(mapContainer);
+        }
+
+        // If Tab 2 is mounted hidden (e.g. ?portal=skip while Tab 1 is open), warm tiles in background
+        if ((mapContainer.clientWidth || 0) === 0 && window.NovaMapCache && typeof window.NovaMapCache.preloadBasemapTiles === 'function') {
+          window.NovaMapCache.preloadBasemapTiles(currentStyle, {
+            lon: initialLon,
+            lat: initialLat,
+            zoom: initialZoom,
+            height: 870,
+            concurrency: 16
+          }).catch(() => {});
+        }
       }
     } catch(e) {}
 
@@ -1485,7 +1529,15 @@ async function initMap() {
     }
 
     loader.style.display = 'none';
-    loadBoundaryScriptsInBackground();
+    // Defer 8 MB GeoJSON boundary scripts slightly so initial basemap tiles & WebGL textures get full priority
+    _deferredBoundaryTimer = setTimeout(() => {
+      _deferredBoundaryTimer = null;
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(() => { try { loadBoundaryScriptsInBackground(); } catch(_e) {} }, { timeout: 1500 });
+      } else {
+        try { loadBoundaryScriptsInBackground(); } catch(_e) {}
+      }
+    }, 700);
 
     const effRefId = currentRefId || (initRefIdStr && initRefIdStr !== ("INIT_REF_ID_" + "PLACEHOLDER") ? initRefIdStr : "");
     if (effRefId && effRefId.trim()) {

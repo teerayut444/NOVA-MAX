@@ -1164,15 +1164,42 @@ function updateActiveButtons(styleName) {
 
 let _tileErrorCount = 0;
 let _tileFallbackTriggered = false;
+
+async function _decodeTileBlobInRealm(blob) {
+  if (!blob) return null;
+  if (typeof window.createImageBitmap === 'function') {
+    try {
+      return await window.createImageBitmap(blob);
+    } catch (_e) {}
+  }
+  return await new Promise((resolve, reject) => {
+    const objUrl = URL.createObjectURL(blob);
+    const img = new window.Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objUrl);
+      resolve(img);
+    };
+    img.onerror = (err) => {
+      URL.revokeObjectURL(objUrl);
+      reject(err || new Error('Tile image decode failed'));
+    };
+    img.src = objUrl;
+  });
+}
+
 function createBasemapLayer(styleName) {
   const isGoogle = styleName && styleName.startsWith('google_');
-  return new deck.TileLayer({
+  const layerOpts = {
     id: `basemap-tile-layer-${styleName}`,
     data: getTileUrls(styleName),
     minZoom: 0,
     maxZoom: isGoogle ? 20 : 19,
     tileSize: 256,
-    onTileError: () => {
+    maxRequests: 20,
+    maxCacheSize: 300,
+    refinementStrategy: 'best-available',
+    onTileError: (err) => {
+      if (err && err.name === 'AbortError') return;
       _tileErrorCount++;
       if (!_tileFallbackTriggered && _tileErrorCount >= 6) {
         _tileFallbackTriggered = true;
@@ -1190,7 +1217,27 @@ function createBasemapLayer(styleName) {
         bounds: [west, south, east, north]
       });
     }
-  });
+  };
+
+  if (window.NovaMapCache && typeof window.NovaMapCache.fetchAndCacheTileBlob === 'function') {
+    layerOpts.getTileData = async (tile) => {
+      const idx = (tile && tile.index) ? tile.index : tile;
+      if (!idx || !Number.isInteger(idx.x) || !Number.isInteger(idx.y) || !Number.isInteger(idx.z)) {
+        return null;
+      }
+      const blob = await window.NovaMapCache.fetchAndCacheTileBlob(
+        styleName,
+        idx.z,
+        idx.x,
+        idx.y,
+        tile && tile.url ? tile.url : null,
+        tile && tile.signal ? tile.signal : null
+      );
+      return await _decodeTileBlobInRealm(blob);
+    };
+  }
+
+  return new deck.TileLayer(layerOpts);
 }
 
 function handlePointClick(info) {

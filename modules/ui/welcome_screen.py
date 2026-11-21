@@ -259,23 +259,56 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
     }}
   }}
 
+  function startBasemapTilePreload() {{
+    try {{
+      if (window.NovaMapCache && typeof window.NovaMapCache.preloadBasemapTiles === 'function') {{
+        return window.NovaMapCache.preloadBasemapTiles('google_hybrid', {{
+          lon: 100.5,
+          lat: 13.5,
+          zoom: 5.2,
+          height: 870,
+          concurrency: 16
+        }}).catch(() => null);
+      }}
+    }} catch (_e) {{}}
+    return Promise.resolve(null);
+  }}
+
+  async function waitBrieflyForTiles(tilePromise, maxWaitMs) {{
+    if (!tilePromise) return;
+    let settled = false;
+    tilePromise.then(() => {{ settled = true; }}).catch(() => {{ settled = true; }});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (settled) return;
+    updateParentProgress(99, 'กำลังเตรียมภาพแผนที่เริ่มต้น (Google Hybrid)...');
+    bumpStallTimer();
+    await Promise.race([
+      tilePromise,
+      new Promise((resolve) => setTimeout(resolve, maxWaitMs))
+    ]);
+  }}
+
   bumpStallTimer();
   maxTimer = setTimeout(() => onTimeoutFallback('max_total'), MAX_TOTAL_TIMEOUT_MS);
 
   async function run() {{
     try {{
-      if (hasValidParentCacheFast()) {{
-        clearTimers();
-        updateParentProgress(100, '✓ โหลดข้อมูลและแผนที่พร้อมใช้งาน');
-        setTimeout(triggerPortalEnter, 40);
-        return;
-      }}
-
       if (!window.NovaMapCache) {{
         await Promise.all([
           loadScript('/app/static/d3.js'),
           loadScript('/app/static/map_cache_builder.js?v=' + encodeURIComponent(BUILDER_VER))
         ]);
+      }}
+
+      // Start warming initial Thailand basemap tiles (z=6 + z=5 fallback) in parallel immediately
+      const tilePreloadPromise = startBasemapTilePreload();
+
+      if (hasValidParentCacheFast()) {{
+        await waitBrieflyForTiles(tilePreloadPromise, 1500);
+        clearTimers();
+        updateParentProgress(100, '✓ โหลดข้อมูลและภาพแผนที่พร้อมใช้งาน');
+        setTimeout(triggerPortalEnter, 40);
+        return;
       }}
 
       if (window.NovaMapCache && typeof window.NovaMapCache.fetchAndBuildParentCache === 'function' && PAYLOAD_URL) {{
@@ -289,8 +322,11 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
         );
       }}
 
+      // Tiles usually finish well before the 35 MB CSV finishes parsing; wait up to 1.5s if still finishing
+      await waitBrieflyForTiles(tilePreloadPromise, 1500);
+
       clearTimers();
-      updateParentProgress(100, '✓ โหลดข้อมูลและแผนที่พร้อมใช้งาน');
+      updateParentProgress(100, '✓ โหลดข้อมูลและภาพแผนที่พร้อมใช้งาน');
       setTimeout(triggerPortalEnter, 80);
     }} catch (err) {{
       console.warn('Browser map prewarm fallback:', err);
