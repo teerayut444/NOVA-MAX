@@ -103,6 +103,27 @@ st.html(
         display: none !important;
         visibility: hidden !important;
     }
+    .st-key-btn_lazy_load_tab3,
+    div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_tab3),
+    div[data-testid="stButton"]:has(.st-key-btn_lazy_load_tab3),
+    .st-key-btn_lazy_load_tab4,
+    div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_tab4),
+    div[data-testid="stButton"]:has(.st-key-btn_lazy_load_tab4),
+    .st-key-btn_lazy_load_tab5,
+    div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_tab5),
+    div[data-testid="stButton"]:has(.st-key-btn_lazy_load_tab5) {
+        position: fixed !important;
+        bottom: -9999px !important;
+        right: -9999px !important;
+        width: 1px !important;
+        height: 1px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        z-index: -9999 !important;
+    }
     </style>
     """
 )
@@ -268,36 +289,50 @@ def _render_lazy_tab_watcher(tab_id, label_text, is_dark_mode=False):
     )
 
 
+def _mark_lazy_tab_ready(state_key: str) -> None:
+    """Runs before the fragment reruns so the hidden trigger button is never rendered once activated."""
+    st.session_state[state_key] = True
+
+
 @_fragment_decorator
 def _render_lazy_tab3_fragment(df_raw, is_dark_mode):
-    if not st.session_state.get("_nova_lazy_ready_tab3", False):
-        if st.button("load_tab3", key="btn_lazy_load_tab3"):
-            st.session_state["_nova_lazy_ready_tab3"] = True
     if st.session_state.get("_nova_lazy_ready_tab3", False):
         render_tab3_analytics_view(df_raw, df_raw, is_dark_mode=is_dark_mode)
         return
+    st.button(
+        "load_tab3",
+        key="btn_lazy_load_tab3",
+        on_click=_mark_lazy_tab_ready,
+        args=("_nova_lazy_ready_tab3",),
+    )
     _render_lazy_tab_watcher("tab3", "กำลังโหลดข้อมูลสถิติ & วิเคราะห์ตลาด...", is_dark_mode=is_dark_mode)
 
 
 @_fragment_decorator
 def _render_lazy_tab4_fragment(df_raw, is_dark_mode):
-    if not st.session_state.get("_nova_lazy_ready_tab4", False):
-        if st.button("load_tab4", key="btn_lazy_load_tab4"):
-            st.session_state["_nova_lazy_ready_tab4"] = True
     if st.session_state.get("_nova_lazy_ready_tab4", False):
         render_tab4_inventory_view(df_raw, is_dark_mode=is_dark_mode)
         return
+    st.button(
+        "load_tab4",
+        key="btn_lazy_load_tab4",
+        on_click=_mark_lazy_tab_ready,
+        args=("_nova_lazy_ready_tab4",),
+    )
     _render_lazy_tab_watcher("tab4", "กำลังโหลดตารางรายการทรัพย์สิน...", is_dark_mode=is_dark_mode)
 
 
 @_fragment_decorator
 def _render_lazy_tab5_fragment(df_raw, is_dark_mode):
-    if not st.session_state.get("_nova_lazy_ready_tab5", False):
-        if st.button("load_tab5", key="btn_lazy_load_tab5"):
-            st.session_state["_nova_lazy_ready_tab5"] = True
     if st.session_state.get("_nova_lazy_ready_tab5", False):
         render_tab5_popular_locations_view(df_raw, is_dark_mode=is_dark_mode)
         return
+    st.button(
+        "load_tab5",
+        key="btn_lazy_load_tab5",
+        on_click=_mark_lazy_tab_ready,
+        args=("_nova_lazy_ready_tab5",),
+    )
     _render_lazy_tab_watcher("tab5", "กำลังโหลดแผนที่ทำเลยอดนิยม (Livinginsider)...", is_dark_mode=is_dark_mode)
 
 
