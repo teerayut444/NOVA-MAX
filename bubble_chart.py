@@ -437,6 +437,7 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
             sector_meta[sec]["val"] += c_val
 
     bubbles_html_list = []
+    bubble_clip_defs = []
     keyframes_list = []
     hover_classes_list = []
 
@@ -474,22 +475,30 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
         hrx = radius * 0.4
         hry = radius * 0.25
         highlight = f'<ellipse cx="{hcx}" cy="{hcy}" rx="{hrx}" ry="{hry}" fill="url(#highlight-grad)" transform="rotate(-30, {hcx}, {hcy})" />'
-        
-        # Logo badge size
-        logo_badge_sz = max(38, min(56, int(radius * 0.44)))
+
+        # Pure Native SVG interior (100% immune to iPadOS WebKit <foreignObject> scaling & compositing bugs)
+        logo_badge_r = max(18.0, min(26.0, radius * 0.21))
+        logo_img_sz = (logo_badge_r - 3.0) * 1.75
         logo_data_uri = get_company_logo_data_uri(comp["id"])
+        clip_id = f"clip-logo-{comp['id']}"
+        bubble_clip_defs.append(
+            f'<clipPath id="{clip_id}"><circle cx="{cx}" cy="{{LOGO_CY}}" r="{logo_badge_r - 2.0:.1f}" /></clipPath>'
+        )
 
-        title_size = max(13.5, int(radius * 0.165))
-        stat_label_size = max(9.5, int(radius * 0.105))
-        stat_val_size = max(11.0, int(radius * 0.122))
-        badge_padding = "2px 7px" if radius > 70 else "1.5px 5.5px"
-        badge_gap = "3.5px"
-        margin_bottom = "2.5px" if radius > 70 else "2px"
+        title_size = max(12.0, min(18.5, radius * 0.158))
+        stat_label_size = max(8.5, min(11.5, radius * 0.098))
+        stat_val_size = max(9.2, min(12.6, radius * 0.108))
+        pill_h = max(14.5, min(20.0, radius * 0.172))
+        pill_gap = max(2.2, min(3.8, radius * 0.032))
+        gap_logo_title = max(3.5, radius * 0.045)
+        gap_title_pills = max(3.5, radius * 0.045)
 
-        card_bg_color = "rgba(15, 23, 42, 0.65)" if is_dark_mode else "rgba(255, 255, 255, 0.82)"
+        card_bg_color = "rgba(15, 23, 42, 0.78)" if is_dark_mode else "rgba(255, 255, 255, 0.88)"
+        card_stroke_color = "rgba(255, 255, 255, 0.35)" if is_dark_mode else "rgba(255, 255, 255, 0.75)"
         text_title_color = "#f8fafc" if is_dark_mode else "#0f172a"
-        text_sub_color = "#94a3b8" if is_dark_mode else "#475569"
+        text_sub_color = "#cbd5e1" if is_dark_mode else "#475569"
         text_val_color = "#ffffff" if is_dark_mode else "#0f172a"
+        pct_accent_color = "#34d399" if is_dark_mode else "#047857"
 
         comp_date_str = co_dates_map.get(comp_name) or FALLBACK_COMPANY_DATES.get(comp_name, "-")
 
@@ -500,47 +509,126 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
             date_badge_label = "ดึงข้อมูล"
             date_badge_val = comp_date_str
 
+        val_str = format_price_thai(c_val)
+        pills_spec = [
+            (
+                "ทรัพย์สิน",
+                f"{c_count:,}",
+                f" ({pct_count:.1f}%)",
+                card_bg_color,
+                card_stroke_color,
+                text_sub_color,
+                text_val_color,
+                pct_accent_color,
+            ),
+            (
+                "มูลค่า",
+                val_str,
+                "",
+                card_bg_color,
+                card_stroke_color,
+                text_sub_color,
+                text_val_color,
+                "",
+            ),
+            (
+                date_badge_label,
+                str(date_badge_val),
+                "",
+                card_bg_color,
+                card_stroke_color,
+                text_sub_color,
+                text_val_color,
+                "",
+            ),
+        ]
+        if c_centroid > 0:
+            pills_spec.append(
+                (
+                    "△ กึ่งกลาง",
+                    f"{c_centroid:,}",
+                    "",
+                    "rgba(254, 243, 199, 0.96)",
+                    "#fde68a",
+                    "#b45309",
+                    "#92400e",
+                    "",
+                )
+            )
+
+        n_pills = len(pills_spec)
+        total_stack_h = (
+            (logo_badge_r * 2.0)
+            + gap_logo_title
+            + title_size
+            + gap_title_pills
+            + (n_pills * pill_h)
+            + (max(0, n_pills - 1) * pill_gap)
+        )
+        # Keep stack comfortably inside circle if 4 pills on smaller bubble
+        max_inner_h = radius * 1.82
+        if total_stack_h > max_inner_h:
+            scale_y = max_inner_h / total_stack_h
+            logo_badge_r *= scale_y
+            logo_img_sz = (logo_badge_r - 2.5) * 1.75
+            title_size *= scale_y
+            stat_label_size *= scale_y
+            stat_val_size *= scale_y
+            pill_h *= scale_y
+            pill_gap *= scale_y
+            gap_logo_title *= scale_y
+            gap_title_pills *= scale_y
+            total_stack_h = max_inner_h
+
+        top_y = cy - (total_stack_h / 2.0)
+        logo_cy = top_y + logo_badge_r
+        title_y = logo_cy + logo_badge_r + gap_logo_title + (title_size * 0.5)
+        first_pill_cy = title_y + (title_size * 0.5) + gap_title_pills + (pill_h * 0.5)
+
+        # Patch clipPath cy now that final logo_cy is known
+        bubble_clip_defs[-1] = (
+            f'<clipPath id="{clip_id}"><circle cx="{cx}" cy="{logo_cy:.1f}" r="{max(8.0, logo_badge_r - 2.0):.1f}" /></clipPath>'
+        )
+
+        pills_svg_parts = []
+        for p_idx, (lbl, val, pct_s, bg_c, st_c, lbl_c, val_c, pct_c) in enumerate(pills_spec):
+            py = first_pill_cy + p_idx * (pill_h + pill_gap)
+            dy = abs(py - cy)
+            max_chord = max(radius * 0.7, 2.0 * math.sqrt(max(0.0, radius * radius - dy * dy)) - 10.0)
+            plain_len = len(lbl) + 1 + len(val) + len(pct_s)
+            est_w = plain_len * (stat_val_size * 0.56) + 16.0
+            pill_w = min(max_chord, max(radius * 0.85, est_w))
+            safe_lbl = html.escape(lbl, quote=True)
+            safe_val = html.escape(val, quote=True)
+            safe_pct = html.escape(pct_s, quote=True)
+            pct_tspan = (
+                f'<tspan fill="{pct_c}" font-weight="700" font-size="{stat_val_size:.1f}">{safe_pct}</tspan>'
+                if safe_pct
+                else ""
+            )
+            pills_svg_parts.append(
+                f'<rect x="{cx - pill_w / 2.0:.1f}" y="{py - pill_h / 2.0:.1f}" '
+                f'width="{pill_w:.1f}" height="{pill_h:.1f}" rx="{pill_h / 2.0:.1f}" '
+                f'fill="{bg_c}" stroke="{st_c}" stroke-width="1" />'
+                f'<text x="{cx}" y="{py:.1f}" text-anchor="middle" dominant-baseline="central" '
+                f'font-family="Outfit, Sarabun, Noto Sans Thai, sans-serif">'
+                f'<tspan fill="{lbl_c}" font-weight="600" font-size="{stat_label_size:.1f}">{safe_lbl} </tspan>'
+                f'<tspan fill="{val_c}" font-weight="800" font-size="{stat_val_size:.1f}">{safe_val}</tspan>'
+                f'{pct_tspan}</text>'
+            )
+
+        safe_comp_title = html.escape(comp["name"].upper(), quote=True)
         bubble_body = f"""
             <g class="bubble-group sector-bubble sector-{comp['sector']}" id="{bubble_id}">
                 {slices}
                 {sheen}
                 {highlight}
-                <foreignObject x="{cx - radius}" y="{cy - radius}" width="{2*radius}" height="{2*radius}">
-                    <div style="width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; font-family: 'Outfit', 'Sarabun', sans-serif; pointer-events: none; box-sizing: border-box; padding: 2px; line-height: 1.15; will-change: transform;">
-                        <!-- Crisp White Circular Badge Background -->
-                        <div style="background: rgba(255, 255, 255, 0.96); border-radius: 50%; width: {logo_badge_sz}px; height: {logo_badge_sz}px; display: flex; justify-content: center; align-items: center; box-shadow: 0 3px 10px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.1); border: 2px solid #ffffff; margin-bottom: 2px; overflow: hidden; padding: 2px; box-sizing: border-box;">
-                            <img src="{logo_data_uri}" style="max-width: 90%; max-height: 90%; width: 90%; height: 90%; object-fit: contain;" alt="{comp['name']}" />
-                        </div>
-                        
-                        <!-- Title -->
-                        <div style="font-weight: 800; font-size: {title_size}px; color: {text_title_color}; letter-spacing: -0.3px; margin-bottom: 2px; text-transform: uppercase;">
-                            {comp['name']}
-                        </div>
-                        
-                        <!-- Stats: จำนวนทรัพย์ -->
-                        <div style="background: {card_bg_color}; backdrop-filter: blur(4px); border-radius: 18px; padding: {badge_padding}; display: inline-flex; align-items: center; gap: {badge_gap}; margin-bottom: {margin_bottom}; border: 1px solid rgba(255, 255, 255, 0.5); box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);">
-                            <span style="font-size: {stat_label_size}px; color: {text_sub_color}; font-weight: 600;">ทรัพย์สิน</span>
-                            <span style="font-size: {stat_val_size}px; color: {text_val_color}; font-weight: 800;">{c_count:,} <span style="color: {'#34d399' if is_dark_mode else '#047857'}; font-weight: 700;">({pct_count:.1f}%)</span></span>
-                        </div>
-                        
-                        <!-- Stats: มูลค่ารวม -->
-                        <div style="background: {card_bg_color}; backdrop-filter: blur(4px); border-radius: 18px; padding: {badge_padding}; display: inline-flex; align-items: center; gap: {badge_gap}; margin-bottom: {margin_bottom}; border: 1px solid rgba(255, 255, 255, 0.5); box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);">
-                            <span style="font-size: {stat_label_size}px; color: {text_sub_color}; font-weight: 600;">มูลค่า</span>
-                            <span style="font-size: {stat_val_size}px; color: {text_val_color}; font-weight: 800;">{format_price_thai(c_val)}</span>
-                        </div>
-                        
-                        <!-- Stats: วันที่ดึงข้อมูล / วันที่ขาย -->
-                        <div style="background: {card_bg_color}; backdrop-filter: blur(4px); border-radius: 18px; padding: {badge_padding}; display: inline-flex; align-items: center; gap: {badge_gap}; border: 1px solid rgba(255, 255, 255, 0.5); box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);">
-                            <span style="font-size: {stat_label_size}px; color: {text_sub_color}; font-weight: 600;">{date_badge_label}</span>
-                            <span style="font-size: {stat_val_size}px; color: {text_val_color}; font-weight: 800;">{date_badge_val}</span>
-                        </div>
-                        {f'''<!-- Centroid badge -->
-                        <div style="background: rgba(254, 243, 199, 0.95); border: 1px solid #fde68a; border-radius: 18px; padding: {badge_padding}; display: inline-flex; align-items: center; gap: {badge_gap}; margin-top: 2px;">
-                            <span style="font-size: {stat_label_size - 0.5}px; color: #b45309; font-weight: 700;">&#9651; กึ่งกลาง</span>
-                            <span style="font-size: {stat_val_size}px; color: #92400e; font-weight: 900;">{c_centroid:,}</span>
-                        </div>''' if c_centroid > 0 else ''}
-                    </div>
-                </foreignObject>
+                <g pointer-events="none">
+                    <circle cx="{cx}" cy="{logo_cy:.1f}" r="{logo_badge_r:.1f}" fill="rgba(255, 255, 255, 0.96)" stroke="#ffffff" stroke-width="2" filter="url(#badge-shadow)" />
+                    <image href="{logo_data_uri}" x="{cx - logo_img_sz / 2.0:.1f}" y="{logo_cy - logo_img_sz / 2.0:.1f}" width="{logo_img_sz:.1f}" height="{logo_img_sz:.1f}" preserveAspectRatio="xMidYMid meet" clip-path="url(#{clip_id})" />
+                    <text x="{cx}" y="{title_y:.1f}" text-anchor="middle" dominant-baseline="central" font-family="Outfit, Sarabun, Noto Sans Thai, sans-serif" font-weight="800" font-size="{title_size:.1f}" fill="{text_title_color}" letter-spacing="-0.3">{safe_comp_title}</text>
+                    {''.join(pills_svg_parts)}
+                </g>
             </g>
         """
 
@@ -566,7 +654,7 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
         }}
         """)
 
-    # Build 4 Sector Backdrop Panels (Pods)
+    # Build 4 Sector Backdrop Panels (Pods) using Pure Native SVG headers (zero <foreignObject>)
     sector_pods_svg = []
     for s_key, s_data in sector_meta.items():
         s_cnt = s_data["count"]
@@ -576,42 +664,46 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
         
         stat_display = f"{s_cnt:,} รายการ ({s_pct_cnt:.1f}%)" if is_count_metric else f"{format_price_thai(s_val)} ({s_pct_val:.1f}%)"
         
-        bg_card = "rgba(17, 40, 32, 0.88)" if is_dark_mode else "rgba(255, 255, 255, 0.94)"
+        bg_card = "rgba(17, 40, 32, 0.92)" if is_dark_mode else "rgba(255, 255, 255, 0.96)"
         title_c = "#f8fafc" if is_dark_mode else "#0f172a"
         border_c = s_data["bg_border"]
-        
+        hdr_cx = s_data["x"] + (s_data["w"] / 2.0)
+        hdr_cy = s_data["y"] + 8.0
+        est_hdr_w = max(len(s_data["title"]) * 8.2, len(stat_display) * 6.4) + 34.0
+        hdr_w = min(s_data["w"] - 20.0, max(168.0, est_hdr_w))
+        hdr_h = 40.0
+        safe_s_title = html.escape(s_data["title"], quote=True)
+        safe_s_stat = html.escape(stat_display, quote=True)
+
         pod_svg = f"""
         <g class="sector-pod-group sector-pod-{s_key}" id="pod-{s_key}">
             <!-- Glassmorphic Pod Container Box -->
             <rect x="{s_data['x']}" y="{s_data['y']}" width="{s_data['w']}" height="{s_data['h']}" rx="24" ry="24" 
                   fill="{s_data['bg_tint']}" stroke="{border_c}" stroke-width="1.5" stroke-dasharray="none" />
                   
-            <!-- Top Sector Header Tab -->
-            <foreignObject x="{s_data['x']}" y="{s_data['y'] - 14}" width="{s_data['w']}" height="76">
-                <div style="width: 100%; display: flex; flex-direction: column; align-items: center; text-align: center; font-family: 'Outfit', 'Sarabun', sans-serif; pointer-events: auto;">
-                    <div style="background: {bg_card}; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1.5px solid {s_data['color']}; border-radius: 20px; padding: 4px 16px; box-shadow: 0 4px 14px {s_data['glow']}; display: inline-flex; align-items: center; gap: 8px;">
-                        <span style="font-size: 16px;">{s_data['icon']}</span>
-                        <div style="text-align: left;">
-                            <div style="font-weight: 800; font-size: 13px; color: {title_c}; line-height: 1.15; letter-spacing: -0.2px;">
-                                {s_data['title']}
-                            </div>
-                            <div style="font-size: 10px; color: {s_data['color']}; font-weight: 700;">
-                                {stat_display}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </foreignObject>
+            <!-- Top Sector Header Pill (Pure SVG) -->
+            <g filter="url(#badge-shadow)">
+                <rect x="{hdr_cx - hdr_w / 2.0:.1f}" y="{hdr_cy - hdr_h / 2.0:.1f}" width="{hdr_w:.1f}" height="{hdr_h:.1f}" rx="20" ry="20"
+                      fill="{bg_card}" stroke="{s_data['color']}" stroke-width="1.5" />
+            </g>
+            <text x="{hdr_cx:.1f}" y="{hdr_cy - 6.5:.1f}" text-anchor="middle" dominant-baseline="central"
+                  font-family="Outfit, Sarabun, Noto Sans Thai, sans-serif" font-weight="800" font-size="13" fill="{title_c}" letter-spacing="-0.2">{safe_s_title}</text>
+            <text x="{hdr_cx:.1f}" y="{hdr_cy + 9.0:.1f}" text-anchor="middle" dominant-baseline="central"
+                  font-family="Outfit, Sarabun, Noto Sans Thai, sans-serif" font-weight="700" font-size="10.5" fill="{s_data['color']}">{safe_s_stat}</text>
         </g>
         """
         sector_pods_svg.append(pod_svg)
 
     svg_content = f"""
-    <svg viewBox="0 0 1680 770" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" style="background-color: transparent; max-width: 100%; height: auto;">
+    <svg viewBox="0 0 1680 770" width="100%" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" style="background-color: transparent; width: 100%; height: auto; max-height: 820px; display: block;">
       <defs>
         <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
           <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0f172a" flood-opacity="{'0.35' if is_dark_mode else '0.15'}"/>
         </filter>
+        <filter id="badge-shadow" x="-25%" y="-25%" width="150%" height="150%">
+          <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#0f172a" flood-opacity="{'0.35' if is_dark_mode else '0.14'}"/>
+        </filter>
+        {''.join(bubble_clip_defs)}
         
         <linearGradient id="highlight-grad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="rgba(255, 255, 255, 0.75)"/>

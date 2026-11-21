@@ -343,6 +343,18 @@
     return '฿' + out + ' บาท';
   }
 
+  function isIOSOrIPadOS() {
+    try {
+      const nav = global.navigator;
+      if (!nav) return false;
+      const ua = String(nav.userAgent || '');
+      if (/iPad|iPhone|iPod/i.test(ua)) return true;
+      // iPadOS 13+ reports Macintosh in UA with multi-touch support
+      if (/Macintosh/i.test(ua) && Number(nav.maxTouchPoints || 0) > 1) return true;
+    } catch (_e) {}
+    return false;
+  }
+
   function hydrateMapRows(data, lut) {
     if (!data || !data.length) return data;
     const _lut = lut || {};
@@ -356,55 +368,66 @@
     const subdtLut = _lut.subdt;
     const prjLut = _lut.prj;
     const plaintiffLut = _lut.plaintiff;
+    const parseOptNum = (v, fallback) => {
+      if (v === undefined || v === null || v === '') return fallback;
+      const n = +v;
+      return Number.isFinite(n) ? n : fallback;
+    };
 
+    // Build a single fixed-shape compact object per row, dropping the 11 dead raw CSV index keys
+    // (_ci/_ti/_pi/_sti/_rgi/_dti/_subdti/_prji/_p/_up/_pti) to cut JS heap RAM by ~100-140 MB on iPad Safari.
     for (let i = 0; i < data.length; i++) {
       const d = data[i];
-      d._uid = i;
-      d.lon = +d.lon;
-      d.lat = +d.lat;
-
       const ci = +d._ci;
+      let rVal, gVal, bVal;
       if (d.r !== undefined && d.g !== undefined && d.b !== undefined && d.r !== '') {
-        d.r = +d.r;
-        d.g = +d.g;
-        d.b = +d.b;
+        rVal = +d.r;
+        gVal = +d.g;
+        bVal = +d.b;
       } else {
         const rgb = (coRgbLut && coRgbLut[ci]) || DEFAULT_CO_RGB;
-        d.r = rgb[0];
-        d.g = rgb[1];
-        d.b = rgb[2];
+        rVal = rgb[0];
+        gVal = rgb[1];
+        bVal = rgb[2];
       }
-
-      d._company = (coLut && coLut[ci]) || '-';
-      d._type = (tyLut && tyLut[+d._ti]) || '-';
-      d._prov = (pvLut && pvLut[+d._pi]) || '-';
-      d._sale = (stLut && stLut[+d._sti]) || '-';
-      d._region = (rgLut && rgLut[+d._rgi]) || '-';
-      d._district = (dtLut && dtLut[+d._dti]) || '-';
-      d._subdistrict = (subdtLut && d._subdti !== undefined && subdtLut[+d._subdti]) || '-';
-      d._project = (prjLut && d._prji !== undefined && prjLut[+d._prji]) || '-';
-      d._price = +d._p || 0;
-      if (!d._price_str) {
-        d._price_str = formatThbPriceStr(d._price);
-      }
-      d._unit_price = +d._up || 0;
-      d._sqw = +d._sqw || 0;
-      d._sqm = +d._sqm || 0;
-      d._puw = +d._puw || 0;
-      d._pum = +d._pum || 0;
-      const _parseOptNum = (v, fallback) => {
-        if (v === undefined || v === null || v === '') return fallback;
-        const n = +v;
-        return Number.isFinite(n) ? n : fallback;
+      const priceVal = +d._p || 0;
+      data[i] = {
+        _uid: i,
+        lon: +d.lon,
+        lat: +d.lat,
+        r: rVal,
+        g: gVal,
+        b: bVal,
+        _title: d._title || '',
+        _id: d._id || '',
+        _link: d._link || '',
+        _centroid: d._centroid || 0,
+        _deed: d._deed || '',
+        _company: (coLut && coLut[ci]) || '-',
+        _type: (tyLut && tyLut[+d._ti]) || '-',
+        _prov: (pvLut && pvLut[+d._pi]) || '-',
+        _sale: (stLut && stLut[+d._sti]) || '-',
+        _region: (rgLut && rgLut[+d._rgi]) || '-',
+        _district: (dtLut && dtLut[+d._dti]) || '-',
+        _subdistrict: (subdtLut && d._subdti !== undefined && subdtLut[+d._subdti]) || '-',
+        _project: (prjLut && d._prji !== undefined && prjLut[+d._prji]) || '-',
+        _price: priceVal,
+        _price_str: d._price_str || formatThbPriceStr(priceVal),
+        _unit_price: +d._up || 0,
+        _sqw: +d._sqw || 0,
+        _sqm: +d._sqm || 0,
+        _puw: +d._puw || 0,
+        _pum: +d._pum || 0,
+        _fl: parseOptNum(d._fl, -1),
+        _bed: parseOptNum(d._bed, -1),
+        _bath: parseOptNum(d._bath, -1),
+        _pkg: parseOptNum(d._pkg, -1),
+        _age: parseOptNum(d._age, -1),
+        _sold_p: parseOptNum(d._sold_p, 0),
+        _sold_date: d._sold_date || '',
+        _plaintiff: (plaintiffLut && d._pti !== undefined && plaintiffLut[+d._pti]) || '',
+        _normKey: ''
       };
-      d._fl = _parseOptNum(d._fl, -1);
-      d._bed = _parseOptNum(d._bed, -1);
-      d._bath = _parseOptNum(d._bath, -1);
-      d._pkg = _parseOptNum(d._pkg, -1);
-      d._age = _parseOptNum(d._age, -1);
-      d._sold_p = _parseOptNum(d._sold_p, 0);
-      d._sold_date = d._sold_date || '';
-      d._plaintiff = (plaintiffLut && d._pti !== undefined && plaintiffLut[+d._pti]) || '';
     }
     return data;
   }
@@ -790,6 +813,8 @@
       throw new Error('d3.csvParse unavailable');
     }
     const data = global.d3.csvParse(csvText);
+    // Allow GC to reclaim the ~140 MB raw CSV string before building indexes
+    csvText = '';
 
     hydrateMapRows(data, _lut);
 
@@ -801,7 +826,8 @@
     const spatialGrid = buildSpatialGrid(data);
     const projIndex = buildProjectIndex(data, _lut);
     const typeCounts = computeTypeCounts(data);
-    const idLookup = buildIdLookupIndex(data);
+    // On iPadOS/iOS, defer the two 460k-entry ID Maps until first ID search to stay safely under WebKit Jetsam RAM limits
+    const idLookup = isIOSOrIPadOS() ? { idExactLookupMap: null, idStrippedLookupMap: null } : buildIdLookupIndex(data);
 
     const cacheObj = {
       mtime: mtimeStr || '',
@@ -1084,11 +1110,18 @@
         onProgress(94, 'กำลังอ่านโครงสร้างข้อมูลแผนที่ (JSON)...');
         await yieldIfVisible();
       }
-      const parsed = JSON.parse(jsonText);
+      let parsed = JSON.parse(jsonText);
       jsonText = '';
       const lutObj = parsed && typeof parsed.lut === 'object' ? parsed.lut : null;
-      const csvText = parsed && parsed.csv ? String(parsed.csv) : '';
-      return await _buildCacheObjFromDecoded(mtimeStr || String((parsed && parsed.mtime) || ''), lutObj, csvText, onProgress);
+      const resolvedMtime = mtimeStr || String((parsed && parsed.mtime) || '');
+      let csvText = parsed && parsed.csv ? String(parsed.csv) : '';
+      if (parsed) {
+        parsed.csv = '';
+        parsed = null;
+      }
+      const res = await _buildCacheObjFromDecoded(resolvedMtime, lutObj, csvText, onProgress);
+      csvText = '';
+      return res;
     })();
 
     if (host) {
@@ -1110,7 +1143,7 @@
   // Stores immutable Blobs on window.parent so Tab 2 decodes ImageBitmaps in
   // its own realm (avoiding deck.gl cross-realm instanceof failures & leaks).
   // =========================================================================
-  const MAX_CACHED_TILES = 240;
+  const MAX_CACHED_TILES = isIOSOrIPadOS() ? 48 : 240;
   const _localTileStore = { blobs: new Map(), inflight: new Map() };
   const BASEMAP_TILE_TEMPLATES = {
     google_hybrid: [
@@ -1256,9 +1289,9 @@
     const pxPerPrimaryTile = 256 * Math.pow(2, viewZoom + 1 - primaryZ);
     const halfWPrimary = (vpW / 2) / pxPerPrimaryTile + 0.25;
     const halfHPrimary = (vpH / 2) / pxPerPrimaryTile + 0.25;
-    // Primary zoom (z=6) gets priority 0 so visible initial tiles finish first; z=5 fallback gets priority 100
+    // Primary zoom (z=6) gets priority 0 so visible initial tiles finish first; z=5 fallback gets priority 100 (Desktop only)
     addZoomRing(primaryZ, halfWPrimary, halfHPrimary, 0);
-    if (primaryZ > 4) {
+    if (primaryZ > 4 && !isIOSOrIPadOS()) {
       addZoomRing(primaryZ - 1, Math.max(1.6, halfWPrimary / 2), Math.max(0.9, halfHPrimary / 2), 100);
     }
 
@@ -1271,7 +1304,8 @@
     const specs = _computeInitialThailandTileSpecs(opts);
     if (!specs.length) return { total: 0, loaded: 0 };
 
-    const concurrency = Math.max(4, Math.min(20, (opts && opts.concurrency) || 16));
+    const defaultConc = isIOSOrIPadOS() ? 8 : 16;
+    const concurrency = Math.max(4, Math.min(20, (opts && opts.concurrency) || defaultConc));
     let cursor = 0;
     let loaded = 0;
 
@@ -1326,6 +1360,7 @@
     getTileCacheKey: getTileCacheKey,
     fetchAndCacheTileBlob: fetchAndCacheTileBlob,
     preloadBasemapTiles: preloadBasemapTiles,
+    isIOSOrIPadOS: isIOSOrIPadOS,
     resolveStaticUrlCandidates: resolveStaticUrlCandidates
   };
 })(typeof window !== 'undefined' ? window : globalThis);

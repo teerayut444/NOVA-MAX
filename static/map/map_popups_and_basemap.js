@@ -1231,6 +1231,9 @@ async function _decodeTileBlobInRealm(blob) {
 async function prepareInstantMapBackdropAndPredecode(styleName, viewState) {
   try {
     if (!window.NovaMapCache || typeof window.NovaMapCache.getParentTileCache !== 'function') return;
+    // Skip extra 2D backdrop canvas + 52 simultaneous ImageBitmap GPU allocations on iPadOS/iOS WebKit
+    // to keep total tab GPU/RAM safely below Safari's Jetsam limit.
+    if (typeof window.NovaMapCache.isIOSOrIPadOS === 'function' && window.NovaMapCache.isIOSOrIPadOS()) return;
     if (!viewState || styleName !== 'google_hybrid') return;
 
     const store = window.NovaMapCache.getParentTileCache();
@@ -1373,14 +1376,15 @@ async function prepareInstantMapBackdropAndPredecode(styleName, viewState) {
 
 function createBasemapLayer(styleName) {
   const isGoogle = styleName && styleName.startsWith('google_');
+  const isIOS = !!(window.NovaMapCache && typeof window.NovaMapCache.isIOSOrIPadOS === 'function' && window.NovaMapCache.isIOSOrIPadOS());
   const layerOpts = {
     id: `basemap-tile-layer-${styleName}`,
     data: getTileUrls(styleName),
     minZoom: 0,
     maxZoom: isGoogle ? 20 : 19,
     tileSize: 256,
-    maxRequests: 64,
-    maxCacheSize: 300,
+    maxRequests: isIOS ? 8 : 64,
+    maxCacheSize: isIOS ? 64 : 300,
     refinementStrategy: 'best-available',
     onViewportLoad: () => {
       const mapEl = document.getElementById('map');

@@ -238,7 +238,7 @@ function createPointLayers(data) {
     sizeScale: 1,
     pickable: true,
     billboard: true,
-    useDevicePixels: true,
+    useDevicePixels: (window.NovaMapCache && typeof window.NovaMapCache.isIOSOrIPadOS === 'function' && window.NovaMapCache.isIOSOrIPadOS()) ? 1 : true,
     autoHighlight: true,
     highlightColor: [255, 255, 255, 60]
   }));

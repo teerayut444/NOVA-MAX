@@ -1087,21 +1087,25 @@ function _loadScriptAsync(src) {
   })();
 }
 
-function loadBoundaryScriptsInBackground() {
-  const pBound = window.NovaMapCache && typeof window.NovaMapCache.getParentBoundaryCache === 'function'
-    ? window.NovaMapCache.getParentBoundaryCache()
-    : null;
-  if (pBound) {
-    if (pBound.provinces && (!window.ALL_PROVINCES_BOUNDARIES || Object.keys(window.ALL_PROVINCES_BOUNDARIES).length === 0)) {
+let _provBoundariesPromise = null;
+let _subdistBoundariesPromise = null;
+
+function _isIOSLowRamDevice() {
+  return !!(window.NovaMapCache && typeof window.NovaMapCache.isIOSOrIPadOS === 'function' && window.NovaMapCache.isIOSOrIPadOS());
+}
+
+function loadProvinceBoundariesAsync() {
+  if (window.ALL_PROVINCES_BOUNDARIES && Object.keys(window.ALL_PROVINCES_BOUNDARIES).length > 0) {
+    return Promise.resolve(window.ALL_PROVINCES_BOUNDARIES);
+  }
+  if (_provBoundariesPromise) return _provBoundariesPromise;
+  _provBoundariesPromise = (async () => {
+    const pBound = window.NovaMapCache && typeof window.NovaMapCache.getParentBoundaryCache === 'function'
+      ? window.NovaMapCache.getParentBoundaryCache()
+      : null;
+    if (pBound && pBound.provinces && Object.keys(pBound.provinces).length > 0) {
       window.ALL_PROVINCES_BOUNDARIES = pBound.provinces;
     }
-    if (pBound.subdistricts && (!window.ALL_SUBDISTRICTS_BOUNDARIES || Object.keys(window.ALL_SUBDISTRICTS_BOUNDARIES).length === 0)) {
-      window.ALL_SUBDISTRICTS_BOUNDARIES = pBound.subdistricts;
-    }
-  }
-
-  // 1. Load client-side province boundaries non-blockingly
-  (async function _loadProvincesAsync() {
     if (!window.ALL_PROVINCES_BOUNDARIES || Object.keys(window.ALL_PROVINCES_BOUNDARIES).length === 0) {
       await _loadScriptAsync('/app/static/provinces_geojson.js?v=20261001');
     }
@@ -1132,10 +1136,23 @@ function loadBoundaryScriptsInBackground() {
         try { flyToCurrentLocation(); } catch(e) {}
       }
     }
-  })();
+    return window.ALL_PROVINCES_BOUNDARIES || null;
+  })().finally(() => { _provBoundariesPromise = null; });
+  return _provBoundariesPromise;
+}
 
-  // 2. Load client-side subdistrict boundaries non-blockingly
-  (async function _loadSubdistrictsAsync() {
+function loadSubdistrictBoundariesAsync() {
+  if (window.ALL_SUBDISTRICTS_BOUNDARIES && Object.keys(window.ALL_SUBDISTRICTS_BOUNDARIES).length > 0) {
+    return Promise.resolve(window.ALL_SUBDISTRICTS_BOUNDARIES);
+  }
+  if (_subdistBoundariesPromise) return _subdistBoundariesPromise;
+  _subdistBoundariesPromise = (async () => {
+    const pBound = window.NovaMapCache && typeof window.NovaMapCache.getParentBoundaryCache === 'function'
+      ? window.NovaMapCache.getParentBoundaryCache()
+      : null;
+    if (pBound && pBound.subdistricts && Object.keys(pBound.subdistricts).length > 0) {
+      window.ALL_SUBDISTRICTS_BOUNDARIES = pBound.subdistricts;
+    }
     if (!window.ALL_SUBDISTRICTS_BOUNDARIES || Object.keys(window.ALL_SUBDISTRICTS_BOUNDARIES).length === 0) {
       await _loadScriptAsync('/app/static/subdistricts_geojson.js?v=20261001');
     }
@@ -1162,7 +1179,38 @@ function loadBoundaryScriptsInBackground() {
       try { initSubdistrictDropdown(); } catch(e) {}
       try { updateSvgBoundaries(); } catch(e) {}
     }
-  })();
+    return window.ALL_SUBDISTRICTS_BOUNDARIES || null;
+  })().finally(() => { _subdistBoundariesPromise = null; });
+  return _subdistBoundariesPromise;
+}
+
+function loadBoundaryScriptsInBackground() {
+  const pBound = window.NovaMapCache && typeof window.NovaMapCache.getParentBoundaryCache === 'function'
+    ? window.NovaMapCache.getParentBoundaryCache()
+    : null;
+  if (pBound) {
+    if (pBound.provinces && (!window.ALL_PROVINCES_BOUNDARIES || Object.keys(window.ALL_PROVINCES_BOUNDARIES).length === 0)) {
+      window.ALL_PROVINCES_BOUNDARIES = pBound.provinces;
+    }
+    if (pBound.subdistricts && (!window.ALL_SUBDISTRICTS_BOUNDARIES || Object.keys(window.ALL_SUBDISTRICTS_BOUNDARIES).length === 0)) {
+      window.ALL_SUBDISTRICTS_BOUNDARIES = pBound.subdistricts;
+    }
+  }
+
+  // On iPadOS/iOS Safari, skip eager background loading of the ~8 MB (~180 MB RAM) GeoJSON bundles
+  // unless a province/district is already active; load them on-demand when the user filters by location.
+  if (_isIOSLowRamDevice()) {
+    if (currentSelectedProv && currentSelectedProv !== '__ALL__') {
+      loadProvinceBoundariesAsync();
+    }
+    if (currentSelectedDist && currentSelectedDist !== '__ALL__') {
+      loadSubdistrictBoundariesAsync();
+    }
+    return;
+  }
+
+  loadProvinceBoundariesAsync();
+  loadSubdistrictBoundariesAsync();
 }
 
 function flyToCurrentLocation() {
@@ -1278,7 +1326,7 @@ function onMapProvinceChange(prov) {
     if (btnLoc) btnLoc.classList.toggle('active', true);
     if (btnRad) btnRad.classList.toggle('active', false);
 
-    // 1. Swap Boundary GeoJSON & districtLabels in memory
+    // 1. Swap Boundary GeoJSON & districtLabels in memory (lazy-load on iPad if not yet loaded)
     const boundariesDict = window.ALL_PROVINCES_BOUNDARIES || {};
     if (selectedProv && boundariesDict[selectedProv]) {
       boundaryGeoJson = boundariesDict[selectedProv];
@@ -1286,6 +1334,9 @@ function onMapProvinceChange(prov) {
     } else {
       boundaryGeoJson = null;
       districtLabels = [];
+      if (selectedProv && typeof loadProvinceBoundariesAsync === 'function') {
+        loadProvinceBoundariesAsync();
+      }
     }
 
     // 2. Cascade Dropdowns: Sync inputs
@@ -1385,6 +1436,9 @@ function onMapDistrictChange(dist) {
     }
 
     // 1. Update boundary GeoJSON to subdivide into subdistricts (ตำบล) with dashed lines!
+    if (selectedDist && (!window.ALL_SUBDISTRICTS_BOUNDARIES || Object.keys(window.ALL_SUBDISTRICTS_BOUNDARIES).length === 0)) {
+      if (typeof loadSubdistrictBoundariesAsync === 'function') loadSubdistrictBoundariesAsync();
+    }
     updateDistrictSubdistrictBoundaries();
 
     // 2. Cascade Dropdown: Sync inputs

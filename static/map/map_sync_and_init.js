@@ -1316,11 +1316,15 @@ async function initMap() {
       _lut = cacheObj.lut;
       data = cacheObj.data;
       cachedData = data;
+      const _isIOSCache = !!(window.NovaMapCache && typeof window.NovaMapCache.isIOSOrIPadOS === 'function' && window.NovaMapCache.isIOSOrIPadOS());
       if (cacheObj.idExactLookupMap && cacheObj.idStrippedLookupMap) {
         idExactLookupMap = cacheObj.idExactLookupMap;
         idStrippedLookupMap = cacheObj.idStrippedLookupMap;
-      } else {
+      } else if (!_isIOSCache) {
         buildIdLookupIndex(data);
+      } else {
+        idExactLookupMap = null;
+        idStrippedLookupMap = null;
       }
       spatialGrid = cacheObj.spatialGrid;
       applyPrebuiltProjectIndex(cacheObj.projIndex);
@@ -1451,9 +1455,12 @@ async function initMap() {
     const initialLayers = [basemapLayer];
     if (initialBoundaryL) initialLayers.push(initialBoundaryL);
 
+    const _isIOSDevice = !!(window.NovaMapCache && typeof window.NovaMapCache.isIOSOrIPadOS === 'function' && window.NovaMapCache.isIOSOrIPadOS());
     deckglInstance = new deck.DeckGL({
       container: 'map',
       mapboxApiAccessToken: false,
+      useDevicePixels: _isIOSDevice ? 1 : true,
+      glOptions: _isIOSDevice ? { antialias: false, preserveDrawingBuffer: false, powerPreference: 'default' } : undefined,
       viewState: currentViewState,
       controller: true,
       getTooltip: getMapTooltip,
@@ -1492,6 +1499,19 @@ async function initMap() {
           }
         });
         _ttObserverInstance.observe(mapContainer, { childList: true });
+
+        // Prevent uncaught WebGL context loss on iPadOS Safari from crashing the tab
+        try {
+          const glCanvas = mapContainer.querySelector('canvas');
+          if (glCanvas) {
+            glCanvas.addEventListener('webglcontextlost', (ev) => {
+              ev.preventDefault();
+            }, false);
+            glCanvas.addEventListener('webglcontextrestored', () => {
+              _triggerImmediateMapRedraw();
+            }, false);
+          }
+        } catch (_e) {}
 
         // Immediately resize & redraw DeckGL on the exact first frame Tab 2 becomes visible (0x0 -> real size)
         if (typeof ResizeObserver === 'function') {
@@ -1573,6 +1593,7 @@ async function initMap() {
     }
 
     if (initialCompareIds && initialCompareIds.length > 0 && cachedData && cachedData.length > 0) {
+      if (!idExactLookupMap) buildIdLookupIndex(cachedData);
       initialCompareIds.forEach(rawId => {
         const key = String(rawId || '').trim().toLowerCase();
         const d = (key && idExactLookupMap) ? idExactLookupMap.get(key) : null;
