@@ -88,21 +88,9 @@ def format_logger_user_name(username: str, display_name: str = "") -> str:
     return clean_u
 
 
-def load_users(users_file: str | os.PathLike[str] | None = None) -> tuple[dict[str, dict[str, str]], str | None]:
-    """
-    Parse users from a `.txt` file (`username:password` or `username:password:display_name`).
-    Returns `(users_by_lower_username, error_code)`.
-    """
-    path = Path(users_file) if users_file is not None else DEFAULT_USERS_FILE
-    if not path.exists() or not path.is_file():
-        return {}, "missing_file"
-
+def _parse_users_lines(raw_text: str) -> dict[str, dict[str, str]]:
+    """Parse `username:password` or `username:password:display_name` lines."""
     users: dict[str, dict[str, str]] = {}
-    try:
-        raw_text = path.read_text(encoding="utf-8-sig")
-    except OSError:
-        return {}, "read_error"
-
     for raw_line in raw_text.splitlines():
         line = raw_line.rstrip("\r\n")
         stripped = line.strip()
@@ -121,8 +109,94 @@ def load_users(users_file: str | os.PathLike[str] | None = None) -> tuple[dict[s
             "password": password_secret,
             "display_name": display_name,
         }
+    return users
 
+
+def _load_users_from_streamlit_secrets() -> dict[str, dict[str, str]]:
+    """
+    Optional Streamlit Cloud fallback when `users.txt` is not present on disk.
+    Supports either:
+      1) `st.secrets["users_txt"]` (multiline string in the exact `users.txt` format)
+      2) `st.secrets["users"]` TOML table: `username = "password"` or `username = "password:Display Name"`
+         (or nested table `{ password = "...", display_name = "..." }`).
+    """
+    try:
+        import streamlit as st
+
+        secrets_obj = getattr(st, "secrets", None)
+        if secrets_obj is None:
+            return {}
+        try:
+            has_txt = "users_txt" in secrets_obj
+            has_tbl = "users" in secrets_obj
+        except Exception:
+            return {}
+
+        users: dict[str, dict[str, str]] = {}
+        if has_txt:
+            raw_txt = secrets_obj["users_txt"]
+            if isinstance(raw_txt, str) and raw_txt.strip():
+                users.update(_parse_users_lines(raw_txt))
+
+        if has_tbl:
+            tbl = secrets_obj["users"]
+            if isinstance(tbl, str) and tbl.strip():
+                users.update(_parse_users_lines(tbl))
+            elif hasattr(tbl, "items"):
+                for raw_u, raw_val in tbl.items():
+                    username = str(raw_u or "").strip()
+                    if not username:
+                        continue
+                    password_secret = ""
+                    display_name = ""
+                    if isinstance(raw_val, str):
+                        # Support "pbkdf2_sha256$...:Display Name" or "plain:Display Name" or "plain"
+                        if ":" in raw_val:
+                            pw_part, disp_part = raw_val.split(":", 1)
+                            password_secret = pw_part.strip()
+                            display_name = disp_part.strip()
+                        else:
+                            password_secret = raw_val.strip()
+                    elif hasattr(raw_val, "get"):
+                        password_secret = str(raw_val.get("password", "") or "").strip()
+                        display_name = str(raw_val.get("display_name", "") or "").strip()
+                    if password_secret:
+                        users[username.lower()] = {
+                            "username": username,
+                            "password": password_secret,
+                            "display_name": display_name,
+                        }
+        return users
+    except Exception:
+        return {}
+
+
+def load_users(users_file: str | os.PathLike[str] | None = None) -> tuple[dict[str, dict[str, str]], str | None]:
+    """
+    Parse users from a `.txt` file (`username:password` or `username:password:display_name`),
+    falling back to `st.secrets["users"]` / `st.secrets["users_txt"]` when running on Streamlit Cloud
+    without a committed `users.txt`.
+    Returns `(users_by_lower_username, error_code)`.
+    """
+    path = Path(users_file) if users_file is not None else DEFAULT_USERS_FILE
+    if not path.exists() or not path.is_file():
+        if users_file is None:
+            secret_users = _load_users_from_streamlit_secrets()
+            if secret_users:
+                return secret_users, None
+        return {}, "missing_file"
+
+    try:
+        raw_text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return {}, "read_error"
+
+    users = _parse_users_lines(raw_text)
     if not users:
+        if users_file is None:
+            secret_users = _load_users_from_streamlit_secrets()
+            if secret_users:
+                return secret_users, None
         return {}, "empty_users"
     return users, None
 

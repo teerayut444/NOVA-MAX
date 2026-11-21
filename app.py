@@ -81,7 +81,7 @@ st.set_page_config(
     page_title="NOVA NPA Dashboard",
     page_icon=_load_app_page_icon(),
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
     menu_items={},
 )
 

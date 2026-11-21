@@ -315,13 +315,20 @@ body.dark-theme .style-dropdown-menu {
   border-color: rgba(255, 255, 255, 0.16);
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65);
 }
-#map-style-controls:hover .style-dropdown-menu,
-#map-style-controls:focus-within .style-dropdown-menu,
 #map-style-controls.open .style-dropdown-menu {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transform: translateY(0) scale(1);
+}
+@media (hover: hover) {
+  #map-style-controls:hover .style-dropdown-menu,
+  #map-style-controls:focus-within .style-dropdown-menu {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+  }
 }
 .style-dropdown-header {
   font-size: 11px;
@@ -3068,4 +3075,181 @@ body.dark-theme #legend-overlap-stat {
 body.dark-theme #points-count {
   border-top-color: rgba(255, 255, 255, 0.1);
   color: #64748b;
+}
+
+/* =========================================================================
+   IPAD / TABLET RESPONSIVE LAYOUT & TOUCH UX (Desktop > 1220px unchanged)
+   ========================================================================= */
+@media (pointer: coarse) {
+  button,
+  .mode-pill-btn,
+  .pin-mode-btn,
+  .map-filter-toggle-btn,
+  .style-dropdown-trigger,
+  .filter-chip,
+  .radius-tick-num {
+    touch-action: manipulation;
+  }
+}
+
+/* iPad Landscape & narrow viewports (<= 1220px):
+   Radius bar moves to Top-Left FIRST; filter controls sit cleanly underneath. */
+@media (max-width: 1220px) {
+  #map-radius-controls {
+    top: 12px;
+    left: 12px;
+    right: auto;
+    max-width: calc(100vw - 24px);
+    padding: 5px 11px;
+    gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    z-index: 1005;
+  }
+  #map-radius-controls::-webkit-scrollbar {
+    display: none;
+  }
+
+  #map-filter-controls {
+    top: 82px;
+    left: 12px;
+    max-width: calc(100vw - 24px);
+  }
+  .map-location-group {
+    max-width: calc(100vw - 24px);
+  }
+
+  .top-right-subbar {
+    top: 82px;
+    right: 12px;
+    left: auto;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .place-search-pill {
+    width: 195px;
+    padding: 5px 11px;
+  }
+  .style-dropdown-trigger {
+    max-width: 195px;
+  }
+
+  #map-compass {
+    top: 174px;
+    right: 14px;
+    width: 40px;
+    height: 40px;
+  }
+
+  #map-legend {
+    bottom: 16px;
+    right: 12px;
+    width: 220px;
+  }
+
+  .map-filter-panel {
+    max-width: calc(100vw - 24px);
+  }
+}
+
+/* iPad Portrait (<= 860px):
+   Top-Left Row 1 = Radius controls; Row 2 = Compact Filters;
+   Bottom-Left = Place search + Basemap switcher; Bottom-Right = Legend & Compass;
+   Property card = Centered bottom-sheet so it never clips off-screen. */
+@media (max-width: 860px) {
+  #map-radius-controls {
+    top: 10px;
+    left: 10px;
+    right: auto;
+    max-width: calc(100vw - 20px);
+    padding: 4px 10px;
+    gap: 5px;
+  }
+  .radius-slider-box {
+    min-width: 145px;
+  }
+
+  #map-filter-controls {
+    top: 78px;
+    left: 10px;
+    right: 10px;
+    max-width: calc(100vw - 20px);
+  }
+  .map-filter-controls-stack {
+    width: 100%;
+    gap: 5px;
+  }
+  .map-location-group {
+    max-width: 100%;
+    flex-wrap: wrap;
+    border-radius: 14px;
+  }
+  .inmap-loc-input,
+  .inmap-search-input {
+    font-size: 13px;
+  }
+
+  .top-right-subbar {
+    top: auto;
+    bottom: 14px;
+    left: 10px;
+    right: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    max-width: calc(100vw - 140px);
+  }
+  .place-search-pill {
+    width: 155px;
+    padding: 5px 10px;
+  }
+  .style-dropdown-trigger {
+    max-width: 160px;
+    padding: 5px 10px;
+  }
+  .style-dropdown-menu {
+    top: auto;
+    bottom: calc(100% + 6px);
+    left: 0;
+    right: auto;
+    transform-origin: bottom left;
+  }
+  .place-search-results {
+    top: auto;
+    bottom: calc(100% + 6px);
+  }
+
+  #map-compass {
+    top: auto;
+    bottom: 72px;
+    right: 12px;
+    width: 38px;
+    height: 38px;
+  }
+
+  #map-legend {
+    bottom: 14px;
+    right: 10px;
+    width: auto;
+    min-width: 150px;
+    max-width: calc(100vw - 20px);
+    padding: 8px 10px;
+  }
+
+  #property-card {
+    left: 50% !important;
+    right: auto !important;
+    top: auto !important;
+    bottom: 14px !important;
+    transform: translateX(-50%) !important;
+    width: min(360px, calc(100vw - 20px)) !important;
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #property-card::after {
+    display: none !important;
+  }
 }

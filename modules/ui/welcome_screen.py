@@ -508,11 +508,11 @@ def render_welcome_screen():
     sam_badge_html = ""
     if sam_logo_b64:
         sam_badge_html = f'''
-        <div style="position: fixed; top: 22px; left: 32px; display: flex; align-items: center; gap: 14px; z-index: 999; background: transparent;">
+        <div class="sam-welcome-badge" style="position: fixed; top: 22px; left: 32px; display: flex; align-items: center; gap: 14px; z-index: 999; background: transparent;">
             <img src="data:image/webp;base64,{sam_logo_b64}" style="height: 48px; width: auto; object-fit: contain; border-radius: 6px; filter: drop-shadow(0 2px 8px rgba(6, 78, 59, 0.12));" alt="SAM Logo" />
             <div style="display: flex; flex-direction: column; text-align: left; justify-content: center;">
-                <span style="font-family: 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 1.18rem; font-weight: 800; color: #064e3b; letter-spacing: 0.2px; line-height: 1.25;">บริษัท บริหารสินทรัพย์สุขุมวิท จำกัด</span>
-                <span style="font-family: 'Outfit', sans-serif; font-size: 0.70rem; font-weight: 700; color: #059669; letter-spacing: 1.2px;">SUKHUMVIT ASSET MANAGEMENT</span>
+                <span class="sam-welcome-th" style="font-family: 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 1.18rem; font-weight: 800; color: #064e3b; letter-spacing: 0.2px; line-height: 1.25;">บริษัท บริหารสินทรัพย์สุขุมวิท จำกัด</span>
+                <span class="sam-welcome-en" style="font-family: 'Outfit', sans-serif; font-size: 0.70rem; font-weight: 700; color: #059669; letter-spacing: 1.2px;">SUKHUMVIT ASSET MANAGEMENT</span>
             </div>
         </div>
         '''
@@ -536,7 +536,11 @@ def render_welcome_screen():
         else ("220px", "205px", "190px", "4.0rem", "10px 0 2px 14px")
     )
     overflow_css = "hidden" if is_authenticated else "auto"
-    container_height_css = "height: 100vh !important;" if is_authenticated else "min-height: 100vh !important; height: auto !important; padding: 24px 12px !important;"
+    container_height_css = (
+        "height: 100vh !important; height: 100dvh !important;"
+        if is_authenticated
+        else "min-height: 100vh !important; min-height: 100dvh !important; height: auto !important; padding: 24px 12px !important;"
+    )
 
     st.html(f"""
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -554,6 +558,7 @@ section[data-testid="stSidebar"] {{
 
 html, body {{
     min-height: 100vh !important;
+    min-height: 100dvh !important;
     overflow-x: hidden !important;
     overflow-y: {overflow_css} !important;
 }}
@@ -565,6 +570,7 @@ div[data-testid="stAppViewBlockContainer"],
     max-width: 100% !important;
     {container_height_css}
     min-height: 100vh !important;
+    min-height: 100dvh !important;
     display: flex !important;
     flex-direction: column !important;
     align-items: center !important;
@@ -586,6 +592,37 @@ div[data-testid="stVerticalBlock"] {{
 body, .stApp {{
     background: radial-gradient(circle at 50% 40%, #ffffff 0%, #f4fbf7 38%, #e8f7f0 70%, #dcf3e9 100%) !important;
     min-height: 100vh !important;
+    min-height: 100dvh !important;
+}}
+
+@media (max-width: 900px) {{
+    .sam-welcome-badge {{
+        position: static !important;
+        justify-content: center !important;
+        margin: 4px auto 12px auto !important;
+        gap: 10px !important;
+    }}
+    .sam-welcome-badge img {{
+        height: 36px !important;
+    }}
+    .sam-welcome-th {{
+        font-size: 0.98rem !important;
+    }}
+    .sam-welcome-en {{
+        font-size: 0.62rem !important;
+    }}
+    .nova-light-title {{
+        font-size: 3.3rem !important;
+        letter-spacing: 10px !important;
+    }}
+    .portal-stage-light {{
+        width: 190px !important;
+        height: 180px !important;
+    }}
+    .portal-house-img {{
+        width: 165px !important;
+        height: 165px !important;
+    }}
 }}
 
 .portal-stage-light {{
