@@ -14,6 +14,7 @@ let projCompanyCountsMap = new Map();
 let normKeyToCanonicalMap = new Map();
 let cachedScopedProjectsKey = '';
 let cachedScopedProjectsList = null;
+let cachedScopedProjectStatsMap = null;
 let currentActiveCombo = null;
 
 function applyPrebuiltProjectIndex(idx) {
@@ -31,6 +32,7 @@ function applyPrebuiltProjectIndex(idx) {
   normKeyToCanonicalMap = idx.normKeyToCanonicalMap || new Map();
   cachedScopedProjectsKey = '';
   cachedScopedProjectsList = null;
+  cachedScopedProjectStatsMap = null;
   syncComboboxInputs();
 }
 
@@ -68,63 +70,239 @@ function isProjectMatchingCompanySharing(d) {
   return true;
 }
 
-function getScopedProjectsList() {
+function getScopedProjectsData() {
+  const f = inMapFilterState || {};
   const hasProv = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
   const hasDist = !!(currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__');
   const hasSub = !!(currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__');
-  const hasCo = !!(inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0);
-  const hasTy = !!(inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0);
-  const hasOnlyProj = !!(inMapFilterState && inMapFilterState.onlyWithProject);
+  const hasCo = !!(f.companies && f.companies.size > 0);
+  const hasTy = !!(f.types && f.types.size > 0);
+  const hasSale = !!(f.sales && f.sales.size > 0);
+  const hasOnlyProj = !!f.onlyWithProject;
+  const hasFloors = !!(f.floors && f.floors.size > 0);
+  const hasBeds = !!(f.bedrooms && f.bedrooms.size > 0);
+  const hasBaths = !!(f.bathrooms && f.bathrooms.size > 0);
+  const hasPkgs = !!(f.parkings && f.parkings.size > 0);
 
-  if (!hasProv && !hasDist && !hasSub && !hasCo && !hasTy && !hasOnlyProj) {
-    return allProjectsList || [];
+  const minP = (f.minPrice !== null && f.minPrice !== undefined && !isNaN(f.minPrice) && f.minPrice > 0) ? f.minPrice : null;
+  const maxP = (f.maxPrice !== null && f.maxPrice !== undefined && !isNaN(f.maxPrice) && f.maxPrice > 0) ? f.maxPrice : null;
+  const minSqw = (f.minSqw !== null && f.minSqw !== undefined && !isNaN(f.minSqw) && f.minSqw > 0) ? f.minSqw : null;
+  const maxSqw = (f.maxSqw !== null && f.maxSqw !== undefined && !isNaN(f.maxSqw) && f.maxSqw > 0) ? f.maxSqw : null;
+  const minSqm = (f.minSqm !== null && f.minSqm !== undefined && !isNaN(f.minSqm) && f.minSqm > 0) ? f.minSqm : null;
+  const maxSqm = (f.maxSqm !== null && f.maxSqm !== undefined && !isNaN(f.maxSqm) && f.maxSqm > 0) ? f.maxSqm : null;
+  const minPuw = (f.minPuw !== null && f.minPuw !== undefined && !isNaN(f.minPuw) && f.minPuw > 0) ? f.minPuw : null;
+  const maxPuw = (f.maxPuw !== null && f.maxPuw !== undefined && !isNaN(f.maxPuw) && f.maxPuw > 0) ? f.maxPuw : null;
+  const minPum = (f.minPum !== null && f.minPum !== undefined && !isNaN(f.minPum) && f.minPum > 0) ? f.minPum : null;
+  const maxPum = (f.maxPum !== null && f.maxPum !== undefined && !isNaN(f.maxPum) && f.maxPum > 0) ? f.maxPum : null;
+  const minFl = (f.minFloor !== null && f.minFloor !== undefined && !isNaN(f.minFloor) && f.minFloor > 0) ? f.minFloor : null;
+  const maxFl = (f.maxFloor !== null && f.maxFloor !== undefined && !isNaN(f.maxFloor) && f.maxFloor > 0) ? f.maxFloor : null;
+  const effMaxAge = (f.maxAge !== null && f.maxAge !== undefined && !isNaN(f.maxAge) && f.maxAge > 0)
+    ? f.maxAge
+    : (f.agePreset ? parseFloat(f.agePreset) : null);
+  const hasAge = effMaxAge !== null && !isNaN(effMaxAge) && effMaxAge >= 0;
+
+  const hasSpecOrRange = !!(
+    minP !== null || maxP !== null ||
+    minSqw !== null || maxSqw !== null ||
+    minSqm !== null || maxSqm !== null ||
+    minPuw !== null || maxPuw !== null ||
+    minPum !== null || maxPum !== null ||
+    hasFloors || minFl !== null || maxFl !== null ||
+    hasBeds || hasBaths || hasPkgs || hasAge
+  );
+
+  if (!hasProv && !hasDist && !hasSub && !hasCo && !hasTy && !hasSale && !hasOnlyProj && !hasSpecOrRange) {
+    return { list: allProjectsList || [], statsMap: null, isScoped: false };
   }
 
   const cacheKey = [
     hasProv ? currentSelectedProv : '',
     hasDist ? currentSelectedDist : '',
     hasSub ? currentSelectedSubdist : '',
-    hasCo ? Array.from(inMapFilterState.companies).sort().join(',') : '',
-    hasTy ? Array.from(inMapFilterState.types).sort().join(',') : '',
-    hasOnlyProj ? 'onlyProj' : ''
+    hasCo ? Array.from(f.companies).sort().join(',') : '',
+    hasTy ? Array.from(f.types).sort().join(',') : '',
+    hasSale ? Array.from(f.sales).sort().join(',') : '',
+    hasOnlyProj ? 'onlyProj' : '',
+    minP || '', maxP || '', minSqw || '', maxSqw || '', minSqm || '', maxSqm || '',
+    minPuw || '', maxPuw || '', minPum || '', maxPum || '',
+    hasFloors ? Array.from(f.floors).sort().join(',') : '',
+    minFl || '', maxFl || '',
+    hasBeds ? Array.from(f.bedrooms).sort().join(',') : '',
+    hasBaths ? Array.from(f.bathrooms).sort().join(',') : '',
+    hasPkgs ? Array.from(f.parkings).sort().join(',') : '',
+    hasAge ? effMaxAge : ''
   ].join('||');
 
-  if (cachedScopedProjectsList && cachedScopedProjectsKey === cacheKey) {
-    return cachedScopedProjectsList;
+  if (cachedScopedProjectsList && cachedScopedProjectStatsMap && cachedScopedProjectsKey === cacheKey) {
+    return { list: cachedScopedProjectsList, statsMap: cachedScopedProjectStatsMap, isScoped: true };
   }
 
   const cleanDist = hasDist ? currentSelectedDist.split(' (')[0].trim() : '';
   const cleanSub = hasSub ? currentSelectedSubdist.split(' (')[0].trim() : '';
-  const matchedCanonicals = new Set();
+  const scopedStatsMap = new Map();
+
   if (cachedData && cachedData.length > 0) {
     for (let i = 0; i < cachedData.length; i++) {
       const d = cachedData[i];
       if (hasProv && d._prov !== currentSelectedProv) continue;
       if (hasDist && d._district !== currentSelectedDist && d._district !== cleanDist) continue;
       if (hasSub && d._subdistrict !== currentSelectedSubdist && d._subdistrict !== cleanSub) continue;
-      if (hasCo && !inMapFilterState.companies.has(d._company)) continue;
-      if (hasTy && !inMapFilterState.types.has(d._type)) continue;
+      if (hasCo && !f.companies.has(d._company)) continue;
+      if (hasTy && !f.types.has(d._type)) continue;
+      if (hasSale && !f.sales.has(d._sale)) continue;
+
+      if (hasSpecOrRange) {
+        if (minP !== null && (d._price || 0) < minP) continue;
+        if (maxP !== null && (d._price || 0) > maxP) continue;
+        if (minSqw !== null && (d._sqw || 0) < minSqw) continue;
+        if (maxSqw !== null && (d._sqw || 0) > maxSqw) continue;
+        if (minSqm !== null && (d._sqm || 0) < minSqm) continue;
+        if (maxSqm !== null && (d._sqm || 0) > maxSqm) continue;
+        if (minPuw !== null && (d._puw || 0) < minPuw) continue;
+        if (maxPuw !== null && (d._puw || 0) > maxPuw) continue;
+        if (minPum !== null && (d._pum || 0) < minPum) continue;
+        if (maxPum !== null && (d._pum || 0) > maxPum) continue;
+        if (hasFloors || minFl !== null || maxFl !== null) {
+          const fl = (d._fl !== undefined && d._fl !== null) ? +d._fl : -1;
+          if (hasFloors) {
+            let passFl = false;
+            if (fl < 0) {
+              if (f.floors.has('none')) passFl = true;
+            } else {
+              if (f.floors.has('1') && Math.floor(fl) === 1) passFl = true;
+              if (f.floors.has('2') && Math.floor(fl) === 2) passFl = true;
+              if (f.floors.has('3') && Math.floor(fl) === 3) passFl = true;
+              if (f.floors.has('4+') && fl >= 4) passFl = true;
+            }
+            if (!passFl) continue;
+          }
+          if (minFl !== null && (fl < 0 || fl < minFl)) continue;
+          if (maxFl !== null && (fl < 0 || fl > maxFl)) continue;
+        }
+        if (hasBeds) {
+          const bed = (d._bed !== undefined && d._bed !== null) ? +d._bed : -1;
+          let passBed = false;
+          if (bed < 0) {
+            if (f.bedrooms.has('none')) passBed = true;
+          } else {
+            if (f.bedrooms.has('0') && bed === 0) passBed = true;
+            if (f.bedrooms.has('1') && Math.round(bed) === 1) passBed = true;
+            if (f.bedrooms.has('2') && Math.round(bed) === 2) passBed = true;
+            if (f.bedrooms.has('3') && Math.round(bed) === 3) passBed = true;
+            if (f.bedrooms.has('4') && Math.round(bed) === 4) passBed = true;
+            if (f.bedrooms.has('5+') && bed >= 5) passBed = true;
+          }
+          if (!passBed) continue;
+        }
+        if (hasBaths) {
+          const bath = (d._bath !== undefined && d._bath !== null) ? +d._bath : -1;
+          let passBath = false;
+          if (bath < 0) {
+            if (f.bathrooms.has('none')) passBath = true;
+          } else {
+            if (f.bathrooms.has('1') && Math.round(bath) === 1) passBath = true;
+            if (f.bathrooms.has('2') && Math.round(bath) === 2) passBath = true;
+            if (f.bathrooms.has('3') && Math.round(bath) === 3) passBath = true;
+            if (f.bathrooms.has('4') && Math.round(bath) === 4) passBath = true;
+            if (f.bathrooms.has('5+') && bath >= 5) passBath = true;
+          }
+          if (!passBath) continue;
+        }
+        if (hasPkgs) {
+          const pkg = (d._pkg !== undefined && d._pkg !== null) ? +d._pkg : -1;
+          let passPkg = false;
+          if (pkg < 0) {
+            if (f.parkings.has('none')) passPkg = true;
+          } else {
+            if (f.parkings.has('1') && Math.round(pkg) === 1) passPkg = true;
+            if (f.parkings.has('2') && Math.round(pkg) === 2) passPkg = true;
+            if (f.parkings.has('3') && Math.round(pkg) === 3) passPkg = true;
+            if (f.parkings.has('4+') && pkg >= 4) passPkg = true;
+          }
+          if (!passPkg) continue;
+        }
+        if (hasAge) {
+          const age = (d._age !== undefined && d._age !== null) ? +d._age : -1;
+          if (age < 0 || age > effMaxAge) continue;
+        }
+      }
 
       if (hasOnlyProj) {
         const p = (d._project || '').trim();
         if (!p || p === '-' || isInvalidProjectName(p)) continue;
-        if (inMapFilterState.companies && inMapFilterState.companies.size >= 2) {
-          if (!isProjectMatchingCompanySharing(d)) continue;
-        }
       }
 
       const nk = d._normKey;
-      if (nk) {
-        const cName = normKeyToCanonicalMap.get(nk);
-        if (cName) matchedCanonicals.add(cName);
+      if (!nk) continue;
+      const cName = normKeyToCanonicalMap.get(nk);
+      if (!cName) continue;
+
+      let entry = scopedStatsMap.get(cName);
+      if (!entry) {
+        const baseStats = samProjectStatsMap.get(cName);
+        entry = {
+          sam: 0,
+          other: 0,
+          coCounts: {},
+          normKey: (baseStats && baseStats.normKey) || nk,
+          tag: (baseStats && baseStats.tag) || ''
+        };
+        scopedStatsMap.set(cName, entry);
+      }
+
+      const co = (d._company || '').trim();
+      if (co.toUpperCase() === 'SAM') {
+        entry.sam += 1;
+      } else {
+        entry.other += 1;
+      }
+      if (co && co !== '-') {
+        entry.coCounts[co] = (entry.coCounts[co] || 0) + 1;
       }
     }
   }
 
-  const scopedList = (allProjectsList || []).filter(p => matchedCanonicals.has(p));
+  // Enforce scoped multi-company sharing when "มีโครงการ" + 2+ companies are selected
+  if (hasOnlyProj && hasCo && f.companies.size >= 2) {
+    const reqMatches = f.companies.size === 2 ? 2 : 2;
+    for (const [cName, entry] of scopedStatsMap.entries()) {
+      let matchedCos = 0;
+      f.companies.forEach(co => {
+        if ((entry.coCounts[co] || 0) > 0) matchedCos++;
+      });
+      if (matchedCos < reqMatches) {
+        scopedStatsMap.delete(cName);
+      }
+    }
+  }
+
+  const scopedList = (allProjectsList || []).filter(p => scopedStatsMap.has(p));
+  scopedList.sort((a, b) => {
+    const sa = scopedStatsMap.get(a) || { sam: 0, other: 0 };
+    const sb = scopedStatsMap.get(b) || { sam: 0, other: 0 };
+    const aHasSam = sa.sam > 0 ? 1 : 0;
+    const bHasSam = sb.sam > 0 ? 1 : 0;
+    if (aHasSam !== bHasSam) return bHasSam - aHasSam;
+    if (aHasSam) {
+      const aHasComp = sa.other > 0 ? 1 : 0;
+      const bHasComp = sb.other > 0 ? 1 : 0;
+      if (aHasComp !== bHasComp) return bHasComp - aHasComp;
+      if (sa.other !== sb.other) return sb.other - sa.other;
+      if (sa.sam !== sb.sam) return sb.sam - sa.sam;
+    } else if (sa.other !== sb.other) {
+      return sb.other - sa.other;
+    }
+    return a.localeCompare(b, 'th');
+  });
+
   cachedScopedProjectsKey = cacheKey;
   cachedScopedProjectsList = scopedList;
-  return scopedList;
+  cachedScopedProjectStatsMap = scopedStatsMap;
+  return { list: scopedList, statsMap: scopedStatsMap, isScoped: true };
+}
+
+function getScopedProjectsList() {
+  return getScopedProjectsData().list;
 }
 
 function closeAllComboboxes() {
@@ -559,7 +737,23 @@ function renderProjectOptionsList(query = '') {
   const list = document.getElementById('combo-options-list-prj');
   if (!list) return;
 
-  const allItems = getScopedProjectsList();
+  const { list: allItems, statsMap: scopedStatsMap, isScoped } = getScopedProjectsData();
+  const getItemStats = (item) => {
+    if (isScoped && scopedStatsMap) {
+      const s = scopedStatsMap.get(item);
+      if (s) return s;
+      const base = samProjectStatsMap.get(item);
+      return {
+        sam: 0,
+        other: 0,
+        coCounts: {},
+        normKey: (base && base.normKey) || '',
+        tag: (base && base.tag) || ''
+      };
+    }
+    return samProjectStatsMap.get(item);
+  };
+
   const cleanQuery = (query || '').trim().toLowerCase();
   let filtered = allItems;
   if (cleanQuery) {
@@ -589,7 +783,7 @@ function renderProjectOptionsList(query = '') {
     if (selSet.has(item)) {
       selectedItems.push(item);
     } else {
-      const stats = samProjectStatsMap.get(item);
+      const stats = getItemStats(item);
       if (stats && stats.sam > 0) {
         unselectedSam.push(item);
       } else {
@@ -599,7 +793,7 @@ function renderProjectOptionsList(query = '') {
   }
 
   const totalSamCount = unselectedSam.length + selectedItems.filter(item => {
-    const s = samProjectStatsMap.get(item);
+    const s = getItemStats(item);
     return s && s.sam > 0;
   }).length;
 
@@ -619,9 +813,9 @@ function renderProjectOptionsList(query = '') {
   }
 
   const renderItemBadges = (item, fallbackStats) => {
-    const stats = samProjectStatsMap.get(item) || fallbackStats;
+    const stats = getItemStats(item) || fallbackStats;
     const nk = (stats && stats.normKey) || normalizeProjectKeyword(item);
-    const coCounts = projCompanyCountsMap.get(nk) || {};
+    const coCounts = (isScoped && stats && stats.coCounts) ? stats.coCounts : (projCompanyCountsMap.get(nk) || {});
 
     if (inMapFilterState.companies && inMapFilterState.companies.size >= 2) {
       const parts = [];
@@ -642,7 +836,7 @@ function renderProjectOptionsList(query = '') {
         : `<span style="font-size:8.5px; color:#94a3b8; margin-left:4px; flex-shrink:0;">ไม่มีคู่แข่ง</span>`;
       return samBadge + compBadge;
     }
-    const othCnt = stats ? stats.other : 1;
+    const othCnt = stats ? stats.other : 0;
     return `<span style="font-size:9px; font-weight:600; background:rgba(100,116,139,0.12); color:#475569; padding:1px 5px; border-radius:4px; margin-left:6px; flex-shrink:0;">${othCnt} ทรัพย์</span>`;
   };
 
@@ -1749,7 +1943,8 @@ function toggleProjectOption(proj, query = '', event = null) {
       }
 
       if (matchingItems.length > 0) {
-        // Auto-detect project's location hierarchy if no province is explicitly selected yet
+        // Auto-detect project's location hierarchy ONLY when 100% of matching items share the same
+        // province/district/subdistrict so multi-location or border-straddling projects never hide SAM pins.
         const provCounts = {};
         const distCounts = {};
         const subdistCounts = {};
@@ -1765,45 +1960,49 @@ function toggleProjectOption(proj, query = '', event = null) {
           }
         });
 
-        let topProv = '';
-        let maxProvCount = 0;
-        for (const [p, c] of Object.entries(provCounts)) {
-          if (c > maxProvCount) { maxProvCount = c; topProv = p; }
-        }
+        const provKeys = Object.keys(provCounts);
+        const distKeys = Object.keys(distCounts);
+        const subdistKeys = Object.keys(subdistCounts);
 
-        if (topProv && (!currentSelectedProv || currentSelectedProv === '__ALL__')) {
-          currentSelectedProv = topProv;
+        if (
+          provKeys.length === 1 &&
+          provCounts[provKeys[0]] === matchingItems.length &&
+          (!currentSelectedProv || currentSelectedProv === '__ALL__')
+        ) {
+          currentSelectedProv = provKeys[0];
           const boundariesDict = window.ALL_PROVINCES_BOUNDARIES || {};
           if (boundariesDict[currentSelectedProv]) {
             boundaryGeoJson = boundariesDict[currentSelectedProv];
             districtLabels = boundariesDict[currentSelectedProv].district_labels || [];
           }
 
-          let topDist = '';
-          let maxDistCount = 0;
-          for (const [d, c] of Object.entries(distCounts)) {
-            if (c > maxDistCount) { maxDistCount = c; topDist = d; }
-          }
-          if (topDist && (maxDistCount / matchingItems.length) >= 0.5) {
-            currentSelectedDist = topDist;
+          if (distKeys.length === 1 && distCounts[distKeys[0]] === matchingItems.length) {
+            currentSelectedDist = distKeys[0];
             updateDistrictSubdistrictBoundaries();
 
-            let topSubdist = '';
-            let maxSubCount = 0;
-            for (const [s, c] of Object.entries(subdistCounts)) {
-              if (c > maxSubCount) { maxSubCount = c; topSubdist = s; }
-            }
-            if (topSubdist && (maxSubCount / matchingItems.length) >= 0.5) {
-              currentSelectedSubdist = topSubdist;
+            if (subdistKeys.length === 1 && subdistCounts[subdistKeys[0]] === matchingItems.length) {
+              currentSelectedSubdist = subdistKeys[0];
             }
           }
           cachedScopedProjectsKey = '';
           updateSvgBoundaries();
         }
 
-        // Calculate centroid of all project properties (prioritizing SAM properties if present)
-        const samMatches = matchingItems.filter(d => d._company === 'SAM');
-        const targetPool = samMatches.length > 0 ? samMatches : matchingItems;
+        // Respect active location/company/type filters when choosing fly-to centroid (prioritizing SAM)
+        let scopedMatches = matchingItems;
+        if (typeof isItemInCurrentLocation === 'function') {
+          const locFiltered = matchingItems.filter(d => {
+            if (!isItemInCurrentLocation(d)) return false;
+            if (inMapFilterState.companies && inMapFilterState.companies.size > 0 && !inMapFilterState.companies.has(d._company)) return false;
+            if (inMapFilterState.types && inMapFilterState.types.size > 0 && !inMapFilterState.types.has(d._type)) return false;
+            return true;
+          });
+          if (locFiltered.length > 0) {
+            scopedMatches = locFiltered;
+          }
+        }
+        const samMatches = scopedMatches.filter(d => (d._company || '').trim().toUpperCase() === 'SAM');
+        const targetPool = samMatches.length > 0 ? samMatches : scopedMatches;
 
         let sumLon = 0, sumLat = 0;
         let minLon = Infinity, maxLon = -Infinity;
@@ -1834,7 +2033,7 @@ function toggleProjectOption(proj, query = '', event = null) {
         else if (maxSpan > 0.002) targetZoom = 15.0;
 
         smoothFlyTo(centerLon, centerLat, targetZoom);
-        showToast(`<i class="fa-solid fa-plane-departure" style="color:#059669; margin-right:5px;"></i>บินไปโครงการ: <b>${cleanPrj}</b> (${targetPool.length} รายการ)`);
+        showToast(`<i class="fa-solid fa-plane-departure" style="color:#059669; margin-right:5px;"></i>บินไปโครงการ: <b>${escapeHtml(cleanPrj)}</b> (${scopedMatches.length} รายการ)`);
       }
     }
   }
