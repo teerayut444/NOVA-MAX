@@ -667,6 +667,7 @@ function promptCustomRadius() {
 // Reference Point & Radius Inspection State
 let currentRadiusKm = 5;
 let referencePoint = null; // [lon, lat] - set only upon clicking the map or from input!
+let userCurrentLocation = null; // { lon, lat, accuracy } - GPS Blue Dot marker (persisted even when referencePoint moves)
 let currentRefProp = null; // object of active reference property if selected
 let pendingReferencePoint = null; // [lon, lat] - click confirmation preview
 let mousePreviewCoord = null; // [lon, lat] - preview circle follows mouse before clicking
@@ -969,6 +970,63 @@ function createPendingReferencePinLayer() {
   });
 }
 
+// User Current GPS Location Layers (Blue Dot + Accuracy Circle)
+function createUserLocationAccuracyLayer() {
+  if (!userCurrentLocation || !Number.isFinite(userCurrentLocation.accuracy) || userCurrentLocation.accuracy <= 0) return null;
+  const clampedMeters = Math.min(Math.max(userCurrentLocation.accuracy, 10), 5000);
+  return new deck.ScatterplotLayer({
+    id: 'user-location-accuracy',
+    data: [{ lon: userCurrentLocation.lon, lat: userCurrentLocation.lat, radius: clampedMeters }],
+    getPosition: d => [d.lon, d.lat],
+    getRadius: d => d.radius,
+    radiusUnits: 'meters',
+    stroked: true,
+    filled: true,
+    getFillColor: [37, 99, 235, 28],
+    getLineColor: [59, 130, 246, 130],
+    getLineWidth: 1.5,
+    lineWidthUnits: 'pixels',
+    lineWidthMinPixels: 1,
+    pickable: false
+  });
+}
+
+function createUserLocationHaloLayer() {
+  if (!userCurrentLocation) return null;
+  return new deck.ScatterplotLayer({
+    id: 'user-location-halo',
+    data: [{ lon: userCurrentLocation.lon, lat: userCurrentLocation.lat }],
+    getPosition: d => [d.lon, d.lat],
+    getRadius: 15,
+    radiusUnits: 'pixels',
+    stroked: true,
+    filled: true,
+    getFillColor: [59, 130, 246, 55],
+    getLineColor: [59, 130, 246, 175],
+    getLineWidth: 1.5,
+    lineWidthUnits: 'pixels',
+    pickable: false
+  });
+}
+
+function createUserLocationDotLayer() {
+  if (!userCurrentLocation) return null;
+  return new deck.ScatterplotLayer({
+    id: 'user-location-dot',
+    data: [{ lon: userCurrentLocation.lon, lat: userCurrentLocation.lat }],
+    getPosition: d => [d.lon, d.lat],
+    getRadius: 7,
+    radiusUnits: 'pixels',
+    stroked: true,
+    filled: true,
+    getFillColor: [37, 99, 235, 255],
+    getLineColor: [255, 255, 255, 255],
+    getLineWidth: 2.5,
+    lineWidthUnits: 'pixels',
+    pickable: false
+  });
+}
+
 // 3. Hover Preview Cursor (Before clicking: NO points, just faint preview circle & dot)
 function createPreviewCursorLayer() {
   if (referencePoint || !mousePreviewCoord) return null;
@@ -1059,6 +1117,10 @@ function updateDeckLayers() {
   const boundaryLayer = createBoundaryLayer();
   if (boundaryLayer) layers.push(boundaryLayer);
 
+  // User GPS accuracy ring (underneath property pins & reference circle)
+  const userAccLayer = createUserLocationAccuracyLayer();
+  if (userAccLayer) layers.push(userAccLayer);
+
   if (referencePoint && mapPinMode === 'radius') {
     // When reference point is set: render locked radius circle + target bullseye pin + points
     const refCircle = createReferenceRadiusLayer();
@@ -1107,6 +1169,12 @@ function updateDeckLayers() {
       layers.push(...ptLayers);
     }
   }
+
+  // User GPS Blue Dot (persists even if referencePoint moves to another property)
+  const userHalo = createUserLocationHaloLayer();
+  if (userHalo) layers.push(userHalo);
+  const userDot = createUserLocationDotLayer();
+  if (userDot) layers.push(userDot);
 
   // If user has clicked to propose a new reference point, show pending marker
   const pendingPin = createPendingReferencePinLayer();

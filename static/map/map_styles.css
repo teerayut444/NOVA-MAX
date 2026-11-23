@@ -675,6 +675,63 @@ body.dark-theme .compass-pivot {
   border-color: #0f172a;
 }
 
+/* Floating Current Location (GPS) Button (below Compass) */
+#map-locate-btn {
+  position: absolute;
+  top: 208px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1.5px solid rgba(0, 0, 0, 0.12);
+  border-radius: 50%;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  color: #334155;
+  font-size: 17px;
+  cursor: pointer;
+  z-index: 998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+#map-locate-btn:hover {
+  transform: scale(1.08);
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.45);
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.25);
+}
+#map-locate-btn:active {
+  transform: scale(0.96);
+}
+#map-locate-btn.locating {
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.55);
+  cursor: wait;
+}
+#map-locate-btn.located {
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.5);
+  box-shadow: 0 4px 16px rgba(37, 99, 235, 0.28);
+}
+body.dark-theme #map-locate-btn {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  color: #cbd5e1;
+}
+body.dark-theme #map-locate-btn:hover,
+body.dark-theme #map-locate-btn.locating,
+body.dark-theme #map-locate-btn.located {
+  color: #60a5fa;
+  border-color: rgba(96, 165, 250, 0.55);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.32);
+}
+
 /* Mode Switch Group: By Company Logo vs By Property Type */
 .mode-switch-group {
   display: inline-flex;
@@ -3201,6 +3258,14 @@ body.dark-theme #points-count {
     height: 40px;
   }
 
+  #map-locate-btn {
+    top: 222px;
+    right: 14px;
+    width: 40px;
+    height: 40px;
+    font-size: 16px;
+  }
+
   #map-legend {
     bottom: 16px;
     right: 12px;
@@ -3281,16 +3346,25 @@ body.dark-theme #points-count {
 
   #map-compass {
     top: auto;
-    bottom: 72px;
+    bottom: 118px;
     right: 12px;
     width: 38px;
     height: 38px;
   }
 
+  #map-locate-btn {
+    top: auto;
+    bottom: 72px;
+    right: 12px;
+    width: 38px;
+    height: 38px;
+    font-size: 15px;
+  }
+
   #touch-scroll-pill {
     left: auto;
     right: 10px;
-    bottom: 122px;
+    bottom: 166px;
     flex-direction: column;
     border-radius: 16px;
     padding: 4px;

@@ -2156,6 +2156,180 @@ function clearInMapCustomCoord() {
 }
 
 // ==========================================
+// CURRENT LOCATION (BROWSER GPS GEOLOCATION)
+// ==========================================
+let _isLocatingCurrentPos = false;
+
+function _setLocateBtnState(state) {
+  const btn = document.getElementById('map-locate-btn');
+  const icon = document.getElementById('map-locate-icon');
+  if (!btn) return;
+  if (state === 'loading') {
+    btn.classList.add('locating');
+    btn.disabled = true;
+    if (icon) icon.className = 'fa-solid fa-spinner fa-spin';
+  } else if (state === 'located') {
+    btn.classList.remove('locating');
+    btn.classList.add('located');
+    btn.disabled = false;
+    if (icon) icon.className = 'fa-solid fa-location-crosshairs';
+  } else {
+    btn.classList.remove('locating');
+    btn.classList.toggle('located', Boolean(typeof userCurrentLocation !== 'undefined' && userCurrentLocation));
+    btn.disabled = false;
+    if (icon) icon.className = 'fa-solid fa-location-crosshairs';
+  }
+}
+
+function _resolveBrowserGeolocation() {
+  let parentWin = null;
+  try {
+    if (window.parent && window.parent !== window && window.parent.navigator && window.parent.navigator.geolocation) {
+      parentWin = window.parent;
+    }
+  } catch (_e) {
+    parentWin = null;
+  }
+
+  const hostWin = parentWin || window;
+  const geo = (parentWin && parentWin.navigator && parentWin.navigator.geolocation)
+    ? parentWin.navigator.geolocation
+    : (navigator && navigator.geolocation ? navigator.geolocation : null);
+
+  let isSecure = true;
+  try {
+    if (typeof hostWin.isSecureContext === 'boolean') {
+      isSecure = hostWin.isSecureContext;
+    } else if (hostWin.location) {
+      const proto = hostWin.location.protocol;
+      const host = hostWin.location.hostname;
+      isSecure = (proto === 'https:' || host === 'localhost' || host === '127.0.0.1' || host === '[::1]');
+    }
+  } catch (_e) {}
+
+  return { geo, isSecure };
+}
+
+function _formatGpsAccuracy(accMeters) {
+  if (!Number.isFinite(accMeters) || accMeters <= 0) return '';
+  if (accMeters >= 1000) return `±${(accMeters / 1000).toFixed(1)} กม.`;
+  return `±${Math.round(accMeters)} ม.`;
+}
+
+function locateCurrentPosition() {
+  if (_isLocatingCurrentPos) return;
+
+  const { geo, isSecure } = _resolveBrowserGeolocation();
+  if (!isSecure) {
+    showToast('<i class="fa-solid fa-shield-halved" style="color:#f59e0b; margin-right:5px;"></i>เบราว์เซอร์บล็อก GPS บน HTTP — กรุณาเปิดผ่าน <b>HTTPS</b> หรือ <b>localhost</b> เพื่อใช้ตำแหน่งปัจจุบัน');
+    return;
+  }
+  if (!geo) {
+    showToast('<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444; margin-right:5px;"></i>เบราว์เซอร์นี้ไม่รองรับการดึงตำแหน่งปัจจุบัน (Geolocation)');
+    return;
+  }
+
+  _isLocatingCurrentPos = true;
+  _setLocateBtnState('loading');
+  showToast('<i class="fa-solid fa-spinner fa-spin" style="color:#2563eb; margin-right:6px;"></i>กำลังค้นหาตำแหน่งปัจจุบัน (GPS)...');
+
+  const handleSuccess = (pos) => {
+    _isLocatingCurrentPos = false;
+    const coords = pos && pos.coords ? pos.coords : null;
+    const lat = coords ? Number(coords.latitude) : NaN;
+    const lon = coords ? Number(coords.longitude) : NaN;
+    const accuracy = coords && Number.isFinite(Number(coords.accuracy)) ? Number(coords.accuracy) : null;
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      _setLocateBtnState('idle');
+      showToast('<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444; margin-right:5px;"></i>ไม่ได้รับค่าพิกัดจากอุปกรณ์ กรุณาลองใหม่อีกครั้ง');
+      return;
+    }
+
+    if (lat < 5.0 || lat > 21.0 || lon < 97.0 || lon > 106.0) {
+      _setLocateBtnState('idle');
+      showToast(`<i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b; margin-right:5px;"></i>ตำแหน่งปัจจุบัน (${lat.toFixed(5)}, ${lon.toFixed(5)}) อยู่นอกประเทศไทย จึงไม่สามารถปักหมุดค้นหาทรัพย์ได้`);
+      return;
+    }
+
+    userCurrentLocation = { lon, lat, accuracy };
+
+    // Update coordinate input box & clear previous property/place search state
+    const inputEl = document.getElementById('inmap-coord-input');
+    const clearBtn = document.getElementById('inmap-clear-coord-btn');
+    if (inputEl) inputEl.value = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    if (clearBtn) clearBtn.style.display = 'inline-flex';
+
+    const propInp = document.getElementById('inmap-prop-search-input');
+    const propClr = document.getElementById('inmap-clear-search-btn');
+    if (propInp) propInp.value = '';
+    if (propClr) propClr.style.display = 'none';
+
+    const placeInp = document.getElementById('place-search-input');
+    const placeClr = document.getElementById('place-search-clear');
+    if (placeInp) placeInp.value = '';
+    if (placeClr) placeClr.style.display = 'none';
+    if (typeof hidePlaceSearchResults === 'function') hidePlaceSearchResults();
+
+    if (typeof closePropertyCard === 'function') closePropertyCard();
+
+    currentRefProp = null;
+    currentRefId = '';
+    setReferencePoint(lon, lat, true, true);
+    _setLocateBtnState('located');
+
+    const accLabel = _formatGpsAccuracy(accuracy);
+    const accSuffix = accLabel ? ` (${accLabel})` : '';
+    showToast(`<i class="fa-solid fa-location-crosshairs" style="color:#2563eb; margin-right:5px;"></i>ปักหมุดตำแหน่งปัจจุบัน: <b>${lat.toFixed(5)}, ${lon.toFixed(5)}</b>${accSuffix}`);
+  };
+
+  const handleFinalError = (err) => {
+    _isLocatingCurrentPos = false;
+    _setLocateBtnState('idle');
+    const code = err && typeof err.code === 'number' ? err.code : 0;
+    const msg = (err && err.message ? String(err.message) : '').toLowerCase();
+    if (code === 1) {
+      if (msg.includes('secure') || msg.includes('https')) {
+        showToast('<i class="fa-solid fa-shield-halved" style="color:#f59e0b; margin-right:5px;"></i>เบราว์เซอร์บล็อก GPS บน HTTP — กรุณาเปิดผ่าน <b>HTTPS</b> หรือ <b>localhost</b>');
+      } else {
+        showToast('<i class="fa-solid fa-location-crosshairs" style="color:#ef4444; margin-right:5px;"></i>ไม่ได้รับสิทธิ์เข้าถึงตำแหน่ง — กรุณากดอนุญาตสิทธิ์ตำแหน่ง (Location) ในเบราว์เซอร์แล้วลองใหม่');
+      }
+    } else if (code === 2) {
+      showToast('<i class="fa-solid fa-satellite-dish" style="color:#f59e0b; margin-right:5px;"></i>ไม่สามารถระบุตำแหน่งได้ในขณะนี้ กรุณาเปิดบริการตำแหน่ง (Location Service) ของอุปกรณ์');
+    } else if (code === 3) {
+      showToast('<i class="fa-solid fa-clock" style="color:#f59e0b; margin-right:5px;"></i>หมดเวลาการค้นหาตำแหน่ง GPS กรุณาลองกดใหม่อีกครั้ง');
+    } else {
+      showToast('<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444; margin-right:5px;"></i>ไม่สามารถดึงตำแหน่งปัจจุบันได้ กรุณาลองใหม่อีกครั้ง');
+    }
+  };
+
+  const requestPosition = (highAccuracy, allowFallback) => {
+    try {
+      geo.getCurrentPosition(
+        handleSuccess,
+        (err) => {
+          // On desktops without GPS hardware, high-accuracy can timeout or report unavailable; retry once with standard accuracy
+          if (allowFallback && err && (err.code === 2 || err.code === 3)) {
+            requestPosition(false, false);
+            return;
+          }
+          handleFinalError(err);
+        },
+        {
+          enableHighAccuracy: highAccuracy,
+          timeout: highAccuracy ? 10000 : 12000,
+          maximumAge: highAccuracy ? 15000 : 60000,
+        }
+      );
+    } catch (e) {
+      handleFinalError(e);
+    }
+  };
+
+  requestPosition(true, true);
+}
+
+// ==========================================
 // SAVED REFERENCE COORDINATES (LOCALSTORAGE)
 // ==========================================
 const SAVED_COORDS_LEGACY_KEY = 'nova_saved_reference_coords';
