@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from modules.services.data_loader import get_data_mtime
-from modules.services.data_cleaner import is_invalid_project_name
+from modules.services.data_cleaner import is_invalid_project_name, find_spatially_scattered_project_keys
 
 _TH_TZ = timezone(timedelta(hours=7))
 _TH_MONTHS_MAP = {
@@ -169,7 +169,7 @@ def _compute_livinginsider_project_metrics(_df_raw):
     prov_clean = _as_clean_str(li['จังหวัด'], '-')
     proj_raw = _as_clean_str(li['ชื่อโครงการ'], '')
 
-    # Detect missing or invalid project names via unique-value mapping (fast)
+    # Detect missing, invalid, or pure-location project names via unique-value mapping (fast)
     unique_projs = proj_raw.unique()
     invalid_proj_set = {p for p in unique_projs if not p or p == '-' or is_invalid_project_name(p)}
     no_proj = proj_raw.isin(invalid_proj_set)
@@ -179,7 +179,70 @@ def _compute_livinginsider_project_metrics(_df_raw):
     fallback_loc = (sub_lbl + ' ' + dist_lbl).str.strip()
     fallback_name = pt_clean + np.where(fallback_loc != '', ' (' + fallback_loc + ')', '')
 
-    li['proj_clean'] = proj_raw.where(~no_proj, fallback_name)
+    # Layer 2: Spatial coherence guard within (proj_raw, prov_clean).
+    # If units sharing a project name in the same province are scattered too far apart
+    # (>3.5km median, >7km 2-point pair, or >8km p75), try splitting by district for genuine multi-branch
+    # projects (>=2 tightly clustered units in that district), otherwise demote to fallback_name.
+    proj_resolved = proj_raw.where(~no_proj, '')
+    has_named = ~no_proj
+    if has_named.any():
+        named_df = pd.DataFrame({
+            '_proj': proj_resolved.loc[has_named],
+            '_prov': prov_clean.loc[has_named],
+            'lat': li.loc[has_named, 'lat'],
+            'lon': li.loc[has_named, 'lon'],
+        }, index=li.index[has_named])
+        scattered_pairs = find_spatially_scattered_project_keys(
+            named_df,
+            group_col=['_proj', '_prov'],
+            lat_col='lat',
+            lon_col='lon',
+            centroid_col=None,
+            max_median_km=3.5,
+            max_pair_km=7.0,
+            max_p75_km=8.0,
+            min_p75_count=3,
+        )
+        if scattered_pairs:
+            pair_idx = pd.MultiIndex.from_arrays([named_df['_proj'], named_df['_prov']])
+            in_scattered_mask = pd.Series(pair_idx.isin(scattered_pairs), index=named_df.index)
+            scat_indices = in_scattered_mask[in_scattered_mask].index
+            if len(scat_indices) > 0:
+                d_scat = dist_lbl.loc[scat_indices]
+                has_d = d_scat != ''
+                disamb_names = np.where(has_d, proj_raw.loc[scat_indices] + ' (' + d_scat + ')', '')
+                disamb_df = pd.DataFrame({
+                    '_proj': disamb_names,
+                    '_prov': prov_clean.loc[scat_indices],
+                    'lat': li.loc[scat_indices, 'lat'],
+                    'lon': li.loc[scat_indices, 'lon'],
+                }, index=scat_indices)
+                sub_sizes = disamb_df.groupby(['_proj', '_prov'], sort=False)['lat'].transform('size')
+                still_scattered = find_spatially_scattered_project_keys(
+                    disamb_df,
+                    group_col=['_proj', '_prov'],
+                    lat_col='lat',
+                    lon_col='lon',
+                    centroid_col=None,
+                    max_median_km=3.5,
+                    max_pair_km=7.0,
+                    max_p75_km=8.0,
+                    min_p75_count=3,
+                )
+                d_pair_idx = pd.MultiIndex.from_arrays([disamb_df['_proj'], disamb_df['_prov']])
+                still_bad = (
+                    (disamb_df['_proj'] == '')
+                    | (sub_sizes < 2)
+                    | pd.Series(d_pair_idx.isin(still_scattered), index=scat_indices)
+                )
+                good_disamb_idx = still_bad[~still_bad].index
+                bad_disamb_idx = still_bad[still_bad].index
+                if len(good_disamb_idx) > 0:
+                    proj_resolved.loc[good_disamb_idx] = disamb_df.loc[good_disamb_idx, '_proj']
+                if len(bad_disamb_idx) > 0:
+                    proj_resolved.loc[bad_disamb_idx] = ''
+
+    li['proj_clean'] = proj_resolved.where(proj_resolved != '', fallback_name)
     li['prov_clean'] = prov_clean
     li['_pt_clean'] = pt_clean
     li['_dist_clean'] = dist_clean

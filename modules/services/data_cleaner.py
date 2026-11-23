@@ -130,18 +130,25 @@ _INVALID_PROJECT_SET = {
     '', '-', '--', '---', '.', '..', '...', 'nan', 'null', 'none', 'undefined',
     'ไม่ระบุ', 'ไม่มีชื่อ', 'ไม่มีข้อมูล', 'โครงการไม่มีชื่อ', 'ไม่มี',
     'โครงการ', 'หมู่บ้าน', 'คอนโด', 'บ้านเดี่ยว', 'ที่ดิน', 'ทาวน์โฮม', 'อาคารพาณิชย์', 'ห้องชุด',
-    'บ้าน', 'ตึก', 'ทาวน์เฮ้าส์', 'อพาร์ทเม้นท์', 'อาคารชุด'
+    'บ้าน', 'ตึก', 'ทาวน์เฮ้าส์', 'อพาร์ทเม้นท์', 'อาคารชุด',
+    # Scraper-polluted generic / truncated / non-project words
+    'ราคา', 'มิเนียม', 'จัดสรร', 'บ้านจัดสรร', 'ที่ดินจัดสรร', 'รายย่อย', 'เปล่า',
+    'ใหม่', 'ติด', 'ติดทะเล', 'ติดถนน', 'หรู', 'เทล', 'เอส', 'โฮม',
+    'ห้องสวย', 'ห้องใหญ่', 'ห้องมุม', 'หลังมุม', 'แปลงมุม', 'ถมแล้ว', 'วิวทะเล',
+    'ออมสิน', 'call', 'modern', 'tropical', 'boho style', 'low rise', 'high rise',
+    'ขนาดใหญ่', 'เลต', 'สอบถามโทร', 'บ้าน สตูดิโอ', 'สำหรับ ขาย คอนโด', 'สำหรับขายคอนโด',
+    'พร้อมสิ่งปลูกสร้าง', 'การเคหะ', 'การเคหะแห่งชาติ', 'in1',
 }
 _ROOM_SCRAPE_PAT = re.compile(r'^\d+\s*ห้อง(นอน)?(\s*\d+\s*ห้องน้ำ)?', re.I)
 _STUDIO_PAT = re.compile(r'^(สตูดิโอ|ห้องนอน|ห้องน้ำ|studio)$', re.I)
 _AD_PITCH_PAT = re.compile(r'^(?:ขายด่วน|ขายถูก|ขายบ้าน|ขายคอนโด|ให้เช่า|ต้องการขาย|ลดราคา|ขาย|เช่า|เซ้ง|ด่วน)(?:\s|$|[ก-๙0-9])', re.I)
 _COORD_PAT = re.compile(r'^-?\d{1,2}\.\d+[\s,]+-?\d{2,3}\.\d+$')
 _DIGIT_ONLY_PAT = re.compile(r'^[\d.,/\s-]+$')
-_GENERIC_TYPE_NUM_PAT = re.compile(r'^(บ้านเดี่ยว|บ้านแฝด|บ้าน|ทาวน์โฮม|ทาวน์เฮ้าส์|คอนโด|ห้องชุด|ที่ดิน|อาคารพาณิชย์|ตึกแถว)\s*\d+$', re.I)
-_FLOOR_DESC_PAT = re.compile(r'^(?:บ้านเดี่ยว|บ้านแฝด|บ้านตึก|บ้านไม้|บ้านครึ่งตึกครึ่งไม้|บ้าน|ทาวน์เฮ้าส์|ทาวน์โฮม|ทาวเฮ้าส์|ทาวน์ฮ้าส์|ตึกแถว|อาคารพาณิชย์|อาคารโกดัง|วิลล่า|คอนโด)?\s*\d+(?:\.\d+)?\s*ชั้น(?:$|\s|ครึ่ง|[0-9])', re.I)
-_AD_NEAR_PAT = re.compile(r'^(?:ใกล้|ติด)\s*(?:bts|mrt|แอร์พอร์ต|ทางด่วน|ถนน|สถานี|ห้าง)', re.I)
+_GENERIC_TYPE_NUM_PAT = re.compile(r'^(บ้านเดี่ยว|บ้านแฝด|บ้าน|ทาวน์โฮม|ทาวน์เฮ้าส์|ทาวน์เฮาท์|คอนโด|ห้องชุด|ที่ดิน|อาคารพาณิชย์|ตึกแถว|เดี่ยว|เฮ้าส์|เฮาส์|เฮาท์|พาณิชย์|แฝด|แถว)\s*\d+(?:\s*-?\s*(?:ห้องนอน|ห้องน้ำ|ชั้น))?$', re.I)
+_FLOOR_DESC_PAT = re.compile(r'^(?:บ้านเดี่ยว|บ้านแฝด|บ้านตึก|บ้านไม้|บ้านครึ่งตึกครึ่งไม้|บ้าน|ทาวน์เฮ้าส์|ทาวน์โฮม|ทาวเฮ้าส์|ทาวน์ฮ้าส์|ทาวน์เฮาท์|ตึกแถว|อาคารพาณิชย์|อาคารโกดัง|วิลล่า|คอนโด)?\s*\d+(?:\.\d+)?\s*ชั้น(?:$|\s|ครึ่ง|[0-9])', re.I)
+_AD_NEAR_PAT = re.compile(r'^(?:ใกล้|ติด)\s*(?:bts|mrt|แอร์พอร์ต|ทางด่วน|ถนน|สถานี|ห้าง|รถไฟฟ้า|ทะเล|หาด)', re.I)
 _PRICE_IN_NAME_PAT = re.compile(r'(?:ราคา|ขายเพียง|ลดเหลือ|ผ่อนเพียง|ตรว\.ละ|วาละ|ขาย|เช่า)\s*\d+(?:\.\d+)?\s*(?:ลบ|ล้าน|แสน|บาท|บ(?:\.|\s|$))')
-_ROOM_CNT_PAT = re.compile(r'(?:\d+\s*(?:ห้องนอน|ห้องน้ำ)|\d+\s*นอน\s*\d+\s*น้ำ|ห้อง(?:นอน|น้ำ)?\s*\d+\s*ห้อง)')
+_ROOM_CNT_PAT = re.compile(r'(?:\d+\s*-?\s*(?:ห้องนอน|ห้องน้ำ)|\d+\s*นอน\s*\d+\s*น้ำ|ห้อง(?:นอน|น้ำ)?\s*\d+\s*ห้อง)')
 _AREA_SCRAPE_PAT = re.compile(r'^\d+[\d.,/-]*\s*(?:ตร\.?ว\.?|ตร\.?ม\.?|ตารางวา|ตารางเมตร|ไร่|วา)(?:$|\s|\d)', re.I)
 _AREA_MID_PAT = re.compile(r'\d+[\d.,]*\s*(?:ตร\.?ว\.?|ตร\.?ม\.?|ตารางวา|ตารางเมตร)(?:$|\s|\d)', re.I)
 _POSTAL_PREFIX_PAT = re.compile(r'^\d{5}\s*(?:บ้าน|ทาวน์|อาคาร|ที่ดิน|คอนโด|เดอะ|มบ\.|หมู่บ้าน|ทาวเฮ้าส์)', re.I)
@@ -149,14 +156,170 @@ _AD_BUZZWORDS_PAT = re.compile(r'(?:ขายด่วน|ด่วนมาก|
 _CONTACT_PAT = re.compile(r'(?:โทร|tel|contact|line\s*id)\s*[:\.]?\s*\d', re.I)
 _SCRAPED_DIST_PRICE_PAT = re.compile(r'ใน(?:อำเภอ|อ\.)\s*[ก-๙]+')
 _AD_ADJECTIVE_PAT = re.compile(r'(?:พร้อมอยู่|ตกแต่งครบ|เฟอร์นิเจอร์|ฟรีโอน|วิวสวย|วิวทะเล|วิวสระ|ทำเลทอง)')
+_SOCIAL_HANDLE_PAT = re.compile(r'^@[a-zA-Z0-9_.\-]+')
+_CORRUPT_INST_BANK_PAT = re.compile(r'(?:สถาบัน|ถาบัน|าบัน|บัน)?(?:โดย|ดย)\s*(?:ghb|gsb|bam|sam|ktb|scb|kbank)\b', re.I)
+_AD_DESC_START_PAT = re.compile(r'^(?:สำหรับ\s*ขาย|สอบถาม|ติดต่อ|วิวทะเล|วิวเขา|พร้อมที่ดิน|พร้อมสิ่งปลูกสร้าง|บ้าน\s*สตูดิโอ|\+\s*บ้าน|private\s+house\b|pool\s+villa\b|house\s+for\s+sale\b|condo\s+for\s+sale\b)', re.I)
+
+# Pure Thai location / zone / road / province tokens (prevents zone labels like 'พัทยา บางแสน ชลบุรี สัตหีบ' from masquerading as projects)
+_THAI_ZONE_LOCATION_TOKENS = frozenset({
+    # Provinces & nicknames
+    'กรุงเทพ', 'กรุงเทพฯ', 'กรุงเทพมหานคร', 'กทม', 'กทม.', 'โคราช', 'อยุธยา', 'มหาชัย', 'แปดริ้ว', 'ปากน้ำ',
+    'กระบี่', 'กาญจนบุรี', 'กาฬสินธุ์', 'กำแพงเพชร', 'ขอนแก่น', 'จันทบุรี', 'ฉะเชิงเทรา', 'ชลบุรี',
+    'ชัยนาท', 'ชัยภูมิ', 'ชุมพร', 'เชียงราย', 'เชียงใหม่', 'ตรัง', 'ตราด', 'ตาก', 'นครนายก',
+    'นครปฐม', 'นครพนม', 'นครราชสีมา', 'นครศรีธรรมราช', 'นครสวรรค์', 'นนทบุรี', 'นราธิวาส', 'น่าน',
+    'บึงกาฬ', 'บุรีรัมย์', 'ปทุมธานี', 'ประจวบคีรีขันธ์', 'ปราจีนบุรี', 'ปัตตานี', 'พระนครศรีอยุธยา',
+    'พะเยา', 'พังงา', 'พัทลุง', 'พิจิตร', 'พิษณุโลก', 'เพชรบุรี', 'เพชรบูรณ์', 'แพร่', 'ภูเก็ต',
+    'มหาสารคาม', 'มุกดาหาร', 'แม่ฮ่องสอน', 'ยโสธร', 'ยะลา', 'ร้อยเอ็ด', 'ระนอง', 'ระยอง', 'ราชบุรี',
+    'ลพบุรี', 'ลำปาง', 'ลำพูน', 'เลย', 'ศรีสะเกษ', 'สกลนคร', 'สงขลา', 'สตูล', 'สมุทรปราการ',
+    'สมุทรสงคราม', 'สมุทรสาคร', 'สระแก้ว', 'สระบุรี', 'สิงห์บุรี', 'สุโขทัย', 'สุพรรณบุรี',
+    'สุราษฎร์ธานี', 'สุรินทร์', 'หนองคาย', 'หนองบัวลำภู', 'อ่างทอง', 'อำนาจเจริญ', 'อุดรธานี',
+    'อุตรดิตถ์', 'อุทัยธานี', 'อุบลราชธานี',
+    # Major tourist / regional zones
+    'พัทยา', 'บางแสน', 'สัตหีบ', 'ศรีราชา', 'แหลมฉบัง', 'บ้านบึง', 'บ่อวิน', 'ปลวกแดง', 'มาบตาพุด',
+    'จอมเทียน', 'นาเกลือ', 'หัวหิน', 'ชะอำ', 'ปราณบุรี', 'เขาใหญ่', 'ปากช่อง', 'สมุย', 'เกาะสมุย',
+    'ป่าตอง', 'กะทู้', 'ถลาง', 'กะรน', 'กมลา', 'ราไวย์', 'ฉลอง', 'หาดใหญ่', 'นิมมาน', 'แม่ริม',
+    'หางดง', 'สันทราย', 'สันกำแพง', 'สารภี', 'ดอยสะเก็ด',
+    'huahin', 'pattaya', 'bangsaen', 'samui', 'phuket', 'chiangmai', 'korat', 'rangsit', 'salaya',
+    'khonkaen', 'rayong', 'chonburi', 'prachuap', 'khiri', 'khan', 'naklua', 'jomtien', 'patong', 'hatyai',
+    # Bangkok & Vicinity roads, zones, transit hubs, landmarks
+    'สุขุมวิท', 'อโศก', 'ทองหล่อ', 'เอกมัย', 'พร้อมพงษ์', 'นานา', 'เพลินจิต', 'ชิดลม', 'วิทยุ', 'ราชดำริ', 'หลังสวน',
+    'พระโขนง', 'อ่อนนุช', 'บางจาก', 'ปุณณวิถี', 'อุดมสุข', 'บางนา', 'แบริ่ง', 'ลาซาล', 'สำโรง', 'เทพารักษ์',
+    'ศรีนครินทร์', 'พัฒนาการ', 'กิ่งแก้ว', 'บางพลี', 'บางปู', 'สุวรรณภูมิ', 'ลาดกระบัง', 'ร่มเกล้า', 'มีนบุรี',
+    'หนองจอก', 'คลองสามวา', 'ประเวศ', 'สวนหลวง',
+    'สีลม', 'สาทร', 'สาธร', 'ศาลาแดง', 'บางรัก', 'สี่พระยา', 'เจริญกรุง', 'เจริญนคร', 'คลองสาน',
+    'วงเวียนใหญ่', 'กรุงธนบุรี', 'ธนบุรี', 'ตลาดพลู', 'ท่าพระ', 'วุฒากาศ', 'บางหว้า', 'ตากสิน', 'พระราม',
+    'สาธุประดิษฐ์', 'ยานนาวา', 'บางคอแหลม', 'คลองเตย', 'กล้วยน้ำไท', 'ราษฎร์บูรณะ', 'สุขสวัสดิ์',
+    'ประชาอุทิศ', 'ทุ่งครุ', 'บางขุนเทียน', 'ท่าข้าม', 'เอกชัย', 'บางบอน', 'จอมทอง', 'กัลปพฤกษ์', 'กาญจนาภิเษก',
+    'สยาม', 'จุฬา', 'สามย่าน', 'ปทุมวัน', 'ราชเทวี', 'พญาไท', 'อนุสาวรีย์', 'อารีย์', 'สนามเป้า', 'สะพานควาย',
+    'จตุจักร', 'หมอชิต', 'ประดิพัทธ์', 'สุทธิสาร', 'อินทามระ', 'ดินแดง', 'ห้วยขวาง', 'รัชดา', 'รัชดาภิเษก',
+    'เพชรบุรี', 'เพชรบุรีตัดใหม่', 'rca', 'มักกะสัน', 'ประตูน้ำ', 'เยาวราช', 'บางลำพู', 'ปิ่นเกล้า',
+    'จรัญสนิทวงศ์', 'จรัญฯ', 'บางพลัด', 'บางอ้อ', 'บางโพ', 'บางซื่อ', 'เตาปูน', 'วงศ์สว่าง', 'ประชาชื่น',
+    'วิภาวดี', 'พหลโยธิน', 'รัชโยธิน', 'เกษตร', 'เกษตรศาสตร์', 'เสนานิคม', 'ลาดปลาเค้า', 'วังหิน',
+    'โชคชัย', 'ลาดพร้าว', 'แฮปปี้แลนด์', 'บางกะปิ', 'หัวหมาก', 'รามคำแหง', 'ลำสาลี', 'เสรีไทย', 'นิด้า',
+    'นวมินทร์', 'รามอินทรา', 'เลียบทางด่วน', 'เลียบทางด่วนรามอินทรา', 'เลียบด่วน', 'เลียบด่วนรามอินทรา',
+    'ประดิษฐ์มนูธรรม', 'วัชรพล', 'สายไหม', 'สุขาภิบาล', 'หทัยราษฎร์', 'คู้บอน', 'ปัญญาอินทรา',
+    'บางเขน', 'สะพานใหม่', 'ดอนเมือง', 'สรงประภา', 'หลักสี่', 'แจ้งวัฒนะ', 'เมืองทอง', 'ปากเกร็ด',
+    'ติวานนท์', 'งามวงศ์วาน', 'พงษ์เพชร', 'แคราย', 'รัตนาธิเบศร์', 'สนามบินน้ำ', 'พระนั่งเกล้า',
+    'บางใหญ่', 'บางบัวทอง', 'บางกรวย', 'ไทรน้อย', 'นครอินทร์', 'ตลิ่งชัน', 'ทวีวัฒนา', 'พุทธมณฑล',
+    'ศาลายา', 'บางแค', 'เพชรเกษม', 'หนองแขม', 'บางแวก', 'ภาษีเจริญ', 'พรานนก', 'ศิริราช', 'บรมราชชนนี',
+    'รังสิต', 'ธรรมศาสตร์', 'คลองหลวง', 'ธัญบุรี', 'ลำลูกกา', 'นวนคร', 'ตลาดไท', 'ฟิวเจอร์พาร์ค',
+    'เซ็นทรัลลาดพร้าว', 'เซ็นทรัลเวสต์เกต', 'เซ็นทรัลบางนา', 'เซ็นทรัลพระราม', 'เมกะบางนา',
+    'เดอะมอลล์บางกะปิ', 'เดอะมอลล์งามวงศ์วาน',
+    'ทางด่วน', 'ถนน', 'ซอย', 'แยก', 'คลอง', 'สาย', 'โซน', 'ย่าน', 'ฝั่งธน', 'ฝั่งธนบุรี',
+    'ใจกลางเมือง', 'ในเมือง', 'นอกเมือง',
+    # English equivalents
+    'sukhumvit', 'asoke', 'asok', 'thonglor', 'ekkamai', 'ekamai', 'silom', 'sathorn', 'sathon',
+    'rama', 'ladprao', 'latphrao', 'ratchada', 'bangna', 'onnut', 'udomsuk', 'bearing', 'lasalle',
+    'ramintra', 'nawamin', 'ramkhamhaeng', 'pinklao', 'charan', 'ratchaphruek', 'chaengwattana',
+    'tiwanon', 'ngamwongwan', 'rattanathibet', 'phaholyothin', 'srinakarin', 'pattanakarn',
+    'phetkasem', 'bangkae', 'bangyai', 'bangbuathong', 'donmueang', 'lamlukka', 'saimai',
+    'minburi', 'latkrabang', 'prawet',
+})
+
+# Single-word location tokens that double as real housing-estate names (protected when standalone; still caught by spatial coherence if scattered)
+_AMBIGUOUS_SINGLE_LOCATION_NAMES = frozenset({
+    'เมืองทอง', 'บางแสน', 'สุขสวัสดิ์', 'เกษตร', 'นานา', 'บางพระ', 'ศรีสุนทร',
+})
+# Housing-estate brand prefixes that look like roads/districts (e.g. 'ชัยพฤกษ์ ศรีนครินทร์', 'ราชพฤกษ์ สุวรรณภูมิ')
+_PROTECTED_ESTATE_BRAND_PREFIXES = frozenset({
+    'ชัยพฤกษ์', 'ราชพฤกษ์', 'บัวทอง', 'ลุมพินี', 'เมืองทอง',
+})
+_NUMBERED_ADDRESS_CONDO_PAT = re.compile(r'^\d{2,4}\s+[ก-๙a-zA-Z]')
+_ROAD_WITH_NUM_PAT = re.compile(
+    r'^(?:พระราม\s*[1-9]|โชคชัย\s*4|ลาดพร้าว\s*\d+|สุขุมวิท\s*\d+|พหลโยธิน\s*\d+|รามคำแหง\s*\d+|เพชรเกษม\s*\d+|'
+    r'รัชดา(?:ภิเษก)?\s*\d+|จรัญ(?:สนิทวงศ์)?\s*\d+|อ่อนนุช\s*\d+|บางนา[\s\-]*ตราด(?:\s*กม\.?\s*\d+)?|'
+    r'huahin\s*\d+|หัวหิน\s*\d+|สุขาภิบาล\s*\d+|พุทธมณฑล\s*สาย\s*\d+|สาย\s*\d+)$',
+    re.I,
+)
+_LOCATION_SPLIT_PAT = re.compile(r'[\s\-–—/,|&]+')
+_ADMIN_PREFIX_STRIP_PAT = re.compile(r'^(?:จ\.|จังหวัด|อ\.|อำเภอ|เขต|ต\.|ตำบล|แขวง|ถ\.|ถนน|ซ\.|ซอย|แยก|ย่าน|โซน)')
+_PURE_TOKEN_NUM_PAT = re.compile(r'^\d+[a-z]?$', re.I)
+
+_DISTRICTS_NAME_SET_CACHE = None
+
+
+def _get_thai_district_names_set():
+    """Lazily loads Thai district/amphoe names from data/districts.geojson (excluding estate-brand collisions)."""
+    global _DISTRICTS_NAME_SET_CACHE
+    if _DISTRICTS_NAME_SET_CACHE is not None:
+        return _DISTRICTS_NAME_SET_CACHE
+    names = set()
+    try:
+        import json
+        p = os.path.join(_ROOT_DIR, "data", "districts.geojson")
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                gj = json.load(f)
+            for feat in gj.get("features", []):
+                pr = feat.get("properties", {})
+                a_th = str(pr.get("amp_th") or "").strip()
+                if a_th:
+                    names.add(a_th)
+                    if a_th.startswith("เมือง") and len(a_th) > 5:
+                        names.add(a_th[5:])
+    except Exception:
+        pass
+    names.add('ราชพฤกษ์')
+    names.difference_update({'ชัยพฤกษ์', 'บัวทอง', 'ลุมพินี'})
+    _DISTRICTS_NAME_SET_CACHE = frozenset(names)
+    return _DISTRICTS_NAME_SET_CACHE
+
+
+def is_pure_location_project_name(name):
+    """Returns True if `name` consists solely of Thai location/zone/road/province/district tokens rather than a real project name."""
+    if not name or pd.isna(name):
+        return False
+    s = str(name).strip()
+    s = re.sub(r'^[\'"“‘\s]+|[\'"”’\s]+$', '', s)
+    if not s:
+        return False
+    # Protect real numbered-address luxury condos e.g. '185 ราชดำริ', '28 ชิดลม', '168 สุขุมวิท 36'
+    if _NUMBERED_ADDRESS_CONDO_PAT.match(s):
+        return False
+    if _ROAD_WITH_NUM_PAT.match(s):
+        return True
+
+    raw_tokens = [t.strip().lower() for t in _LOCATION_SPLIT_PAT.split(s) if t.strip()]
+    if not raw_tokens:
+        return False
+
+    non_num = []
+    has_num = False
+    for tok in raw_tokens:
+        if _PURE_TOKEN_NUM_PAT.match(tok):
+            has_num = True
+            continue
+        t_clean = _ADMIN_PREFIX_STRIP_PAT.sub('', tok).strip()
+        if t_clean:
+            non_num.append(t_clean)
+
+    if not non_num:
+        return False
+
+    # Single location token without trailing number (e.g. 'มหาชัย', 'โคราช', 'สมุย', 'เอกชัย', 'สะพานควาย', 'รัชดา')
+    if len(non_num) == 1 and not has_num:
+        t0 = non_num[0]
+        return t0 in _THAI_ZONE_LOCATION_TOKENS and t0 not in _AMBIGUOUS_SINGLE_LOCATION_NAMES
+
+    # Multi-token zone combinations (e.g. 'พัทยา บางแสน ชลบุรี สัตหีบ', 'นวมินทร์ รามอินทรา', 'พระราม 5 ราชพฤกษ์')
+    if len(non_num) >= 2:
+        if non_num[0] in _PROTECTED_ESTATE_BRAND_PREFIXES:
+            return False
+        amp_tokens = _get_thai_district_names_set()
+        return all((t in _THAI_ZONE_LOCATION_TOKENS or t in amp_tokens) for t in non_num)
+
+    return False
+
 
 def is_invalid_project_name(name):
-    """Detects invalid, corrupt, or scraper-polluted project names (e.g. '1 ห้อง', 'ไม่ระบุ', coordinates, pure numbers, ad headlines)."""
+    """Detects invalid, corrupt, pure-location, or scraper-polluted project names."""
     if not name or pd.isna(name):
         return True
     p = str(name).strip()
     p = re.sub(r'^[\'"“‘\s]+|[\'"”’\s]+$', '', p)
     if not p or p.lower() in _INVALID_PROJECT_SET or len(p) <= 2:
+        return True
+    if _SOCIAL_HANDLE_PAT.match(p) or _CORRUPT_INST_BANK_PAT.search(p) or _AD_DESC_START_PAT.search(p):
         return True
     if _COORD_PAT.match(p) or _DIGIT_ONLY_PAT.match(p):
         return True
@@ -176,7 +339,110 @@ def is_invalid_project_name(name):
         return True
     if _AD_ADJECTIVE_PAT.search(p) and len(p) > 20:
         return True
+    if is_pure_location_project_name(p):
+        return True
     return False
+
+
+def find_spatially_scattered_project_keys(
+    df,
+    group_col='norm_project_name',
+    lat_col='ละติจูด',
+    lon_col='ลองจิจูด',
+    centroid_col='is_centroid',
+    max_median_km=5.0,
+    max_pair_km=10.0,
+    max_p75_km=None,
+    min_p75_count=3,
+):
+    """Returns set of project group keys whose valid property coordinates are scattered too far apart to be one project.
+
+    Uses spatial median distance (robust against 1-2 mis-geocoded outliers) and prefers non-centroid coordinates
+    whenever a group has >= 2 non-centroid points.
+    - For 2-point groups: flags if pairwise distance > `max_pair_km` (median distance to midpoint > max_pair_km / 2).
+    - For >=3-point groups: flags if median distance from spatial median > `max_median_km`,
+      or (when `max_p75_km` is set and count >= `min_p75_count`) if 75th-percentile distance > `max_p75_km`.
+    """
+    if df is None or df.empty or lat_col not in df.columns or lon_col not in df.columns:
+        return set()
+
+    if isinstance(group_col, (list, tuple)):
+        cols_req = list(group_col)
+    else:
+        cols_req = [group_col]
+    if any(c not in df.columns for c in cols_req):
+        return set()
+
+    lat_s = pd.to_numeric(df[lat_col], errors='coerce')
+    lon_s = pd.to_numeric(df[lon_col], errors='coerce')
+    valid_geo = (
+        lat_s.notna()
+        & lon_s.notna()
+        & np.isfinite(lat_s)
+        & np.isfinite(lon_s)
+        & lat_s.between(5.0, 21.0)
+        & lon_s.between(97.0, 106.0)
+    )
+    if not valid_geo.any():
+        return set()
+
+    work = pd.DataFrame({'_lat': lat_s.loc[valid_geo].to_numpy(dtype='float64'), '_lon': lon_s.loc[valid_geo].to_numpy(dtype='float64')})
+    for c in cols_req:
+        s_c = df.loc[valid_geo, c]
+        if isinstance(s_c.dtype, pd.CategoricalDtype):
+            work[c] = s_c.astype(object).fillna('').astype(str).str.strip().to_numpy()
+        else:
+            work[c] = s_c.fillna('').astype(str).str.strip().to_numpy()
+    non_empty = np.ones(len(work), dtype=bool)
+    for c in cols_req:
+        non_empty &= (work[c].to_numpy() != '')
+    if not non_empty.any():
+        return set()
+    work = work.loc[non_empty].copy()
+
+    if centroid_col and centroid_col in df.columns:
+        c_raw = df.loc[valid_geo, centroid_col]
+        if pd.api.types.is_bool_dtype(c_raw.dtype):
+            is_cen = c_raw.fillna(False).to_numpy(dtype=bool)[non_empty]
+        else:
+            is_cen = c_raw.astype(object).fillna('').astype(str).str.strip().str.lower().isin({'true', '1', '1.0', 'yes', 't'}).to_numpy(dtype=bool)[non_empty]
+        work['_cen'] = is_cen
+        nc_counts = work.loc[~work['_cen']].groupby(cols_req, sort=False).size()
+        if len(nc_counts) > 0:
+            nc_multi_keys = set(nc_counts[nc_counts >= 2].index)
+            if nc_multi_keys:
+                if len(cols_req) == 1:
+                    in_nc_multi = work[cols_req[0]].isin(nc_multi_keys).to_numpy()
+                else:
+                    in_nc_multi = pd.MultiIndex.from_frame(work[cols_req]).isin(nc_multi_keys)
+                work = work.loc[(~work['_cen'].to_numpy()) | (~in_nc_multi)]
+
+    if work.empty:
+        return set()
+
+    grp_sizes = work.groupby(cols_req, sort=False)['_lat'].transform('size')
+    work = work.loc[grp_sizes >= 2]
+    if work.empty:
+        return set()
+
+    g = work.groupby(cols_req, sort=False)
+    med_lat = g['_lat'].transform('median').to_numpy(dtype='float64')
+    med_lon = g['_lon'].transform('median').to_numpy(dtype='float64')
+    dlat_km = (work['_lat'].to_numpy(dtype='float64') - med_lat) * 111.0
+    dlon_km = (work['_lon'].to_numpy(dtype='float64') - med_lon) * 111.0 * np.cos(np.radians(med_lat))
+    work = work.assign(_dist_km=np.hypot(dlat_km, dlon_km))
+
+    g2 = work.groupby(cols_req, sort=False)
+    cnts = g2['_dist_km'].count()
+    med_d = g2['_dist_km'].median()
+
+    pair_half_km = float(max_pair_km) / 2.0
+    scattered_mask = ((cnts == 2) & (med_d > pair_half_km)) | ((cnts >= 3) & (med_d > float(max_median_km)))
+    if max_p75_km is not None:
+        p75_d = g2['_dist_km'].quantile(0.75)
+        scattered_mask |= ((cnts >= int(min_p75_count)) & (p75_d > float(max_p75_km)))
+
+    return set(scattered_mask[scattered_mask].index.tolist())
 
 def clean_display_project_name(name):
     """Normalizes formatting of project names for beautiful, clean presentation without typos/punctuation noise."""

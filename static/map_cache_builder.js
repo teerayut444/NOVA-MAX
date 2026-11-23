@@ -61,6 +61,110 @@
     return '';
   }
 
+  const EXTRA_INVALID_PROJECT_TOKENS = new Set([
+    'ราคา', 'มิเนียม', 'จัดสรร', 'บ้านจัดสรร', 'ที่ดินจัดสรร', 'รายย่อย', 'เปล่า',
+    'ใหม่', 'ติด', 'ติดทะเล', 'ติดถนน', 'หรู', 'เทล', 'เอส', 'โฮม',
+    'ห้องสวย', 'ห้องใหญ่', 'ห้องมุม', 'หลังมุม', 'แปลงมุม', 'ถมแล้ว', 'วิวทะเล',
+    'ออมสิน', 'call', 'modern', 'tropical', 'boho style', 'low rise', 'high rise',
+    'ขนาดใหญ่', 'เลต', 'สอบถามโทร', 'บ้าน สตูดิโอ', 'สำหรับ ขาย คอนโด', 'สำหรับขายคอนโด',
+    'พร้อมสิ่งปลูกสร้าง', 'การเคหะ', 'การเคหะแห่งชาติ', 'in1'
+  ]);
+
+  const THAI_ZONE_LOCATION_TOKENS = new Set([
+    // Provinces & nicknames
+    'กรุงเทพ', 'กรุงเทพฯ', 'กรุงเทพมหานคร', 'กทม', 'กทม.', 'โคราช', 'อยุธยา', 'มหาชัย', 'แปดริ้ว', 'ปากน้ำ',
+    'กระบี่', 'กาญจนบุรี', 'กาฬสินธุ์', 'กำแพงเพชร', 'ขอนแก่น', 'จันทบุรี', 'ฉะเชิงเทรา', 'ชลบุรี',
+    'ชัยนาท', 'ชัยภูมิ', 'ชุมพร', 'เชียงราย', 'เชียงใหม่', 'ตรัง', 'ตราด', 'ตาก', 'นครนายก',
+    'นครปฐม', 'นครพนม', 'นครราชสีมา', 'นครศรีธรรมราช', 'นครสวรรค์', 'นนทบุรี', 'นราธิวาส', 'น่าน',
+    'บึงกาฬ', 'บุรีรัมย์', 'ปทุมธานี', 'ประจวบคีรีขันธ์', 'ปราจีนบุรี', 'ปัตตานี', 'พระนครศรีอยุธยา',
+    'พะเยา', 'พังงา', 'พัทลุง', 'พิจิตร', 'พิษณุโลก', 'เพชรบุรี', 'เพชรบูรณ์', 'แพร่', 'ภูเก็ต',
+    'มหาสารคาม', 'มุกดาหาร', 'แม่ฮ่องสอน', 'ยโสธร', 'ยะลา', 'ร้อยเอ็ด', 'ระนอง', 'ระยอง', 'ราชบุรี',
+    'ลพบุรี', 'ลำปาง', 'ลำพูน', 'เลย', 'ศรีสะเกษ', 'สกลนคร', 'สงขลา', 'สตูล', 'สมุทรปราการ',
+    'สมุทรสงคราม', 'สมุทรสาคร', 'สระแก้ว', 'สระบุรี', 'สิงห์บุรี', 'สุโขทัย', 'สุพรรณบุรี',
+    'สุราษฎร์ธานี', 'สุรินทร์', 'หนองคาย', 'หนองบัวลำภู', 'อ่างทอง', 'อำนาจเจริญ', 'อุดรธานี',
+    'อุตรดิตถ์', 'อุทัยธานี', 'อุบลราชธานี',
+    // Major tourist / regional zones
+    'พัทยา', 'บางแสน', 'สัตหีบ', 'ศรีราชา', 'แหลมฉบัง', 'บ้านบึง', 'บ่อวิน', 'ปลวกแดง', 'มาบตาพุด',
+    'จอมเทียน', 'นาเกลือ', 'หัวหิน', 'ชะอำ', 'ปราณบุรี', 'เขาใหญ่', 'ปากช่อง', 'สมุย', 'เกาะสมุย',
+    'ป่าตอง', 'กะทู้', 'ถลาง', 'กะรน', 'กมลา', 'ราไวย์', 'ฉลอง', 'หาดใหญ่', 'นิมมาน', 'แม่ริม',
+    'หางดง', 'สันทราย', 'สันกำแพง', 'สารภี', 'ดอยสะเก็ด',
+    'huahin', 'pattaya', 'bangsaen', 'samui', 'phuket', 'chiangmai', 'korat', 'rangsit', 'salaya',
+    'khonkaen', 'rayong', 'chonburi', 'prachuap', 'khiri', 'khan', 'naklua', 'jomtien', 'patong', 'hatyai',
+    // Bangkok & Vicinity roads, zones, transit hubs, landmarks
+    'สุขุมวิท', 'อโศก', 'ทองหล่อ', 'เอกมัย', 'พร้อมพงษ์', 'นานา', 'เพลินจิต', 'ชิดลม', 'วิทยุ', 'ราชดำริ', 'หลังสวน',
+    'พระโขนง', 'อ่อนนุช', 'บางจาก', 'ปุณณวิถี', 'อุดมสุข', 'บางนา', 'แบริ่ง', 'ลาซาล', 'สำโรง', 'เทพารักษ์',
+    'ศรีนครินทร์', 'พัฒนาการ', 'กิ่งแก้ว', 'บางพลี', 'บางปู', 'สุวรรณภูมิ', 'ลาดกระบัง', 'ร่มเกล้า', 'มีนบุรี',
+    'หนองจอก', 'คลองสามวา', 'ประเวศ', 'สวนหลวง',
+    'สีลม', 'สาทร', 'สาธร', 'ศาลาแดง', 'บางรัก', 'สี่พระยา', 'เจริญกรุง', 'เจริญนคร', 'คลองสาน',
+    'วงเวียนใหญ่', 'กรุงธนบุรี', 'ธนบุรี', 'ตลาดพลู', 'ท่าพระ', 'วุฒากาศ', 'บางหว้า', 'ตากสิน', 'พระราม',
+    'สาธุประดิษฐ์', 'ยานนาวา', 'บางคอแหลม', 'คลองเตย', 'กล้วยน้ำไท', 'ราษฎร์บูรณะ', 'สุขสวัสดิ์',
+    'ประชาอุทิศ', 'ทุ่งครุ', 'บางขุนเทียน', 'ท่าข้าม', 'เอกชัย', 'บางบอน', 'จอมทอง', 'กัลปพฤกษ์', 'กาญจนาภิเษก',
+    'สยาม', 'จุฬา', 'สามย่าน', 'ปทุมวัน', 'ราชเทวี', 'พญาไท', 'อนุสาวรีย์', 'อารีย์', 'สนามเป้า', 'สะพานควาย',
+    'จตุจักร', 'หมอชิต', 'ประดิพัทธ์', 'สุทธิสาร', 'อินทามระ', 'ดินแดง', 'ห้วยขวาง', 'รัชดา', 'รัชดาภิเษก',
+    'เพชรบุรี', 'เพชรบุรีตัดใหม่', 'rca', 'มักกะสัน', 'ประตูน้ำ', 'เยาวราช', 'บางลำพู', 'ปิ่นเกล้า',
+    'จรัญสนิทวงศ์', 'จรัญฯ', 'บางพลัด', 'บางอ้อ', 'บางโพ', 'บางซื่อ', 'เตาปูน', 'วงศ์สว่าง', 'ประชาชื่น',
+    'วิภาวดี', 'พหลโยธิน', 'รัชโยธิน', 'เกษตร', 'เกษตรศาสตร์', 'เสนานิคม', 'ลาดปลาเค้า', 'วังหิน',
+    'โชคชัย', 'ลาดพร้าว', 'แฮปปี้แลนด์', 'บางกะปิ', 'หัวหมาก', 'รามคำแหง', 'ลำสาลี', 'เสรีไทย', 'นิด้า',
+    'นวมินทร์', 'รามอินทรา', 'เลียบทางด่วน', 'เลียบทางด่วนรามอินทรา', 'เลียบด่วน', 'เลียบด่วนรามอินทรา',
+    'ประดิษฐ์มนูธรรม', 'วัชรพล', 'สายไหม', 'สุขาภิบาล', 'หทัยราษฎร์', 'คู้บอน', 'ปัญญาอินทรา',
+    'บางเขน', 'สะพานใหม่', 'ดอนเมือง', 'สรงประภา', 'หลักสี่', 'แจ้งวัฒนะ', 'เมืองทอง', 'ปากเกร็ด',
+    'ติวานนท์', 'งามวงศ์วาน', 'พงษ์เพชร', 'แคราย', 'รัตนาธิเบศร์', 'สนามบินน้ำ', 'พระนั่งเกล้า',
+    'บางใหญ่', 'บางบัวทอง', 'บางกรวย', 'ไทรน้อย', 'นครอินทร์', 'ตลิ่งชัน', 'ทวีวัฒนา', 'พุทธมณฑล',
+    'ศาลายา', 'บางแค', 'เพชรเกษม', 'หนองแขม', 'บางแวก', 'ภาษีเจริญ', 'พรานนก', 'ศิริราช', 'บรมราชชนนี',
+    'รังสิต', 'ธรรมศาสตร์', 'คลองหลวง', 'ธัญบุรี', 'ลำลูกกา', 'นวนคร', 'ตลาดไท', 'ฟิวเจอร์พาร์ค',
+    'เซ็นทรัลลาดพร้าว', 'เซ็นทรัลเวสต์เกต', 'เซ็นทรัลบางนา', 'เซ็นทรัลพระราม', 'เมกะบางนา',
+    'เดอะมอลล์บางกะปิ', 'เดอะมอลล์งามวงศ์วาน',
+    'ทางด่วน', 'ถนน', 'ซอย', 'แยก', 'คลอง', 'สาย', 'โซน', 'ย่าน', 'ฝั่งธน', 'ฝั่งธนบุรี',
+    'ใจกลางเมือง', 'ในเมือง', 'นอกเมือง',
+    'sukhumvit', 'asoke', 'asok', 'thonglor', 'ekkamai', 'ekamai', 'silom', 'sathorn', 'sathon',
+    'rama', 'ladprao', 'latphrao', 'ratchada', 'bangna', 'onnut', 'udomsuk', 'bearing', 'lasalle',
+    'ramintra', 'nawamin', 'ramkhamhaeng', 'pinklao', 'charan', 'ratchaphruek', 'chaengwattana',
+    'tiwanon', 'ngamwongwan', 'rattanathibet', 'phaholyothin', 'srinakarin', 'pattanakarn',
+    'phetkasem', 'bangkae', 'bangyai', 'bangbuathong', 'donmueang', 'lamlukka', 'saimai',
+    'minburi', 'latkrabang', 'prawet'
+  ]);
+  const AMBIGUOUS_SINGLE_LOCATION_NAMES = new Set(['เมืองทอง', 'บางแสน', 'สุขสวัสดิ์', 'เกษตร', 'นานา', 'บางพระ', 'ศรีสุนทร']);
+  const PROTECTED_ESTATE_BRAND_PREFIXES = new Set(['ชัยพฤกษ์', 'ราชพฤกษ์', 'บัวทอง', 'ลุมพินี', 'เมืองทอง']);
+  const ROAD_WITH_NUM_RE = /^(?:พระราม\s*[1-9]|โชคชัย\s*4|ลาดพร้าว\s*\d+|สุขุมวิท\s*\d+|พหลโยธิน\s*\d+|รามคำแหง\s*\d+|เพชรเกษม\s*\d+|รัชดา(?:ภิเษก)?\s*\d+|จรัญ(?:สนิทวงศ์)?\s*\d+|อ่อนนุช\s*\d+|บางนา[\s\-]*ตราด(?:\s*กม\.?\s*\d+)?|huahin\s*\d+|หัวหิน\s*\d+|สุขาภิบาล\s*\d+|พุทธมณฑล\s*สาย\s*\d+|สาย\s*\d+)$/i;
+
+  function isPureLocationProjectName(name) {
+    if (!name) return false;
+    let s = name.toString().trim().replace(/^['"“‘\s]+|['"”’\s]+$/g, '');
+    if (!s) return false;
+    // Protect real numbered-address condos e.g. '185 ราชดำริ', '28 ชิดลม', '168 สุขุมวิท 36'
+    if (/^\d{2,4}\s+[ก-๙a-zA-Z]/.test(s)) return false;
+    if (ROAD_WITH_NUM_RE.test(s)) return true;
+
+    const rawTokens = s.split(/[\s\-–—/,|&]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
+    if (rawTokens.length === 0) return false;
+
+    const nonNum = [];
+    let hasNum = false;
+    for (let i = 0; i < rawTokens.length; i++) {
+      const tok = rawTokens[i];
+      if (/^\d+[a-z]?$/i.test(tok)) {
+        hasNum = true;
+        continue;
+      }
+      const tc = tok.replace(/^(?:จ\.|จังหวัด|อ\.|อำเภอ|เขต|ต\.|ตำบล|แขวง|ถ\.|ถนน|ซ\.|ซอย|แยก|ย่าน|โซน)/, '').trim();
+      if (tc) nonNum.push(tc);
+    }
+    if (nonNum.length === 0) return false;
+
+    if (nonNum.length === 1 && !hasNum) {
+      return THAI_ZONE_LOCATION_TOKENS.has(nonNum[0]) && !AMBIGUOUS_SINGLE_LOCATION_NAMES.has(nonNum[0]);
+    }
+    if (nonNum.length >= 2) {
+      if (PROTECTED_ESTATE_BRAND_PREFIXES.has(nonNum[0])) return false;
+      for (let i = 0; i < nonNum.length; i++) {
+        const tk = nonNum[i];
+        if (tk !== 'ราชพฤกษ์' && !THAI_ZONE_LOCATION_TOKENS.has(tk)) return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
   function isInvalidProjectName(p) {
     if (!p) return true;
     let s = p.toString().trim();
@@ -95,20 +199,24 @@
       sLower === 'ตึก' ||
       sLower === 'ทาวน์เฮ้าส์' ||
       sLower === 'อพาร์ทเม้นท์' ||
-      sLower === 'อาคารชุด'
+      sLower === 'อาคารชุด' ||
+      EXTRA_INVALID_PROJECT_TOKENS.has(sLower)
     ) {
       return true;
     }
     if (s.length <= 2) return true;
+    if (/^@[a-zA-Z0-9_.\-]+/.test(s)) return true;
+    if (/(?:สถาบัน|ถาบัน|าบัน|บัน)?(?:โดย|ดย)\s*(?:ghb|gsb|bam|sam|ktb|scb|kbank)\b/i.test(s)) return true;
+    if (/^(?:สำหรับ\s*ขาย|สอบถาม|ติดต่อ|วิวทะเล|วิวเขา|พร้อมที่ดิน|พร้อมสิ่งปลูกสร้าง|บ้าน\s*สตูดิโอ|\+\s*บ้าน|private\s+house\b|pool\s+villa\b|house\s+for\s+sale\b|condo\s+for\s+sale\b)/i.test(s)) return true;
     if (/^-?\d{1,2}\.\d+[\s,]+-?\d{2,3}\.\d+$/.test(s)) return true;
     if (/^[\d.,/\s-]+$/.test(s)) return true;
-    if (/^(บ้านเดี่ยว|บ้านแฝด|บ้าน|ทาวน์โฮม|ทาวน์เฮ้าส์|คอนโด|ห้องชุด|ที่ดิน|อาคารพาณิชย์|ตึกแถว)\s*\d+$/i.test(s)) return true;
-    if (/^(?:บ้านเดี่ยว|บ้านแฝด|บ้านตึก|บ้านไม้|บ้านครึ่งตึกครึ่งไม้|บ้าน|ทาวน์เฮ้าส์|ทาวน์โฮม|ทาวเฮ้าส์|ทาวน์ฮ้าส์|ตึกแถว|อาคารพาณิชย์|อาคารโกดัง|วิลล่า|คอนโด)?\s*\d+(?:\.\d+)?\s*ชั้น(?:$|\s|ครึ่ง|[0-9])/i.test(s)) return true;
+    if (/^(บ้านเดี่ยว|บ้านแฝด|บ้าน|ทาวน์โฮม|ทาวน์เฮ้าส์|ทาวน์เฮาท์|คอนโด|ห้องชุด|ที่ดิน|อาคารพาณิชย์|ตึกแถว|เดี่ยว|เฮ้าส์|เฮาส์|เฮาท์|พาณิชย์|แฝด|แถว)\s*\d+(?:\s*-?\s*(?:ห้องนอน|ห้องน้ำ|ชั้น))?$/i.test(s)) return true;
+    if (/^(?:บ้านเดี่ยว|บ้านแฝด|บ้านตึก|บ้านไม้|บ้านครึ่งตึกครึ่งไม้|บ้าน|ทาวน์เฮ้าส์|ทาวน์โฮม|ทาวเฮ้าส์|ทาวน์ฮ้าส์|ทาวน์เฮาท์|ตึกแถว|อาคารพาณิชย์|อาคารโกดัง|วิลล่า|คอนโด)?\s*\d+(?:\.\d+)?\s*ชั้น(?:$|\s|ครึ่ง|[0-9])/i.test(s)) return true;
     if (/^\d{5}\s*(?:บ้าน|ทาวน์|อาคาร|ที่ดิน|คอนโด|เดอะ|มบ\.|หมู่บ้าน|ทาวเฮ้าส์)/i.test(s)) return true;
     if (/^\d+[\d.,/-]*\s*(?:ตร\.?ว\.?|ตร\.?ม\.?|ตารางวา|ตารางเมตร|ไร่|วา)(?:$|\s|\d)/i.test(s)) return true;
-    if (/^(?:ใกล้|ติด)\s*(?:bts|mrt|แอร์พอร์ต|ทางด่วน|ถนน|สถานี|ห้าง)/i.test(s)) return true;
+    if (/^(?:ใกล้|ติด)\s*(?:bts|mrt|แอร์พอร์ต|ทางด่วน|ถนน|สถานี|ห้าง|รถไฟฟ้า|ทะเล|หาด)/i.test(s)) return true;
     if (/^\d+\s*ห้อง(นอน)?(\s*\d+\s*ห้องน้ำ)?\s*$/i.test(s) || /^(สตูดิโอ|ห้องนอน|ห้องน้ำ|studio)\s*$/i.test(s) || /^\d+\s*bed(room)?s?\s*$/i.test(s)) return true;
-    if (/(?:\d+\s*(?:ห้องนอน|ห้องน้ำ)|\d+\s*นอน\s*\d+\s*น้ำ|ห้อง(?:นอน|น้ำ)?\s*\d+\s*ห้อง)/i.test(s)) return true;
+    if (/(?:\d+\s*-?\s*(?:ห้องนอน|ห้องน้ำ)|\d+\s*นอน\s*\d+\s*น้ำ|ห้อง(?:นอน|น้ำ)?\s*\d+\s*ห้อง)/i.test(s)) return true;
     if (/^(?:ขายด่วน|ขายถูก|ขายบ้าน|ขายคอนโด|ให้เช่า|ต้องการขาย|ลดราคา|ขาย|เช่า|เซ้ง|ด่วน)(?:\s|$|[ก-๙0-9])/i.test(s)) return true;
     if (/ขาย(?:คอนโด|บ้าน|ทาวน์|ที่ดิน)/i.test(s)) return true;
     if (/(?:ราคา|ขายเพียง|ลดเหลือ|ผ่อนเพียง|ตรว\.ละ|วาละ|ขาย|เช่า)\s*\d+(?:\.\d+)?\s*(?:ลบ|ล้าน|แสน|บาท|บ(?:\.|\s|$))/i.test(s)) return true;
@@ -117,7 +225,45 @@
     if (/\d+[\d.,]*\s*(?:ตร\.?ว\.?|ตร\.?ม\.?|ตารางวา|ตารางเมตร)(?:$|\s|\d)/i.test(s) && s.length > 15) return true;
     if (/ใน(?:อำเภอ|อ\.)\s*[ก-๙]+/i.test(s) && /ราคา/i.test(s)) return true;
     if (/(?:พร้อมอยู่|ตกแต่งครบ|เฟอร์นิเจอร์|ฟรีโอน|วิวสวย|วิวทะเล|วิวสระ|ทำเลทอง)/i.test(s) && s.length > 20) return true;
+    if (isPureLocationProjectName(s)) return true;
     return false;
+  }
+
+  function _medianNum(arr) {
+    const n = arr.length;
+    if (n === 0) return 0;
+    const sorted = arr.slice().sort((a, b) => a - b);
+    const mid = Math.floor(n / 2);
+    return n % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  function isSpatiallyScatteredGroup(items, maxMedianKm = 5.0, maxPairKm = 10.0) {
+    if (!items || items.length < 2) return false;
+    const allPts = [];
+    const ncPts = [];
+    for (let i = 0; i < items.length; i++) {
+      const d = items[i];
+      const lat = +d.lat;
+      const lon = +d.lon;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < 5.0 || lat > 21.0 || lon < 97.0 || lon > 106.0) continue;
+      const pt = [lat, lon];
+      allPts.push(pt);
+      if (String(d._centroid || '') !== '1') ncPts.push(pt);
+    }
+    const pts = ncPts.length >= 2 ? ncPts : allPts;
+    if (pts.length < 2) return false;
+
+    const lats = pts.map(pt => pt[0]);
+    const lons = pts.map(pt => pt[1]);
+    const medLat = _medianNum(lats);
+    const medLon = _medianNum(lons);
+    const cosLat = Math.cos((medLat * Math.PI) / 180.0);
+    const dists = pts.map(pt => Math.hypot((pt[0] - medLat) * 111.0, (pt[1] - medLon) * 111.0 * cosLat));
+    const medDist = _medianNum(dists);
+    if (pts.length === 2) {
+      return medDist > maxPairKm / 2.0;
+    }
+    return medDist > maxMedianKm;
   }
 
   function cleanDisplayProjectName(name) {
@@ -514,7 +660,7 @@
     const prjStatsDict = (lutObj && lutObj.prj_stats) || {};
     const samStatsArr = (lutObj && Array.isArray(lutObj.sam_stats)) ? lutObj.sam_stats : null;
     const otherStatsArr = (lutObj && Array.isArray(lutObj.other_stats)) ? lutObj.other_stats : null;
-    const _isValidPrjEntry = (p) => !!(p && p !== '-' && p !== 'ไม่มีข้อมูล' && p !== 'ไม่ระบุ' && p.length > 1);
+    const _isValidPrjEntry = (p) => !!(p && p !== '-' && p !== 'ไม่มีข้อมูล' && p !== 'ไม่ระบุ' && p.length > 1 && !isInvalidProjectName(p));
 
     // Fast path: pre-computed structured project inventory from backend lookup
     if (rawSamPrj && Array.isArray(rawSamPrj) && rawSamPrj.length > 0) {
@@ -558,11 +704,18 @@
         for (let i = 0; i < data.length; i++) {
           const d = data[i];
           const p = (d._project || '').trim();
-          if (!p || p === '-' || p === 'ไม่มีข้อมูล' || p.length <= 1) continue;
+          if (!p || p === '-' || p === 'ไม่มีข้อมูล' || p.length <= 1 || isInvalidProjectName(p)) {
+            d._normKey = '';
+            continue;
+          }
           let nk = globalProjToNormMap.get(p);
           if (nk === undefined) {
             nk = normalizeProjectKeyword(p);
             globalProjToNormMap.set(p, nk);
+          }
+          if (!nk || !normKeyToCanonicalMap.has(nk)) {
+            d._normKey = '';
+            continue;
           }
           d._normKey = nk;
           _indexProjectItemCo(
@@ -603,11 +756,7 @@
         const d = data[i];
         const p = (d._project || '').trim();
         const isSam = (d._company || '').toString().trim().toUpperCase() === 'SAM';
-        if (!isSam && isInvalidProjectName(p)) {
-          d._normKey = '';
-          continue;
-        }
-        if (isSam && (!p || p === '-' || p === 'ไม่มีข้อมูล' || p === 'ไม่ระบุ' || p === 'null' || p === 'undefined' || p.length <= 1)) {
+        if (isInvalidProjectName(p)) {
           d._normKey = '';
           continue;
         }
@@ -650,6 +799,14 @@
       const seenCanonicalNames = new Set();
 
       normKeyGroups.forEach((grp, nk) => {
+        const nkItems = globalNormToItemsMap.get(nk);
+        if (nkItems && isSpatiallyScatteredGroup(nkItems, 5.0, 10.0)) {
+          for (let j = 0; j < nkItems.length; j++) nkItems[j]._normKey = '';
+          globalNormToItemsMap.delete(nk);
+          globalNormToCompaniesMap.delete(nk);
+          projCompanyCountsMap.delete(nk);
+          return;
+        }
         let bestRaw = '';
         let bestCount = -1;
         if (grp.samRaws.size > 0) {
@@ -1842,7 +1999,9 @@
   // Expose legacy global symbol names so map_template.html has zero duplicate definitions
   global.BRAND_TAG_RULES = BRAND_TAG_RULES;
   global.getBrandSearchTag = getBrandSearchTag;
+  global.isPureLocationProjectName = isPureLocationProjectName;
   global.isInvalidProjectName = isInvalidProjectName;
+  global.isSpatiallyScatteredGroup = isSpatiallyScatteredGroup;
   global.cleanDisplayProjectName = cleanDisplayProjectName;
   global.normalizeProjectKeyword = normalizeProjectKeyword;
   global.decompressGzip = decompressGzip;

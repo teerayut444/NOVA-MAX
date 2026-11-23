@@ -558,6 +558,7 @@ def _get_sam_project_options_cached(_df, cache_key=None):
         normalize_project_name,
         get_brand_search_tag,
         clean_display_project_name,
+        find_spatially_scattered_project_keys,
     )
 
     has_norm_col = 'norm_project_name' in _df.columns
@@ -570,6 +571,33 @@ def _get_sam_project_options_cached(_df, cache_key=None):
 
     if pair_vc.empty:
         return [], {}, [], [], {}
+
+    # Layer 2: Reject project names whose properties are scattered too far apart (>5km median / >10km pair)
+    scattered_nks = set()
+    if 'ละติจูด' in _df.columns and 'ลองจิจูด' in _df.columns:
+        if has_norm_col:
+            scattered_nks = find_spatially_scattered_project_keys(
+                _df,
+                group_col='norm_project_name',
+                max_median_km=5.0,
+                max_pair_km=10.0,
+            )
+        else:
+            u_raw_p = _df['ชื่อโครงการ'].dropna().unique()
+            tmp_norm_map = {p: normalize_project_name(p) for p in u_raw_p if p}
+            tmp_nk_df = pd.DataFrame({
+                '_nk': _df['ชื่อโครงการ'].map(tmp_norm_map).fillna(''),
+                'ละติจูด': _df['ละติจูด'],
+                'ลองจิจูด': _df['ลองจิจูด'],
+            })
+            if 'is_centroid' in _df.columns:
+                tmp_nk_df['is_centroid'] = _df['is_centroid']
+            scattered_nks = find_spatially_scattered_project_keys(
+                tmp_nk_df,
+                group_col='_nk',
+                max_median_km=5.0,
+                max_pair_km=10.0,
+            )
 
     sam_counts = {}
     comp_counts = {}
@@ -586,7 +614,7 @@ def _get_sam_project_options_cached(_df, cache_key=None):
             if not p or p in _INVALID_STR_TOKENS:
                 continue
             nk = str(raw_nk).strip()
-            if len(nk) <= 2 or nk in _INVALID_STR_TOKENS:
+            if len(nk) <= 2 or nk in _INVALID_STR_TOKENS or nk in scattered_nks:
                 continue
             inv = invalid_cache.get(p)
             if inv is None:
@@ -627,7 +655,7 @@ def _get_sam_project_options_cached(_df, cache_key=None):
             if nk is None:
                 nk = normalize_project_name(p)
                 norm_cache[p] = nk
-            if len(nk) <= 2:
+            if len(nk) <= 2 or nk in scattered_nks:
                 continue
             cnt_i = int(cnt)
             raw_counts[p] = raw_counts.get(p, 0) + cnt_i

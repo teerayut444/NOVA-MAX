@@ -1648,6 +1648,12 @@ function filterItemPasses(d, excludeAxis) {
     if (!p || p === '-' || p === 'ไม่มีข้อมูล' || p === 'ไม่ระบุ' || p === 'null' || isInvalidProjectName(p)) {
       return false;
     }
+    if (normKeyToCanonicalMap && normKeyToCanonicalMap.size > 0) {
+      const nk = d._normKey;
+      if (!nk || !normKeyToCanonicalMap.has(nk)) {
+        return false;
+      }
+    }
     if (excludeAxis !== 'company' && inMapFilterState.companies && inMapFilterState.companies.size >= 2) {
       if (!isProjectMatchingCompanySharing(d)) return false;
     }

@@ -71,6 +71,18 @@ __all__ = [
 fragment_decorator = getattr(st, "fragment", lambda f: f)
 
 
+@st.cache_resource(show_spinner=False, max_entries=2)
+def _get_scattered_project_nks_cached(_df, cache_key=None):
+    """Cached computation of spatially scattered normalized project keys for Tab 2 'มีโครงการ' parity."""
+    from modules.services.data_cleaner import find_spatially_scattered_project_keys
+    return find_spatially_scattered_project_keys(
+        _df,
+        group_col='norm_project_name',
+        max_median_km=5.0,
+        max_pair_km=10.0,
+    )
+
+
 @fragment_decorator
 def render_tab2_reference_analytics_fragment(
     df_raw,
@@ -384,14 +396,35 @@ def render_tab2_reference_analytics_fragment(
                 status_df = status_df[(age_series >= 0) & (age_series <= map_max_age)]
 
             if q_only_proj and 'ชื่อโครงการ' in status_df.columns and not status_df.empty:
+                from modules.services.data_cleaner import (
+                    is_invalid_project_name,
+                    find_spatially_scattered_project_keys,
+                )
                 proj_col = 'ชื่อโครงการ'
                 p_str = status_df[proj_col].astype(object).fillna('').astype(str).str.strip()
-                valid_proj_mask = (
-                    status_df[proj_col].notna()
-                    & (p_str.str.len() > 1)
-                    & (~p_str.isin(['-', 'ไม่มีข้อมูล', 'ไม่ระบุ', 'ว่าง', 'โครงการ', 'ห้องชุด', 'อาคารชุด', 'บ้านพักอาศัย', 'null', 'None']))
-                )
+                u_p_vals = p_str.unique()
+                inv_p_set = {v for v in u_p_vals if not v or v == '-' or is_invalid_project_name(v)}
+                valid_proj_mask = status_df[proj_col].notna() & (~p_str.isin(inv_p_set))
                 status_df = status_df[valid_proj_mask]
+
+                # Exclude spatially scattered project keys (aligned with Map Project Index)
+                if not status_df.empty and 'ละติจูด' in status_df.columns and 'ลองจิจูด' in status_df.columns:
+                    if 'norm_project_name' in status_df.columns:
+                        _nk_col = status_df['norm_project_name'].astype(object).fillna('').astype(str).str.strip()
+                    else:
+                        _u_p2 = status_df[proj_col].dropna().unique()
+                        _nk_col = status_df[proj_col].map({v: normalize_project_name(v) for v in _u_p2 if v}).fillna('')
+                    _scat_src = df_raw if (df_raw is not None and not df_raw.empty and 'norm_project_name' in df_raw.columns) else status_df
+                    if 'norm_project_name' in _scat_src.columns:
+                        _scat_nks = _get_scattered_project_nks_cached(
+                            _scat_src,
+                            cache_key=(_get_mtime_t2(), len(_scat_src)),
+                        )
+                    else:
+                        _tmp_sc = pd.DataFrame({'_nk': _nk_col, 'ละติจูด': status_df['ละติจูด'], 'ลองจิจูด': status_df['ลองจิจูด']})
+                        _scat_nks = find_spatially_scattered_project_keys(_tmp_sc, group_col='_nk', max_median_km=5.0, max_pair_km=10.0)
+                    if _scat_nks:
+                        status_df = status_df[~_nk_col.isin(_scat_nks)]
 
                 if map_cos and len(map_cos) >= 2 and 'บริษัท' in status_df.columns and not status_df.empty:
                     df_cos_proj = status_df[status_df['บริษัท'].isin(map_cos)].copy()
