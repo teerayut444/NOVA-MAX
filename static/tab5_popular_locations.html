@@ -45,6 +45,8 @@
         .fa-expand::before { content: "\f065"; }
         .fa-filter-circle-xmark::before { content: "\e17b"; }
         .fa-chevron-down::before { content: "\f078"; }
+        .fa-percent::before { content: "\25"; }
+        .fa-bullseye::before { content: "\f140"; }
 
         :root {
             --bg-body: #0b1120;
@@ -95,8 +97,8 @@
 
         #kpi-bar {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 10px;
             padding: 2px 2px 10px 2px;
             flex-shrink: 0;
         }
@@ -426,8 +428,10 @@
         .lb-card-body { flex: 1; min-width: 0; }
         .lb-card-title { font-weight: 600; font-size: 0.9rem; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
         .lb-card-loc { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 6px; }
-        .lb-card-footer { display: flex; align-items: center; justify-content: space-between; font-size: 0.75rem; }
-        .metric-pill { font-weight: 700; color: var(--accent); background: var(--badge-bg); padding: 3px 8px; border-radius: 6px; }
+        .lb-card-footer { display: flex; align-items: center; justify-content: space-between; font-size: 0.75rem; gap: 6px; flex-wrap: wrap; }
+        .lb-card-submetrics { font-size: 0.71rem; color: var(--text-muted); margin-bottom: 5px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+        .metric-pill { font-weight: 700; color: var(--accent); background: var(--badge-bg); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+        .metric-pill.ctr-pill { color: #a855f7; background: rgba(168, 85, 247, 0.14); }
         .units-pill { color: var(--text-muted); }
 
         .lb-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
@@ -466,7 +470,7 @@
         .popup-title { font-weight: 700; font-size: 1rem; color: var(--text-main); margin-bottom: 2px; }
         .popup-loc { font-size: 0.75rem; color: var(--text-muted); }
         .popup-body { padding: 14px 16px; }
-        .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+        .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
         .stat-box { background: rgba(0, 0, 0, 0.12); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; text-align: center; }
         body.light-theme .stat-box { background: rgba(0,0,0,0.03); }
         .stat-box-val { font-size: 1rem; font-weight: 700; color: var(--accent); }
@@ -502,6 +506,9 @@
                 grid-template-columns: repeat(2, minmax(0, 1fr));
                 gap: 8px;
                 padding: 2px 2px 8px 2px;
+            }
+            #kpi-bar .kpi-card:last-child {
+                grid-column: 1 / -1;
             }
             .kpi-card {
                 padding: 9px 11px;
@@ -576,6 +583,15 @@
             <div class="kpi-label" id="kpi-med-cd-lbl">ยอดคลิกมัธยฐาน (Median คลิก/วัน)</div>
         </div>
     </div>
+    <div class="kpi-card">
+        <div class="kpi-icon" style="background: rgba(168, 85, 247, 0.15); color: #a855f7;">
+            <i class="fa-solid fa-percent"></i>
+        </div>
+        <div style="min-width: 0;">
+            <div class="kpi-val" id="kpi-med-ctr" style="color: #a855f7;">MED_CTR_PLACEHOLDER</div>
+            <div class="kpi-label" id="kpi-med-ctr-lbl">สัดส่วนคลิก/ชม มัธยฐาน (Median CTR)</div>
+        </div>
+    </div>
 </div>
 
 <div id="app-layout">
@@ -584,19 +600,12 @@
         <div id="in-map-panel">
             <div class="control-row" style="justify-content: space-between;">
                 <div class="pill-group" id="metric-group">
-                    <button class="pill-btn active" data-metric="vd">
-                        <i class="fa-solid fa-eye"></i> ยอดเข้าชม (Views)
+                    <button class="pill-btn active" data-metric="pop" title="คะแนนความนิยม 0–100 จากทั้งยอดเข้าชมและยอดคลิกสูงควบคู่กัน (Log Geometric Mean เทียบทั้งประเทศ)">
+                        <i class="fa-solid fa-fire"></i> ยอดนิยม (วิว+คลิก)
                     </button>
-                    <button class="pill-btn" data-metric="cd">
-                        <i class="fa-solid fa-arrow-pointer"></i> ยอดคลิก (Clicks)
+                    <button class="pill-btn" data-metric="ctr" title="สัดส่วนยอดคลิกต่อยอดเข้าชม (CTR %) ปรับสมดุลด้วย Bayesian Smoothing และจำกัดไม่เกิน 100%">
+                        <i class="fa-solid fa-bullseye"></i> สัดส่วนคลิก/ชม (CTR)
                     </button>
-                </div>
-
-                <div class="pill-group" id="interval-group">
-                    <button class="pill-btn active" data-mult="1">ต่อวัน</button>
-                    <button class="pill-btn" data-mult="7">ต่อสัปดาห์</button>
-                    <button class="pill-btn" data-mult="30">ต่อเดือน</button>
-                    <button class="pill-btn" data-mult="365">ต่อปี</button>
                 </div>
 
                 <div class="pill-group">
@@ -636,7 +645,7 @@
 
         <div id="heat-legend">
             <div class="heat-legend-title" id="heat-legend-title">
-                <i class="fa-solid fa-fire" style="color: #ef4444;"></i> ความร้อน: ยอดเข้าชม (ต่อวัน)
+                <i class="fa-solid fa-fire" style="color: #ef4444;"></i> ความร้อน: ยอดนิยม (คะแนน 0–100)
             </div>
             <div class="heat-legend-bar"></div>
             <div class="heat-legend-labels">
@@ -704,8 +713,7 @@
     annotateRegions(ALL_PROJECTS);
 
     // 2. State
-    let activeMetric = 'vd';
-    let activeMultiplier = 1;
+    let activeMetric = 'pop';
     let activeRegion = '';
     let activeProv = '';
     let activeType = '';
@@ -1012,16 +1020,21 @@
         return '';
     }
 
-    function getIntervalText() {
-        if (activeMultiplier === 7) return 'ต่อสัปดาห์';
-        if (activeMultiplier === 30) return 'ต่อเดือน';
-        if (activeMultiplier === 365) return 'ต่อปี';
-        return 'ต่อวัน';
+    function fmtScore(n) {
+        if (n === null || n === undefined || isNaN(n)) return '0.0';
+        return Number(n).toLocaleString('th-TH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    }
+
+    function getMetricName() {
+        return activeMetric === 'ctr' ? 'สัดส่วนคลิก/ชม (CTR)' : 'ยอดนิยม (วิว+คลิก)';
     }
 
     function getMetricLabel() {
-        const mText = activeMetric === 'vd' ? 'ยอดเข้าชม' : 'ยอดคลิก';
-        return `${mText} (${getIntervalText()})`;
+        return activeMetric === 'ctr' ? 'สัดส่วนคลิก/ชม (CTR %)' : 'คะแนนยอดนิยม (0–100)';
+    }
+
+    function formatMetricValue(val) {
+        return activeMetric === 'ctr' ? `${fmtScore(val)}%` : `${fmtScore(val)} คะแนน`;
     }
 
     function markerKey(p) {
@@ -1138,17 +1151,19 @@
         let sumUnits = 0;
         const vdList = [];
         const cdList = [];
+        const ctrList = [];
 
         for (let i = 0; i < filtered.length; i++) {
             const p = filtered[i];
             sumUnits += (p.units || 0);
-            if (p.vd !== null && p.vd !== undefined) vdList.push(p.vd * activeMultiplier);
-            if (p.cd !== null && p.cd !== undefined) cdList.push(p.cd * activeMultiplier);
+            if (p.vd !== null && p.vd !== undefined) vdList.push(Number(p.vd));
+            if (p.cd !== null && p.cd !== undefined) cdList.push(Number(p.cd));
+            if (p.ctr !== null && p.ctr !== undefined) ctrList.push(Number(p.ctr));
         }
 
         const medVd = calcMedian(vdList);
         const medCd = calcMedian(cdList);
-        const tShort = getIntervalText().replace('ต่อ', '');
+        const medCtr = calcMedian(ctrList);
 
         document.getElementById('kpi-projects').textContent = totalProj.toLocaleString('th-TH');
         let scopeText = `${provCount} จังหวัด`;
@@ -1158,22 +1173,28 @@
 
         document.getElementById('kpi-units').textContent = sumUnits.toLocaleString('th-TH');
         document.getElementById('kpi-med-vd').textContent = medVd.toLocaleString('th-TH', {
-            minimumFractionDigits: activeMultiplier === 1 ? 1 : 0,
-            maximumFractionDigits: activeMultiplier >= 30 ? 0 : 1
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1
         });
-        document.getElementById('kpi-med-vd-lbl').textContent = `ยอดเข้าชมมัธยฐาน (Median วิว/${tShort})`;
+        document.getElementById('kpi-med-vd-lbl').textContent = 'ยอดเข้าชมมัธยฐาน (Median วิว/วัน)';
 
         document.getElementById('kpi-med-cd').textContent = medCd.toLocaleString('th-TH', {
-            minimumFractionDigits: activeMultiplier === 1 ? 2 : 0,
-            maximumFractionDigits: activeMultiplier === 1 ? 2 : 1
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
         });
-        document.getElementById('kpi-med-cd-lbl').textContent = `ยอดคลิกมัธยฐาน (Median คลิก/${tShort})`;
+        document.getElementById('kpi-med-cd-lbl').textContent = 'ยอดคลิกมัธยฐาน (Median คลิก/วัน)';
+
+        const ctrValEl = document.getElementById('kpi-med-ctr');
+        if (ctrValEl) {
+            ctrValEl.textContent = `${medCtr.toLocaleString('th-TH', {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1
+            })}%`;
+        }
     }
 
     function createMarker(p, normScore) {
-        const rad = activeProv
-            ? Math.min(18, Math.max(6, Math.log10(Math.max(1, p._score)) * 4.5))
-            : Math.round(6 + Math.min(1, Math.max(0, normScore)) * 9);
+        const rad = Math.round(6 + Math.min(1, Math.max(0, normScore)) * 9);
         const color = normScore >= 0.65 ? '#ef4444' : (normScore >= 0.35 ? '#fbbf24' : '#38bdf8');
 
         const marker = L.circleMarker([p.lat, p.lon], {
@@ -1192,8 +1213,10 @@
         const safeStartDt = escHtml(p.start_dt || '-');
         const safeEndDt = escHtml(p.end_dt || '-');
         const safeLink = safeUrl(p.link);
+        const popVal = Number(p.pop || 0);
+        const ctrVal = Number(p.ctr || 0);
 
-        marker.bindTooltip(`<strong>${safeName}</strong><br>${safeProv} • ${fmtNum(p._score)} ${getMetricLabel()} • ${p.units} ประกาศ`, {
+        marker.bindTooltip(`<strong>${safeName}</strong><br>${safeProv} • ยอดนิยม ${fmtScore(popVal)} • CTR ${fmtScore(ctrVal)}% • ${p.units} ประกาศ`, {
             direction: 'top',
             offset: [0, -rad]
         });
@@ -1208,12 +1231,16 @@
             <div class="popup-body">
                 <div class="stat-grid">
                     <div class="stat-box">
-                        <div class="stat-box-val">${fmtNum(p._score)}</div>
-                        <div class="stat-box-lbl">${getMetricLabel()}</div>
+                        <div class="stat-box-val" style="color: #f97316;">${fmtScore(popVal)}</div>
+                        <div class="stat-box-lbl">ยอดนิยม / 100</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-box-val" style="color: #a855f7;">${fmtScore(ctrVal)}%</div>
+                        <div class="stat-box-lbl">คลิก/ชม (CTR)</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-box-val">${p.units}</div>
-                        <div class="stat-box-lbl">จำนวนยูนิตในโครงการ</div>
+                        <div class="stat-box-lbl">ยูนิตในโครงการ</div>
                     </div>
                 </div>
                 <table class="popup-table">
@@ -1248,17 +1275,28 @@
                 ${safeLink ? `<a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="popup-btn" style="color: #ffffff !important; -webkit-text-fill-color: #ffffff !important;"><i class="fa-solid fa-arrow-up-right-from-square" style="color: #ffffff !important; -webkit-text-fill-color: #ffffff !important;"></i> ดูประกาศบน Livinginsider</a>` : ''}
             </div>
         `;
-        marker.bindPopup(popupHtml, { maxWidth: 320 });
+        marker.bindPopup(popupHtml, { maxWidth: 330 });
         return marker;
     }
 
-    function createProjectCard(p, rank, pName) {
+    function createProjectCard(p, rank) {
         const rankCls = rank === 1 ? 'rank-1' : (rank === 2 ? 'rank-2' : (rank === 3 ? 'rank-3' : ''));
-        const metricUnit = activeMetric === 'vd' ? 'วิว' : 'คลิก';
         const safeName = escHtml(p.name);
         const safeDist = escHtml(p.dist);
         const safeProv = escHtml(p.prov);
         const safeStartDt = escHtml(p.start_dt || '-');
+        const popVal = Number(p.pop || 0);
+        const ctrVal = Number(p.ctr || 0);
+        const vdVal = Number(p.vd || 0);
+        const cdVal = Number(p.cd || 0);
+
+        const primaryPillHtml = activeMetric === 'ctr'
+            ? `<span class="metric-pill ctr-pill">🎯 ${fmtScore(ctrVal)}% CTR</span>`
+            : `<span class="metric-pill">🔥 ${fmtScore(popVal)} คะแนน</span>`;
+
+        const secondaryLineHtml = activeMetric === 'ctr'
+            ? `<span><i class="fa-solid fa-fire" style="color: #f97316;"></i> ยอดนิยม <strong>${fmtScore(popVal)}</strong></span> • <span>${fmtNum(vdVal)} วิว/วัน</span> • <span>${fmtNum(cdVal, 2)} คลิก/วัน</span>`
+            : `<span><i class="fa-solid fa-bullseye" style="color: #a855f7;"></i> CTR <strong>${fmtScore(ctrVal)}%</strong></span> • <span>${fmtNum(vdVal)} วิว/วัน</span> • <span>${fmtNum(cdVal, 2)} คลิก/วัน</span>`;
 
         const card = document.createElement('div');
         card.className = 'lb-card';
@@ -1267,12 +1305,13 @@
             <div class="lb-card-body">
                 <div class="lb-card-title" title="${safeName}">${safeName}</div>
                 <div class="lb-card-loc"><i class="fa-solid fa-location-dot"></i> ${safeDist}, ${safeProv}</div>
-                <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 5px; display: flex; align-items: center; gap: 5px;">
+                <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 4px; display: flex; align-items: center; gap: 5px;">
                     <i class="fa-regular fa-clock" style="color: #f59e0b;"></i>
                     <span>ประกาศ: ${safeStartDt} (<strong>${formatAgeTh(p.days)}</strong>)</span>
                 </div>
+                <div class="lb-card-submetrics">${secondaryLineHtml}</div>
                 <div class="lb-card-footer">
-                    <span class="metric-pill">🔥 ${fmtNum(p._score)} ${metricUnit}/${pName.replace('ต่อ', '')}</span>
+                    ${primaryPillHtml}
                     <span class="units-pill">${p.units} ยูนิต • ${fmtBaht(p.price)}${formatUnitPricesShort(p.p_sqm, p.p_sqw)}</span>
                 </div>
             </div>
@@ -1387,18 +1426,17 @@
     }
 
     function formatProvStatText(g) {
-        const metricUnit = activeMetric === 'vd' ? 'วิว' : 'คลิก';
-        const pNameShort = getIntervalText().replace('ต่อ', '');
         if (provSortMode === 'all_median') {
-            return `${g.count.toLocaleString('th-TH')} โครงการ • Median ทั้งจังหวัด ${fmtNum(g.medianScore)} ${metricUnit}/${pNameShort}`;
+            return `${g.count.toLocaleString('th-TH')} โครงการ • Median ทั้งจังหวัด ${formatMetricValue(g.medianScore)}`;
         }
         if (provSortMode === 'total_sum') {
-            return `${g.count.toLocaleString('th-TH')} โครงการ • รวม ${fmtNum(g.totalTraffic)} ${metricUnit}/${pNameShort}`;
+            const sumLbl = activeMetric === 'ctr' ? 'CTR รวมทั้งจังหวัด' : 'ยอดนิยมรวมทั้งจังหวัด';
+            return `${g.count.toLocaleString('th-TH')} โครงการ • ${sumLbl} ${formatMetricValue(g.totalMetric)}`;
         }
         if (provSortMode === 'count') {
-            return `${g.count.toLocaleString('th-TH')} โครงการ (${g.totalUnits.toLocaleString('th-TH')} ประกาศ) • Top 5: ${fmtNum(g.top5MedianScore)}`;
+            return `${g.count.toLocaleString('th-TH')} โครงการ (${g.totalUnits.toLocaleString('th-TH')} ประกาศ) • Top 5: ${formatMetricValue(g.top5MedianScore)}`;
         }
-        return `${g.count.toLocaleString('th-TH')} โครงการ • Median Top 5: ${fmtNum(g.top5MedianScore)} ${metricUnit}/${pNameShort}`;
+        return `${g.count.toLocaleString('th-TH')} โครงการ • Median Top 5: ${formatMetricValue(g.top5MedianScore)}`;
     }
 
     function buildProvTooltipHtml(provName) {
@@ -1476,9 +1514,9 @@
         const filtered = getFilteredProjects();
 
         filtered.forEach(p => {
-            p._score = (p[activeMetric] || 0) * activeMultiplier;
+            p._score = activeMetric === 'ctr' ? Number(p.ctr || 0) : Number(p.pop || 0);
         });
-        filtered.sort((a, b) => (b._score - a._score) || ((b.units || 0) - (a.units || 0)));
+        filtered.sort((a, b) => (b._score - a._score) || ((b.cd || 0) - (a.cd || 0)) || ((b.units || 0) - (a.units || 0)));
 
         const provMap = new Map();
         filtered.forEach(p => {
@@ -1492,13 +1530,41 @@
             const top5MedianScore = calcMedian(items.slice(0, TOP_N_PER_PROV).map(x => x._score));
             const maxScore = items.length > 0 ? items[0]._score : 0;
             const totalUnits = items.reduce((acc, x) => acc + (x.units || 0), 0);
-            const totalTraffic = items.reduce((acc, x) => acc + ((activeMetric === 'vd' ? (x.sum_vd || x.vd || 0) : (x.sum_cd || x.cd || 0)) * activeMultiplier), 0);
-            return { prov, items, count: items.length, totalUnits, medianScore, top5MedianScore, totalTraffic, maxScore };
+            const sumVdProv = items.reduce((acc, x) => acc + Math.max(0, Number(x.sum_vd || x.vd || 0)), 0);
+            const sumCdProv = items.reduce((acc, x) => acc + Math.max(0, Number(x.sum_cd || x.cd || 0)), 0);
+            const sumCdEffProv = items.reduce((acc, x) => {
+                const sv = Math.max(0, Number(x.sum_vd || x.vd || 0));
+                const sc = Math.max(0, Number(x.sum_cd || x.cd || 0));
+                return acc + Math.min(sc, sv);
+            }, 0);
+            const provWeightedCtr = sumVdProv > 0 ? Math.min(100, (sumCdEffProv / sumVdProv) * 100) : 0;
+            return { prov, items, count: items.length, totalUnits, medianScore, top5MedianScore, sumVdProv, sumCdProv, provWeightedCtr, totalMetric: 0, maxScore };
+        });
+
+        // Mode-aware province total metric:
+        // - pop: 0-100 Log Geometric Mean of province total views & total clicks
+        // - ctr: province-wide weighted CTR (total effective clicks / total views, capped at 100%)
+        let maxLogSumVd = 0;
+        let maxLogSumCd = 0;
+        provGroups.forEach(g => {
+            const lv = Math.log1p(Math.max(0, g.sumVdProv));
+            const lc = Math.log1p(Math.max(0, g.sumCdProv));
+            if (lv > maxLogSumVd) maxLogSumVd = lv;
+            if (lc > maxLogSumCd) maxLogSumCd = lc;
+        });
+        provGroups.forEach(g => {
+            if (activeMetric === 'ctr') {
+                g.totalMetric = g.provWeightedCtr;
+            } else {
+                const nv = maxLogSumVd > 0 ? (Math.log1p(Math.max(0, g.sumVdProv)) / maxLogSumVd) : 0;
+                const nc = maxLogSumCd > 0 ? (Math.log1p(Math.max(0, g.sumCdProv)) / maxLogSumCd) : 0;
+                g.totalMetric = 100 * Math.sqrt(Math.max(0, nv * nc));
+            }
         });
 
         provGroups.sort((a, b) => {
             if (provSortMode === 'all_median') return (b.medianScore - a.medianScore) || (b.top5MedianScore - a.top5MedianScore) || (b.count - a.count);
-            if (provSortMode === 'total_sum') return (b.totalTraffic - a.totalTraffic) || (b.top5MedianScore - a.top5MedianScore) || (b.count - a.count);
+            if (provSortMode === 'total_sum') return (b.totalMetric - a.totalMetric) || (b.top5MedianScore - a.top5MedianScore) || (b.count - a.count);
             if (provSortMode === 'count') return (b.count - a.count) || (b.top5MedianScore - a.top5MedianScore) || (b.maxScore - a.maxScore);
             return (b.top5MedianScore - a.top5MedianScore) || (b.maxScore - a.maxScore) || (b.count - a.count);
         });
@@ -1512,8 +1578,8 @@
 
         updateRealtimeKpis(filtered, provGroups.length);
 
-        const mName = activeMetric === 'vd' ? 'ยอดเข้าชม' : 'ยอดคลิก';
-        const pName = getIntervalText();
+        const mName = getMetricName();
+        const mLabel = getMetricLabel();
 
         const lbTitleEl = document.getElementById('lb-title-text');
         const lbActionsEl = document.getElementById('lb-header-actions');
@@ -1524,7 +1590,7 @@
         const legendTitleEl = document.getElementById('heat-legend-title');
         const legendMaxEl = document.getElementById('heat-legend-max-lbl');
         if (legendTitleEl) {
-            legendTitleEl.innerHTML = `<i class="fa-solid fa-fire" style="color: #ef4444;"></i> ความร้อน: ${mName} (${pName})`;
+            legendTitleEl.innerHTML = `<i class="fa-solid fa-fire" style="color: #ef4444;"></i> ความร้อน: ${mLabel}`;
         }
         if (legendMaxEl) {
             legendMaxEl.textContent = activeProv ? `สูงมาก (${activeProv})` : 'สูงมาก (เทียบรายจังหวัด)';
@@ -1538,7 +1604,7 @@
         if (activeProv) {
             if (provSortSelect) provSortSelect.style.display = 'none';
             lbTitleEl.innerHTML = `<i class="fa-solid fa-trophy" style="color: #fbbf24;"></i> 50 ทำเลยอดนิยม — ${escHtml(activeProv)}`;
-            lbSortEl.textContent = `จัดอันดับตาม: ${mName}มัธยฐาน${pName} • พบ ${filtered.length.toLocaleString('th-TH')} โครงการ`;
+            lbSortEl.textContent = `จัดอันดับตาม: ${mLabel} • พบ ${filtered.length.toLocaleString('th-TH')} โครงการ`;
 
             const backBtn = document.createElement('button');
             backBtn.className = 'lb-action-btn';
@@ -1566,7 +1632,7 @@
             if (provSortSelect) provSortSelect.style.display = '';
             const scopeTitle = activeRegion ? escHtml(activeRegion) : 'รายจังหวัด';
             lbTitleEl.innerHTML = `<i class="fa-solid fa-trophy" style="color: #fbbf24;"></i> ทำเลยอดนิยม (${scopeTitle})`;
-            lbSortEl.textContent = `Top ${TOP_N_PER_PROV} ต่อจังหวัด • ${mName}${pName}`;
+            lbSortEl.textContent = `Top ${TOP_N_PER_PROV} ต่อจังหวัด • ${mName}`;
 
             if (provGroups.length > 0) {
                 const toggleAllBtn = document.createElement('button');
@@ -1621,7 +1687,7 @@
 
         if (activeProv) {
             const top50 = filtered.slice(0, 50);
-            top50.forEach((p, idx) => lbContainer.appendChild(createProjectCard(p, idx + 1, pName)));
+            top50.forEach((p, idx) => lbContainer.appendChild(createProjectCard(p, idx + 1)));
         } else {
             provGroups.forEach((g, idx) => {
                 const provRank = idx + 1;
@@ -1671,7 +1737,7 @@
                 const body = document.createElement('div');
                 body.className = 'prov-acc-body';
                 const topItems = g.items.slice(0, TOP_N_PER_PROV);
-                topItems.forEach((p, pIdx) => body.appendChild(createProjectCard(p, pIdx + 1, pName)));
+                topItems.forEach((p, pIdx) => body.appendChild(createProjectCard(p, pIdx + 1)));
 
                 if (g.count > TOP_N_PER_PROV) {
                     const moreBtn = document.createElement('button');
@@ -1695,15 +1761,6 @@
             document.querySelectorAll('#metric-group .pill-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             activeMetric = btn.dataset.metric;
-            renderView();
-        });
-    });
-
-    document.querySelectorAll('#interval-group .pill-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('#interval-group .pill-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            activeMultiplier = Number(btn.dataset.mult);
             renderView();
         });
     });

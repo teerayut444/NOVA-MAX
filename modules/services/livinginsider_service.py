@@ -236,6 +236,35 @@ def _compute_livinginsider_project_metrics(_df_raw):
     grp['cd'] = grp['cd'].fillna(0.0).round(2)
     grp['sum_vd'] = grp['sum_vd'].fillna(0.0).round(1)
     grp['sum_cd'] = grp['sum_cd'].fillna(0.0).round(1)
+
+    # Global Log Geometric Mean Popularity Score (0-100): high ONLY when both views & clicks are high
+    vd_pos = grp['vd'].clip(lower=0.0)
+    cd_pos = grp['cd'].clip(lower=0.0)
+    lvd = np.log1p(vd_pos)
+    lcd = np.log1p(cd_pos)
+    max_lvd = float(lvd.max()) if len(lvd) > 0 else 0.0
+    max_lcd = float(lcd.max()) if len(lcd) > 0 else 0.0
+    norm_vd = (lvd / max_lvd) if max_lvd > 0.0 else pd.Series(0.0, index=grp.index, dtype='float64')
+    norm_cd = (lcd / max_lcd) if max_lcd > 0.0 else pd.Series(0.0, index=grp.index, dtype='float64')
+    grp['pop'] = (100.0 * np.sqrt((norm_vd * norm_cd).clip(lower=0.0))).fillna(0.0).clip(0.0, 100.0).round(1)
+
+    # Bayesian-smoothed Click-to-View Ratio (CTR %), capped at 100% to guard against low-view/corrupted spikes
+    cd_eff = np.minimum(cd_pos, vd_pos)
+    pos_v_mask = vd_pos > 0.0
+    if pos_v_mask.any():
+        valid_v = vd_pos.loc[pos_v_mask]
+        prior_m = float(valid_v.median())
+        if not np.isfinite(prior_m) or prior_m <= 0.0:
+            prior_m = 1.0
+        valid_rates = (cd_eff.loc[pos_v_mask] / valid_v).clip(0.0, 1.0)
+        prior_c = float(valid_rates.median())
+        if not np.isfinite(prior_c) or prior_c < 0.0:
+            prior_c = 0.0
+        smoothed_ctr = ((cd_eff + prior_m * prior_c) / (vd_pos + prior_m)) * 100.0
+        grp['ctr'] = np.where(pos_v_mask, smoothed_ctr, 0.0)
+    else:
+        grp['ctr'] = 0.0
+    grp['ctr'] = pd.Series(grp['ctr'], index=grp.index, dtype='float64').fillna(0.0).clip(0.0, 100.0).round(1)
     grp['price'] = grp['price'].fillna(0.0).round(0)
     grp['min_p'] = grp['min_p'].fillna(0.0).round(0)
     grp['max_p'] = grp['max_p'].fillna(0.0).round(0)

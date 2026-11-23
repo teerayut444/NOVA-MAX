@@ -31,7 +31,7 @@ _TAB5_OFFLOAD_MIN_PROJECTS = 200
 _SLIM_PROJECT_KEYS = (
     "name", "units", "prov", "dist", "subdist", "prop_type",
     "lat", "lon", "price", "p_sqm", "p_sqw",
-    "vd", "cd", "sum_vd", "sum_cd", "days", "start_dt", "end_dt", "link",
+    "vd", "cd", "sum_vd", "sum_cd", "pop", "ctr", "days", "start_dt", "end_dt", "link",
 )
 
 
@@ -101,7 +101,7 @@ def get_static_tab5_payload_meta(data_mtime=None, th_date=None):
     size_token = get_data_size_token()
     token_hex = hmac.new(
         get_payload_secret(),
-        f"tab5|sz={size_token}".encode("utf-8"),
+        f"tab5_v2|sz={size_token}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()[:32]
     filename = f"tab5_payload_{token_hex}.gz"
@@ -177,8 +177,10 @@ def _build_tab5_popular_locations_uncached(df_raw, is_dark_mode=False, has_custo
     total_units = sum(p.get("units", 1) for p in ssr_projects)
     vds = [p.get("vd", 0) for p in ssr_projects if p.get("vd") is not None]
     cds = [p.get("cd", 0) for p in ssr_projects if p.get("cd") is not None]
+    ctrs = [p.get("ctr", 0) for p in ssr_projects if p.get("ctr") is not None]
     med_vd = statistics.median(vds) if vds else 0
     med_cd = statistics.median(cds) if cds else 0
+    med_ctr = statistics.median(ctrs) if ctrs else 0
 
     # Dataset month info for attribution banner
     cur_mtime = get_data_mtime() if data_mtime is None else data_mtime
@@ -229,6 +231,7 @@ def _build_tab5_popular_locations_uncached(df_raw, is_dark_mode=False, has_custo
         "TOTAL_UNITS_PLACEHOLDER": f"{total_units:,.0f}",
         "MED_VD_PLACEHOLDER": f"{med_vd:,.1f}",
         "MED_CD_PLACEHOLDER": f"{med_cd:,.2f}",
+        "MED_CTR_PLACEHOLDER": f"{med_ctr:,.1f}%",
         "PROJECTS_JSON_PLACEHOLDER": projects_inline_json,
         "PAYLOAD_URL_JSON_PLACEHOLDER": payload_url_json,
         "GEO_URL_JSON_PLACEHOLDER": geo_url_json,
@@ -244,6 +247,7 @@ def _build_tab5_popular_locations_uncached(df_raw, is_dark_mode=False, has_custo
         "total_units": total_units,
         "med_vd": med_vd,
         "med_cd": med_cd,
+        "med_ctr": med_ctr,
         "month_short": month_short,
         "html_app": html_app,
         "payload_url": tab5_payload_url,
