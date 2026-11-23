@@ -887,11 +887,42 @@
           .replace(/'/g, '&#39;');
       }
 
+      function resolveNovaStaticUrl(urlStr) {
+        if (!urlStr) return '';
+        // Split marker so server-side rewrite_static_paths('/app/static/' -> '/nova/app/static/') never rewrites it
+        const STATIC_ROOT = '/' + 'app/static/';
+        let s = String(urlStr).trim();
+        if (/^https?:\/\//i.test(s)) return s;
+        if (s.startsWith('app/static/')) s = '/' + s;
+        let basePrefix = '';
+        try {
+          const scripts = document.getElementsByTagName('script');
+          for (let i = 0; i < scripts.length; i++) {
+            const src = scripts[i].getAttribute('src') || '';
+            const idx = src.indexOf(STATIC_ROOT);
+            if (idx > 0) {
+              basePrefix = src.slice(0, idx).replace(/\/+$/, '');
+              break;
+            }
+          }
+          if (!basePrefix && window.parent && window.parent.location && window.parent.location.pathname) {
+            const pPath = window.parent.location.pathname.replace(/\/+$/, '');
+            if (pPath && pPath !== '/' && !pPath.startsWith('/app/') && !pPath.startsWith('/component/')) {
+              basePrefix = pPath;
+            }
+          }
+        } catch (_e) {}
+        if (basePrefix && s.startsWith(STATIC_ROOT)) {
+          return basePrefix + s;
+        }
+        return s;
+      }
+
       function isSafeNavUrl(urlStr) {
         if (!urlStr) return false;
         const trimmed = String(urlStr).trim();
         if (/^https?:\/\//i.test(trimmed)) return true;
-        if (/^\/app\/static\/led_(?:legal_)?bridge\.html(?:\?.*)?$/i.test(trimmed)) return true;
+        if (/^(?:\/[A-Za-z0-9_~+/-]+)?\/app\/static\/led_(?:legal_)?bridge\.html(?:\?.*)?$/i.test(trimmed)) return true;
         return false;
       }
 

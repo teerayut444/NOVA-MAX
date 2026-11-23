@@ -688,8 +688,6 @@ _RESET_PRESERVED_AUTH_KEYS = frozenset({
     "auth_username",
     "auth_display_name",
     "user_name",
-    "portal_entered",
-    "preload_done",
     "_log_auth",
     "_admin_manual_lock",
     "_login_attempts",
@@ -697,7 +695,7 @@ _RESET_PRESERVED_AUTH_KEYS = frozenset({
 
 
 def _reset_dashboard_all_callback():
-    """on_click callback: resets filters, imported files, theme (Light Mode), active tab (Tab 1), and iframes while preserving login."""
+    """on_click callback: resets filters, imported files, theme (Light Mode), active tab (Tab 1), and returns to Welcome screen without re-login."""
     try:
         st.query_params.clear()
     except Exception:
@@ -706,6 +704,8 @@ def _reset_dashboard_all_callback():
     for k in list(st.session_state.keys()):
         if k not in _RESET_PRESERVED_AUTH_KEYS:
             st.session_state.pop(k, None)
+    st.session_state["portal_entered"] = False
+    st.session_state["_nova_welcome_from_reset"] = True
     st.session_state["app_theme_mode"] = False
     st.session_state["_nova_reset_nonce"] = next_nonce
     st.session_state["_nova_just_reset_js"] = True
@@ -863,7 +863,7 @@ def render_sidebar(df_raw):
             key="btn_reset_filters_main",
             use_container_width=True,
             on_click=_reset_dashboard_all_callback,
-            help="รีเซ็ตตัวกรองทุกแท็บ ไฟล์นำเข้า พิกัดที่บันทึก ธีม (โหมดสว่าง) และกลับหน้าแรกโดยไม่ต้องล็อกอินใหม่",
+            help="รีเซ็ตตัวกรองทุกแท็บ ไฟล์นำเข้า พิกัดที่บันทึก ธีม (โหมดสว่าง) และกลับหน้า Welcome เพื่อโหลดเข้าหน้าแรกใหม่โดยไม่ต้องล็อกอินซ้ำ",
         )
 
         # Log first visit once per session; periodic 60s heartbeat updates active duration

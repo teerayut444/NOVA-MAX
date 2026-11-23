@@ -91,8 +91,7 @@ def update_welcome_progress(placeholder, pct, status_text):
 
 @st.cache_resource(show_spinner=False, max_entries=2)
 def _load_prewarmer_inline_scripts(builder_ver=""):
-    """Reads d3.js and map_cache_builder.js once per builder version so the welcome prewarmer never 404s under Cloud (/~/+/)."""
-    _ = builder_ver
+    """Reads d3.js and map_cache_builder.js once per builder_ver so the welcome prewarmer never 404s or serves stale JS."""
     scripts = []
     for rel in ("static/d3.js", "static/map_cache_builder.js"):
         p = os.path.join(_BASE_DIR, rel)
@@ -105,11 +104,14 @@ def _load_prewarmer_inline_scripts(builder_ver=""):
     return "\n".join(scripts)
 
 
-def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
+def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta, is_from_reset=False):
     """Renders a hidden 0px runner that warms window.parent.__NOVA_MAP_CACHE__ from the tokenized .gz payload."""
     mtime_token = f"{payload_meta['mtime']}|{payload_meta['th_date']}"
     payload_url = payload_meta["url"]
-    inline_core_js = _load_prewarmer_inline_scripts(str(builder_ver))
+    inline_core_js = _load_prewarmer_inline_scripts(str(builder_ver or ""))
+    fast_enter_delay_ms = 500 if is_from_reset else 40
+    done_enter_delay_ms = 450 if is_from_reset else 80
+    ready_status_text = "✓ รีเซ็ตตัวกรองเรียบร้อย พร้อมใช้งาน" if is_from_reset else "✓ โหลดข้อมูลและแผนที่พร้อมใช้งาน"
     prewarm_html = f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
@@ -122,6 +124,10 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
   const MTIME_TOKEN = {json.dumps(mtime_token)};
   const BUILDER_VER = {json.dumps(str(builder_ver))};
   const PAYLOAD_URL = {json.dumps(payload_url)};
+  const IS_FROM_RESET = {'true' if is_from_reset else 'false'};
+  const FAST_ENTER_DELAY_MS = {int(fast_enter_delay_ms)};
+  const DONE_ENTER_DELAY_MS = {int(done_enter_delay_ms)};
+  const READY_STATUS_TEXT = {json.dumps(ready_status_text, ensure_ascii=False)};
   const STALL_TIMEOUT_MS = 25000;
   const MAX_TOTAL_TIMEOUT_MS = 90000;
   let enterRequested = false;
@@ -155,6 +161,30 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
     clearTimers();
     stopEnterRetry();
   }});
+
+  if (IS_FROM_RESET) {{
+    try {{
+      const pWin = window.parent;
+      if (pWin) {{
+        if (pWin.location && pWin.location.search) {{
+          const cleanU = new URL(pWin.location.href);
+          pWin.history.replaceState({{}}, '', cleanU.origin + cleanU.pathname);
+        }}
+        if (pWin.localStorage) {{
+          for (let i = pWin.localStorage.length - 1; i >= 0; i--) {{
+            const k = pWin.localStorage.key(i);
+            if (k && k.indexOf('nova_saved_reference_coords') === 0) {{
+              pWin.localStorage.removeItem(k);
+            }}
+          }}
+        }}
+        if (typeof pWin.__NOVA_TAB_LISTENER_CLEANUP__ === 'function') {{
+          pWin.__NOVA_TAB_LISTENER_CLEANUP__();
+          pWin.__NOVA_TAB_LISTENER_CLEANUP__ = null;
+        }}
+      }}
+    }} catch (_e) {{}}
+  }}
 
   function updateParentProgress(pct, text) {{
     try {{
@@ -306,8 +336,8 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
       if (hasValidParentCacheFast()) {{
         await waitBrieflyForTiles(tilePreloadPromise, 1500);
         clearTimers();
-        updateParentProgress(100, '✓ โหลดข้อมูลและภาพแผนที่พร้อมใช้งาน');
-        setTimeout(triggerPortalEnter, 40);
+        updateParentProgress(100, READY_STATUS_TEXT);
+        setTimeout(triggerPortalEnter, FAST_ENTER_DELAY_MS);
         return;
       }}
 
@@ -326,12 +356,15 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
       await waitBrieflyForTiles(tilePreloadPromise, 1500);
 
       clearTimers();
-      updateParentProgress(100, '✓ โหลดข้อมูลและภาพแผนที่พร้อมใช้งาน');
-      setTimeout(triggerPortalEnter, 80);
+      updateParentProgress(
+        100,
+        hasValidParentCacheFast() ? READY_STATUS_TEXT : '✓ กำลังเข้าสู่หน้าหลัก...'
+      );
+      setTimeout(triggerPortalEnter, DONE_ENTER_DELAY_MS);
     }} catch (err) {{
       console.warn('Browser map prewarm fallback:', err);
       clearTimers();
-      updateParentProgress(100, '✓ โหลดข้อมูลครบทั้ง 5 แท็บ พร้อมใช้งาน');
+      updateParentProgress(100, 'กำลังเข้าสู่หน้าหลัก...');
       triggerPortalEnter();
     }}
   }}
@@ -341,7 +374,8 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta):
 </script>
 </body>
 </html>"""
-    stc.html(prewarm_html, height=0)
+    from modules.config.constants import rewrite_static_paths
+    stc.html(rewrite_static_paths(prewarm_html), height=0)
 
 def _render_welcome_login_card():
     """Renders the Light Luxury glassmorphism login form and handles authentication + user_logger."""
@@ -542,7 +576,8 @@ def render_welcome_screen():
         else "min-height: 100vh !important; min-height: 100dvh !important; height: auto !important; padding: 24px 12px !important;"
     )
 
-    st.html(f"""
+    from modules.config.constants import rewrite_static_paths
+    st.html(rewrite_static_paths(f"""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&family=Outfit:wght@600;700;800;900&family=Noto+Sans+Thai:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -776,7 +811,7 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
     <div class="nova-light-title">NOVA</div>
     <div class="nova-light-sub">NPA ASSET INTELLIGENCE</div>
 </div>
-""")
+"""))
 
     if not is_authenticated:
         _render_welcome_login_card()
@@ -788,9 +823,11 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
     if enter_clicked:
         prewarm_slot.empty()
         progress_slot.empty()
+        st.session_state.pop("_nova_welcome_from_reset", None)
         st.session_state["portal_entered"] = True
         st.rerun()
 
+    is_from_reset = bool(st.session_state.get("_nova_welcome_from_reset", False))
     pts_label = ""
     if not st.session_state.get("preload_done", False):
         import gc
@@ -847,12 +884,28 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
         st.session_state["preload_done"] = True
 
     payload_meta = payload_meta or get_static_map_payload_meta(data_mtime=cur_mtime)
-    if st.session_state.get("cached_map_data_len", 0) > 0 and payload_meta and os.path.exists(payload_meta["path"]):
-        update_welcome_progress(progress_slot, 90, f"กำลังเตรียมข้อมูลแผนที่บนเบราว์เซอร์{pts_label}...")
+    cached_map_len = int(st.session_state.get("cached_map_data_len", 0) or 0)
+    if not pts_label and cached_map_len > 0:
+        pts_label = f" {cached_map_len:,} จุด"
+    if cached_map_len > 0 and payload_meta and os.path.exists(payload_meta["path"]):
+        status_90 = (
+            "กำลังรีเซ็ตหน้าแผนที่และตัวกรองทั้งหมด..."
+            if is_from_reset
+            else f"กำลังเตรียมข้อมูลแผนที่บนเบราว์เซอร์{pts_label}..."
+        )
+        update_welcome_progress(progress_slot, 90, status_90)
         with prewarm_slot.container(key="welcome_prewarm_host"):
-            _render_browser_map_prewarmer(cur_mtime, builder_ver, payload_meta)
+            _render_browser_map_prewarmer(cur_mtime, builder_ver, payload_meta, is_from_reset=is_from_reset)
     else:
-        update_welcome_progress(progress_slot, 100, "✓ โหลดข้อมูลครบทั้ง 5 แท็บ พร้อมใช้งาน")
+        import time
+        update_welcome_progress(
+            progress_slot,
+            100,
+            "✓ รีเซ็ตตัวกรองเรียบร้อย พร้อมใช้งาน" if is_from_reset else "✓ โหลดข้อมูลพร้อมใช้งาน",
+        )
+        if is_from_reset:
+            time.sleep(0.45)
         prewarm_slot.empty()
+        st.session_state.pop("_nova_welcome_from_reset", None)
         st.session_state["portal_entered"] = True
         st.rerun()

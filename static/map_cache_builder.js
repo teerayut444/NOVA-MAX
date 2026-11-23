@@ -368,7 +368,7 @@
     const subdtLut = _lut.subdt;
     const prjLut = _lut.prj;
     const plaintiffLut = _lut.plaintiff;
-    const parseOptNum = (v, fallback) => {
+    const _parseOptNum = (v, fallback) => {
       if (v === undefined || v === null || v === '') return fallback;
       const n = +v;
       return Number.isFinite(n) ? n : fallback;
@@ -418,15 +418,16 @@
         _sqm: +d._sqm || 0,
         _puw: +d._puw || 0,
         _pum: +d._pum || 0,
-        _fl: parseOptNum(d._fl, -1),
-        _bed: parseOptNum(d._bed, -1),
-        _bath: parseOptNum(d._bath, -1),
-        _pkg: parseOptNum(d._pkg, -1),
-        _age: parseOptNum(d._age, -1),
-        _sold_p: parseOptNum(d._sold_p, 0),
+        _fl: _parseOptNum(d._fl, -1),
+        _bed: _parseOptNum(d._bed, -1),
+        _bath: _parseOptNum(d._bath, -1),
+        _pkg: _parseOptNum(d._pkg, -1),
+        _age: _parseOptNum(d._age, -1),
+        _sold_p: _parseOptNum(d._sold_p, 0),
         _sold_date: d._sold_date || '',
         _plaintiff: (plaintiffLut && d._pti !== undefined && plaintiffLut[+d._pti]) || '',
-        _normKey: ''
+        _normKey: '',
+        _detailLoaded: true
       };
     }
     return data;
@@ -509,22 +510,18 @@
     const rawOtherPrj = (lutObj && lutObj.other_prj) || null;
     const rawAllPrj = (lutObj && lutObj.all_prj) || null;
     const prjStatsDict = (lutObj && lutObj.prj_stats) || {};
+    const samStatsArr = (lutObj && Array.isArray(lutObj.sam_stats)) ? lutObj.sam_stats : null;
+    const otherStatsArr = (lutObj && Array.isArray(lutObj.other_stats)) ? lutObj.other_stats : null;
+    const _isValidPrjEntry = (p) => !!(p && p !== '-' && p !== 'ไม่มีข้อมูล' && p !== 'ไม่ระบุ' && p.length > 1);
 
     // Fast path: pre-computed structured project inventory from backend lookup
     if (rawSamPrj && Array.isArray(rawSamPrj) && rawSamPrj.length > 0) {
-      allSamProjectsList = rawSamPrj.filter(p => p && p !== '-' && p !== 'ไม่มีข้อมูล' && p !== 'ไม่ระบุ' && p.length > 1);
-      allOtherProjectsList =
-        rawOtherPrj && Array.isArray(rawOtherPrj)
-          ? rawOtherPrj.filter(p => p && p !== '-' && p !== 'ไม่มีข้อมูล' && p !== 'ไม่ระบุ' && p.length > 1)
-          : [];
-      allProjectsList =
-        rawAllPrj && Array.isArray(rawAllPrj) && rawAllPrj.length > 0
-          ? rawAllPrj.filter(p => p && p !== '-' && p !== 'ไม่มีข้อมูล' && p !== 'ไม่ระบุ' && p.length > 1)
-          : allSamProjectsList.concat(allOtherProjectsList);
-
-      for (let i = 0; i < allSamProjectsList.length; i++) {
-        const p = allSamProjectsList[i];
-        const pair = prjStatsDict[p] || [1, 0];
+      allSamProjectsList = [];
+      for (let i = 0; i < rawSamPrj.length; i++) {
+        const p = rawSamPrj[i];
+        if (!_isValidPrjEntry(p)) continue;
+        allSamProjectsList.push(p);
+        const pair = (samStatsArr && samStatsArr[i]) || prjStatsDict[p] || [1, 0];
         const sc = Math.max(1, pair[0] || 1);
         const oc = pair[1] || 0;
         const nk = normalizeProjectKeyword(p);
@@ -533,17 +530,27 @@
         if (nk) normKeyToCanonicalMap.set(nk, p);
       }
 
-      for (let i = 0; i < allOtherProjectsList.length; i++) {
-        const p = allOtherProjectsList[i];
-        const pair = prjStatsDict[p] || [0, 1];
-        const oc = Math.max(1, pair[1] || 1);
-        const nk = normalizeProjectKeyword(p);
-        const tag = getBrandSearchTag(p);
-        if (!samProjectStatsMap.has(p)) {
-          samProjectStatsMap.set(p, { sam: 0, other: oc, normKey: nk, tag: tag });
+      allOtherProjectsList = [];
+      if (rawOtherPrj && Array.isArray(rawOtherPrj)) {
+        for (let i = 0; i < rawOtherPrj.length; i++) {
+          const p = rawOtherPrj[i];
+          if (!_isValidPrjEntry(p)) continue;
+          allOtherProjectsList.push(p);
+          const pair = otherStatsArr ? [0, otherStatsArr[i] || 1] : (prjStatsDict[p] || [0, 1]);
+          const oc = Math.max(1, pair[1] || 1);
+          const nk = normalizeProjectKeyword(p);
+          const tag = getBrandSearchTag(p);
+          if (!samProjectStatsMap.has(p)) {
+            samProjectStatsMap.set(p, { sam: 0, other: oc, normKey: nk, tag: tag });
+          }
+          if (nk && !normKeyToCanonicalMap.has(nk)) normKeyToCanonicalMap.set(nk, p);
         }
-        if (nk && !normKeyToCanonicalMap.has(nk)) normKeyToCanonicalMap.set(nk, p);
       }
+
+      allProjectsList =
+        rawAllPrj && Array.isArray(rawAllPrj) && rawAllPrj.length > 0
+          ? rawAllPrj.filter(_isValidPrjEntry)
+          : allSamProjectsList.concat(allOtherProjectsList);
 
       if (data && data.length > 0) {
         for (let i = 0; i < data.length; i++) {
@@ -745,20 +752,38 @@
     return { idExactLookupMap, idStrippedLookupMap };
   }
 
+  function getEffectiveSelfOrigin() {
+    try {
+      const locOrigin = global.location && global.location.origin;
+      if (locOrigin && locOrigin !== 'null') return locOrigin;
+      if (typeof global.origin === 'string' && global.origin && global.origin !== 'null') {
+        return global.origin;
+      }
+      const href = (global.location && global.location.href) || '';
+      if (href === 'about:srcdoc' || href === 'about:blank') {
+        if (global.parent && global.parent !== global && global.parent.document && global.parent.location) {
+          const pOrigin = global.parent.location.origin;
+          if (pOrigin && pOrigin !== 'null') return pOrigin;
+        }
+      }
+    } catch (_e) {
+      // Ignore cross-origin frame access error
+    }
+    return '';
+  }
+
   function getParentHost() {
     try {
       if (global.parent && global.parent !== global) {
-        // Accessing parent.location.href & parent.document throws SecurityError on cross-origin frames.
-        // Note: Inside Streamlit st.components.v1.html (<iframe srcdoc="...">), global.location.origin is
-        // "null" and href is "about:srcdoc" even though allow-same-origin grants same-origin parent access.
-        const pHref = global.parent.location && global.parent.location.href;
-        const pDoc = global.parent.document;
-        if (!pHref || !pDoc) return null;
-        const gHref = (global.location && global.location.href) || '';
-        const gOrigin = (global.location && global.location.origin) || '';
-        const pOrigin = (global.parent.location && global.parent.location.origin) || '';
-        const isSrcdoc = !gOrigin || gOrigin === 'null' || gHref === 'about:srcdoc' || gHref === 'about:blank';
-        if (isSrcdoc || (pOrigin && pOrigin === gOrigin)) {
+        const parentOrigin = global.parent.location && global.parent.location.origin;
+        const selfOrigin = getEffectiveSelfOrigin();
+        // Verify same-origin explicitly (supports both normal iframes and about:srcdoc frames with allow-same-origin)
+        if (
+          parentOrigin &&
+          parentOrigin !== 'null' &&
+          selfOrigin === parentOrigin &&
+          global.parent.document
+        ) {
           return global.parent;
         }
       }
@@ -904,8 +929,15 @@
 
   function resolveStaticUrlCandidates(rawUrl) {
     if (!rawUrl) return [];
-    const clean = String(rawUrl).replace(/^(\.\/|\/)+/, '').replace(/^~\/\+\//, '');
+    const raw = String(rawUrl).trim();
+    const staticIdx = raw.indexOf('app/static/');
+    const clean = (staticIdx >= 0)
+      ? raw.slice(staticIdx)
+      : raw.replace(/^(\.\/|\/)+/, '').replace(/^~\/\+\//, '');
     const out = [];
+    if (raw.startsWith('/') && staticIdx > 1) {
+      out.push(raw);
+    }
     const addOriginBase = (origin, pathname) => {
       if (!origin || origin === 'null') return;
       let basePath = pathname || '/';
@@ -939,6 +971,148 @@
     out.push('/' + clean);
     out.push(clean);
     return Array.from(new Set(out));
+  }
+
+  function _parseCsvLineFields(line) {
+    if (line.indexOf('"') === -1) {
+      return line.split(',');
+    }
+    const out = [];
+    let cur = '';
+    let inQuotes = false;
+    const len = line.length;
+    for (let i = 0; i < len; i++) {
+      const ch = line.charCodeAt(i);
+      if (inQuotes) {
+        if (ch === 34) {
+          if (i + 1 < len && line.charCodeAt(i + 1) === 34) {
+            cur += '"';
+            i++;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          cur += line[i];
+        }
+      } else {
+        if (ch === 44) {
+          out.push(cur);
+          cur = '';
+        } else if (ch === 34 && cur.length === 0) {
+          inQuotes = true;
+        } else {
+          cur += line[i];
+        }
+      }
+    }
+    out.push(cur);
+    return out;
+  }
+
+  function _peekAndWrapGzipStream(readableStream) {
+    const reader = readableStream.getReader();
+    return (async () => {
+      const buffered = [];
+      let totalLen = 0;
+      let streamDone = false;
+      while (totalLen < 2) {
+        const { value, done } = await reader.read();
+        if (done) {
+          streamDone = true;
+          break;
+        }
+        if (value && value.byteLength > 0) {
+          buffered.push(value);
+          totalLen += value.byteLength;
+        }
+      }
+      let b0 = -1;
+      let b1 = -1;
+      if (totalLen >= 2) {
+        let pos = 0;
+        for (let i = 0; i < buffered.length && pos < 2; i++) {
+          const chunk = buffered[i];
+          for (let j = 0; j < chunk.byteLength && pos < 2; j++) {
+            if (pos === 0) b0 = chunk[j];
+            else b1 = chunk[j];
+            pos++;
+          }
+        }
+      }
+      const isGzip = (b0 === 0x1f && b1 === 0x8b);
+      const replayStream = new ReadableStream({
+        start(controller) {
+          for (let i = 0; i < buffered.length; i++) {
+            controller.enqueue(buffered[i]);
+          }
+          buffered.length = 0;
+          if (streamDone) {
+            try { reader.releaseLock(); } catch (_e) {}
+            controller.close();
+          }
+        },
+        async pull(controller) {
+          try {
+            const { value, done } = await reader.read();
+            if (done) {
+              try { reader.releaseLock(); } catch (_e) {}
+              controller.close();
+            } else if (value && value.byteLength > 0) {
+              controller.enqueue(value);
+            }
+          } catch (err) {
+            try { reader.releaseLock(); } catch (_e) {}
+            controller.error(err);
+          }
+        },
+        cancel(reason) {
+          return reader.cancel(reason).catch(() => {});
+        }
+      });
+      return { stream: replayStream, isGzip: isGzip };
+    })();
+  }
+
+  async function _unwrapAutoGzipStream(readableStream) {
+    // Magic-byte auto-detection on actual stream bytes (never trusts Content-Type / Content-Encoding headers,
+    // which Streamlit AppStaticFileHandler or reverse proxies frequently set to text/plain or double-gzip).
+    let cur = readableStream;
+    for (let pass = 0; pass < 2; pass++) {
+      const peeked = await _peekAndWrapGzipStream(cur);
+      if (!peeked.isGzip) {
+        return peeked.stream;
+      }
+      if (typeof peeked.stream.pipeThrough !== 'function' || typeof DecompressionStream !== 'function') {
+        throw new Error('เบราว์เซอร์รุ่นนี้ไม่รองรับ DecompressionStream กรุณาอัปเดต Chrome/Edge/Safari');
+      }
+      cur = peeked.stream.pipeThrough(new DecompressionStream('gzip'));
+    }
+    return cur;
+  }
+
+  async function _readStreamToUint8Array(readableStream) {
+    const reader = readableStream.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value && value.byteLength > 0) {
+          chunks.push(value);
+          total += value.byteLength;
+        }
+      }
+    } finally {
+      try { reader.releaseLock(); } catch (_e) {}
+    }
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      out.set(chunks[i], offset);
+      offset += chunks[i].byteLength;
+    }
+    return out;
   }
 
   async function _readStreamToUtf8Text(readableStream, onProgress, progressPrefix) {
@@ -976,40 +1150,406 @@
     return parts.join('');
   }
 
-  async function _readResponseTextAutoGzip(resp, onProgress, forceBufferedMagicCheck) {
-    const ct = (resp.headers && resp.headers.get('content-type') || '').toLowerCase();
-    const ce = (resp.headers && resp.headers.get('content-encoding') || '').toLowerCase();
-    const looksAlreadyDecoded = ct.includes('application/json') || ct.includes('text/plain') || ce.includes('gzip');
-
+  async function _openAutoGzipTextStream(resp, forceBufferedMagicCheck) {
     // WebKit/Safari-safe native streaming path: NEVER wrap a JS ReadableStream into new Response(...).text()
     // (doing so triggers WebKit's "TypeError: Load failed" on iPadOS Safari).
-    if (!forceBufferedMagicCheck && resp.body && typeof resp.body.getReader === 'function') {
-      if (looksAlreadyDecoded) {
-        return await _readStreamToUtf8Text(resp.body, onProgress, 'กำลังดาวน์โหลดแคชแผนที่');
-      }
-      if (typeof resp.body.pipeThrough === 'function' && typeof DecompressionStream === 'function') {
+    if (!forceBufferedMagicCheck && resp.body && typeof resp.body.getReader === 'function' && typeof ReadableStream === 'function') {
+      return await _unwrapAutoGzipStream(resp.body);
+    }
+    const buf = await resp.arrayBuffer();
+    let bytes = new Uint8Array(buf);
+    for (let pass = 0; pass < 2; pass++) {
+      if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+        if (typeof DecompressionStream !== 'function') {
+          throw new Error('เบราว์เซอร์รุ่นนี้ไม่รองรับ DecompressionStream กรุณาอัปเดต Chrome/Edge/Safari');
+        }
         const ds = new DecompressionStream('gzip');
-        return await _readStreamToUtf8Text(resp.body.pipeThrough(ds), onProgress, 'กำลังดาวน์โหลดและแตกไฟล์แคชแผนที่');
+        const blobStream = new Blob([bytes]).stream().pipeThrough(ds);
+        if (pass === 0) {
+          bytes = await _readStreamToUint8Array(blobStream);
+          continue;
+        }
+        return blobStream;
       }
+      break;
+    }
+    return new Blob([bytes]).stream();
+  }
+
+  async function _readResponseTextAutoGzip(resp, onProgress, forceBufferedMagicCheck) {
+    if (!forceBufferedMagicCheck && resp.body && typeof resp.body.getReader === 'function' && typeof ReadableStream === 'function') {
+      const textStream = await _unwrapAutoGzipStream(resp.body);
+      return await _readStreamToUtf8Text(textStream, onProgress, 'กำลังดาวน์โหลดและแตกไฟล์แคชแผนที่');
     }
 
-    // Buffered fallback & magic-byte auto-detection (handles unannounced proxy auto-decompression or stream drops)
+    // Buffered fallback & magic-byte auto-detection (handles unannounced proxy auto-decompression or double-gzip)
     if (typeof onProgress === 'function') {
       onProgress(91, 'กำลังดาวน์โหลดแคชแผนที่...');
     }
     const buf = await resp.arrayBuffer();
-    const bytes = new Uint8Array(buf);
+    let bytes = new Uint8Array(buf);
     if (bytes.length === 0) return '';
-    const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-    if (isGzip) {
+    for (let pass = 0; pass < 2; pass++) {
+      const isGzip = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+      if (!isGzip) break;
       if (typeof DecompressionStream !== 'function') {
         throw new Error('เบราว์เซอร์รุ่นนี้ไม่รองรับ DecompressionStream กรุณาอัปเดต Chrome/Edge/Safari');
       }
       const ds = new DecompressionStream('gzip');
       const blobStream = new Blob([bytes]).stream().pipeThrough(ds);
-      return await _readStreamToUtf8Text(blobStream, onProgress, 'กำลังแตกไฟล์แคชแผนที่');
+      bytes = await _readStreamToUint8Array(blobStream);
     }
     return new TextDecoder('utf-8').decode(bytes);
+  }
+
+  function _resolveDetailBaseUrl(winningPayloadUrl, detailDir) {
+    if (!detailDir) return '';
+    if (winningPayloadUrl) {
+      const slashPos = winningPayloadUrl.lastIndexOf('/');
+      if (slashPos >= 0) {
+        return winningPayloadUrl.slice(0, slashPos + 1) + detailDir;
+      }
+    }
+    return '/app/static/' + detailDir;
+  }
+
+  async function _finalizeCacheObj(mtimeStr, lutObj, data, detailConfig, onProgress) {
+    if (!data || !data.length) {
+      throw new Error('Missing map coordinate rows');
+    }
+    const _lut =
+      lutObj && typeof lutObj === 'object'
+        ? lutObj
+        : { co: [], ty: [], pv: [], st: [], rg: [], dt: [], subdt: [], prj: [], plaintiff: [], co_rgb: [] };
+
+    if (typeof onProgress === 'function') {
+      onProgress(98, 'กำลังสร้างดัชนีพิกัดและโครงการ (' + data.length.toLocaleString() + ' จุด)...');
+      await yieldIfVisible();
+    }
+
+    const spatialGrid = buildSpatialGrid(data);
+    const projIndex = buildProjectIndex(data, _lut);
+    const typeCounts = computeTypeCounts(data);
+    // On iPadOS/iOS, defer the two 460k-entry ID Maps until first ID search to stay safely under WebKit Jetsam RAM limits
+    const idLookup = isIOSOrIPadOS() ? { idExactLookupMap: null, idStrippedLookupMap: null } : buildIdLookupIndex(data);
+
+    const cacheObj = {
+      mtime: mtimeStr || '',
+      lut: _lut,
+      data: data,
+      spatialGrid: spatialGrid,
+      projIndex: projIndex,
+      typeCounts: typeCounts,
+      idExactLookupMap: idLookup.idExactLookupMap,
+      idStrippedLookupMap: idLookup.idStrippedLookupMap,
+      detailConfig: detailConfig || null,
+      loadedDetailChunks: new Set(),
+      inflightDetailChunks: new Map(),
+      builtAt: Date.now()
+    };
+
+    const host = getParentHost();
+    if (host) {
+      host.__NOVA_MAP_CACHE__ = cacheObj;
+    }
+    return cacheObj;
+  }
+
+  async function _streamParseBundleToCacheObj(textStream, expectedMtime, winningPayloadUrl, onProgress) {
+    const reader = textStream.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let leftover = '';
+    let lineNo = 0;
+    let headerObj = null;
+    let legacyJsonParts = null;
+    let colIdx = null;
+    let data = [];
+    let expectedRows = 0;
+    let hasDeferredDetails = false;
+    let coRgbLut, coLut, tyLut, pvLut, stLut, rgLut, dtLut, subdtLut, prjLut, plaintiffLut;
+    let lastEmitAt = 0;
+
+    const _optNum = (v, fallback) => {
+      if (v === undefined || v === null || v === '') return fallback;
+      const n = +v;
+      return Number.isFinite(n) ? n : fallback;
+    };
+
+    const processLine = (rawLine) => {
+      const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+      if (lineNo === 0) {
+        lineNo = 1;
+        if (!line) return;
+        const trimmed = line.charCodeAt(0) === 0xfeff ? line.slice(1) : line;
+        headerObj = JSON.parse(trimmed);
+        if (headerObj && headerObj.v >= 4 && headerObj.lut && typeof headerObj.csv !== 'string') {
+          const _lut = headerObj.lut || {};
+          coRgbLut = _lut.co_rgb;
+          coLut = _lut.co;
+          tyLut = _lut.ty;
+          pvLut = _lut.pv;
+          stLut = _lut.st;
+          rgLut = _lut.rg;
+          dtLut = _lut.dt;
+          subdtLut = _lut.subdt;
+          prjLut = _lut.prj;
+          plaintiffLut = _lut.plaintiff;
+          expectedRows = Number(headerObj.rows) || 0;
+          hasDeferredDetails = !!(headerObj.detail && headerObj.detail.dir);
+          data = [];
+        } else {
+          // Legacy single-line JSON bundle ({ mtime, lut, csv })
+          legacyJsonParts = headerObj;
+        }
+        return;
+      }
+
+      if (legacyJsonParts) return;
+
+      if (lineNo === 1) {
+        lineNo = 2;
+        if (!line) return;
+        const hdrCols = _parseCsvLineFields(line);
+        colIdx = {};
+        for (let i = 0; i < hdrCols.length; i++) {
+          colIdx[hdrCols[i].trim()] = i;
+        }
+        return;
+      }
+
+      if (!line) return;
+      const cols = _parseCsvLineFields(line);
+      const ci = +cols[colIdx._ci];
+      const rgb = (coRgbLut && coRgbLut[ci]) || DEFAULT_CO_RGB;
+      const pRaw = cols[colIdx._p];
+      const priceVal = pRaw ? (+pRaw || 0) : 0;
+      const ptiIdx = colIdx._pti;
+      const ptiStr = (ptiIdx !== undefined) ? cols[ptiIdx] : '';
+      const ptiCode = ptiStr ? +ptiStr : 0;
+      const titleIdx = colIdx._title;
+      const linkIdx = colIdx._link;
+      const deedIdx = colIdx._deed;
+      const soldDateIdx = colIdx._sold_date;
+      const centIdx = colIdx._centroid;
+
+      data.push({
+        _uid: data.length,
+        lon: +cols[colIdx.lon],
+        lat: +cols[colIdx.lat],
+        r: rgb[0],
+        g: rgb[1],
+        b: rgb[2],
+        _title: (titleIdx !== undefined && cols[titleIdx]) || '',
+        _id: (colIdx._id !== undefined && cols[colIdx._id]) || '',
+        _link: (linkIdx !== undefined && cols[linkIdx]) || '',
+        _centroid: (centIdx !== undefined && cols[centIdx]) ? +cols[centIdx] : 0,
+        _deed: (deedIdx !== undefined && cols[deedIdx]) || '',
+        _company: (coLut && coLut[ci]) || '-',
+        _type: (tyLut && tyLut[+cols[colIdx._ti]]) || '-',
+        _prov: (pvLut && pvLut[+cols[colIdx._pi]]) || '-',
+        _sale: (stLut && stLut[+cols[colIdx._sti]]) || '-',
+        _region: (rgLut && rgLut[+cols[colIdx._rgi]]) || '-',
+        _district: (dtLut && dtLut[+cols[colIdx._dti]]) || '-',
+        _subdistrict: (subdtLut && colIdx._subdti !== undefined && subdtLut[+cols[colIdx._subdti]]) || '-',
+        _project: (prjLut && colIdx._prji !== undefined && prjLut[+cols[colIdx._prji]]) || '-',
+        _price: priceVal,
+        _price_str: formatThbPriceStr(priceVal),
+        _unit_price: (colIdx._up !== undefined && cols[colIdx._up]) ? (+cols[colIdx._up] || 0) : 0,
+        _sqw: (colIdx._sqw !== undefined && cols[colIdx._sqw]) ? (+cols[colIdx._sqw] || 0) : 0,
+        _sqm: (colIdx._sqm !== undefined && cols[colIdx._sqm]) ? (+cols[colIdx._sqm] || 0) : 0,
+        _puw: (colIdx._puw !== undefined && cols[colIdx._puw]) ? (+cols[colIdx._puw] || 0) : 0,
+        _pum: (colIdx._pum !== undefined && cols[colIdx._pum]) ? (+cols[colIdx._pum] || 0) : 0,
+        _fl: (colIdx._fl !== undefined) ? _optNum(cols[colIdx._fl], -1) : -1,
+        _bed: (colIdx._bed !== undefined) ? _optNum(cols[colIdx._bed], -1) : -1,
+        _bath: (colIdx._bath !== undefined) ? _optNum(cols[colIdx._bath], -1) : -1,
+        _pkg: (colIdx._pkg !== undefined) ? _optNum(cols[colIdx._pkg], -1) : -1,
+        _age: (colIdx._age !== undefined) ? _optNum(cols[colIdx._age], -1) : -1,
+        _sold_p: (colIdx._sold_p !== undefined && cols[colIdx._sold_p]) ? (+cols[colIdx._sold_p] || 0) : 0,
+        _sold_date: (soldDateIdx !== undefined && cols[soldDateIdx]) || '',
+        _plaintiff: (plaintiffLut && plaintiffLut[ptiCode]) || '',
+        _normKey: '',
+        _detailLoaded: !hasDeferredDetails
+      });
+    };
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+        const textChunk = decoder.decode(value, { stream: true });
+        if (!textChunk) continue;
+        let combined = leftover + textChunk;
+        let nlIdx = combined.indexOf('\n');
+        let startPos = 0;
+        while (nlIdx !== -1) {
+          processLine(combined.slice(startPos, nlIdx));
+          startPos = nlIdx + 1;
+          nlIdx = combined.indexOf('\n', startPos);
+        }
+        leftover = combined.slice(startPos);
+        if (typeof onProgress === 'function' && lineNo >= 2) {
+          const now = Date.now();
+          if (now - lastEmitAt >= 180) {
+            lastEmitAt = now;
+            if (expectedRows > 0) {
+              const pctRows = Math.min(99, Math.round((data.length / expectedRows) * 100));
+              const uiPct = 90 + Math.round(pctRows * 0.07);
+              onProgress(uiPct, 'กำลังโหลดพิกัดแผนที่ ' + pctRows + '% (' + data.length.toLocaleString() + ' จุด)...');
+            } else {
+              onProgress(94, 'กำลังโหลดพิกัดแผนที่ (' + data.length.toLocaleString() + ' จุด)...');
+            }
+          }
+        }
+      }
+      const tail = decoder.decode();
+      if (tail) leftover += tail;
+      if (leftover && leftover.length > 0) {
+        processLine(leftover);
+      }
+      leftover = '';
+    } finally {
+      try { reader.releaseLock(); } catch (_e) {}
+    }
+
+    if (legacyJsonParts) {
+      const lutObj = legacyJsonParts && typeof legacyJsonParts.lut === 'object' ? legacyJsonParts.lut : null;
+      const resolvedMtime = expectedMtime || String((legacyJsonParts && legacyJsonParts.mtime) || '');
+      let csvText = legacyJsonParts && legacyJsonParts.csv ? String(legacyJsonParts.csv) : '';
+      legacyJsonParts.csv = '';
+      legacyJsonParts = null;
+      const res = await _buildCacheObjFromDecoded(resolvedMtime, lutObj, csvText, onProgress);
+      csvText = '';
+      return res;
+    }
+
+    if (!headerObj || !data.length) {
+      throw new Error('ไม่สามารถอ่านข้อมูลแคชแผนที่ได้');
+    }
+
+    const detailMeta = headerObj.detail;
+    const detailConfig = (detailMeta && detailMeta.dir)
+      ? {
+          dir: detailMeta.dir,
+          baseUrl: _resolveDetailBaseUrl(winningPayloadUrl, detailMeta.dir),
+          chunkSize: Number(detailMeta.chunk_size) || 7000,
+          chunks: Number(detailMeta.chunks) || 0
+        }
+      : null;
+
+    const resolvedMtime = expectedMtime || String(headerObj.mtime || '');
+    return await _finalizeCacheObj(resolvedMtime, headerObj.lut, data, detailConfig, onProgress);
+  }
+
+  function _expandChunkLink(encLink, lp) {
+    if (!encLink) return '';
+    const bar = encLink.indexOf('|');
+    if (bar < 0) return encLink;
+    const prefIdxStr = encLink.slice(0, bar);
+    const rest = encLink.slice(bar + 1);
+    if (!prefIdxStr) return rest;
+    const pref = (lp && lp[+prefIdxStr]) || '';
+    return pref + rest;
+  }
+
+  async function loadDetailChunk(cacheObj, chunkIdx) {
+    const c = cacheObj || getValidParentCache();
+    if (!c || !c.detailConfig || !c.detailConfig.baseUrl) return true;
+    const idx = Number(chunkIdx);
+    if (!Number.isInteger(idx) || idx < 0) return false;
+    if (c.detailConfig.chunks > 0 && idx >= c.detailConfig.chunks) return false;
+
+    if (!c.loadedDetailChunks) c.loadedDetailChunks = new Set();
+    if (!c.inflightDetailChunks) c.inflightDetailChunks = new Map();
+    if (c.loadedDetailChunks.has(idx)) return true;
+
+    const pending = c.inflightDetailChunks.get(idx);
+    if (pending) return await pending;
+
+    const chunkFile = 'c' + String(idx).padStart(2, '0') + '.gz';
+    const chunkUrl = c.detailConfig.baseUrl + '/' + chunkFile;
+    const candidates = resolveStaticUrlCandidates(chunkUrl);
+
+    const p = (async () => {
+      let jsonText = '';
+      let lastErr = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const { resp } = await _fetchStaticPayloadResponse(candidates);
+          jsonText = await _readResponseTextAutoGzip(resp, null, attempt === 1);
+          if (jsonText && jsonText.charCodeAt(0) === 123) {
+            lastErr = null;
+            break;
+          }
+          lastErr = new Error('Invalid detail chunk JSON');
+        } catch (err) {
+          lastErr = err;
+          if (attempt === 0) await new Promise((r) => setTimeout(r, 200));
+        }
+      }
+      if (lastErr || !jsonText) {
+        throw lastErr || new Error('Failed to load detail chunk ' + chunkFile);
+      }
+      const parsed = JSON.parse(jsonText);
+      const startUid = Number(parsed && parsed.s) || 0;
+      const lp = (parsed && Array.isArray(parsed.lp)) ? parsed.lp : [];
+      const rows = (parsed && Array.isArray(parsed.r)) ? parsed.r : [];
+      const dataArr = c.data || [];
+      for (let i = 0; i < rows.length; i++) {
+        const target = dataArr[startUid + i];
+        if (!target) continue;
+        const rec = rows[i];
+        if (Array.isArray(rec)) {
+          target._title = rec[0] || '';
+          target._link = rec[1] ? _expandChunkLink(rec[1], lp) : '';
+          target._deed = rec[2] || '';
+          target._sold_date = rec[3] || '';
+        }
+        target._detailLoaded = true;
+      }
+      c.loadedDetailChunks.add(idx);
+      return true;
+    })();
+
+    c.inflightDetailChunks.set(idx, p);
+    try {
+      return await p;
+    } finally {
+      if (c.inflightDetailChunks.get(idx) === p) {
+        c.inflightDetailChunks.delete(idx);
+      }
+    }
+  }
+
+  async function ensureDetailsForItems(items, cacheObj) {
+    const c = cacheObj || getValidParentCache();
+    if (!c || !c.detailConfig || !c.detailConfig.baseUrl) return true;
+    const list = Array.isArray(items) ? items : (items ? [items] : []);
+    if (!list.length) return true;
+    const chunkSize = c.detailConfig.chunkSize || 7000;
+    const needed = new Set();
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i];
+      if (!it || it._detailLoaded) continue;
+      const uid = Number(it._uid);
+      if (!Number.isInteger(uid) || uid < 0) continue;
+      const ci = Math.floor(uid / chunkSize);
+      if (!c.loadedDetailChunks || !c.loadedDetailChunks.has(ci)) {
+        needed.add(ci);
+      }
+    }
+    if (needed.size === 0) return true;
+    const tasks = [];
+    needed.forEach((ci) => {
+      tasks.push(loadDetailChunk(c, ci).catch(() => false));
+    });
+    await Promise.all(tasks);
+    return true;
+  }
+
+  function prefetchDetailForItem(item, cacheObj) {
+    if (!item || item._detailLoaded) return;
+    ensureDetailsForItems([item], cacheObj).catch(() => {});
   }
 
   async function _fetchStaticPayloadResponse(candidates) {
@@ -1071,17 +1611,13 @@
         await yieldIfVisible();
       }
       const candidates = resolveStaticUrlCandidates(payloadUrl);
-      let jsonText = '';
       let lastReadErr = null;
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const { resp } = await _fetchStaticPayloadResponse(candidates);
-          // Attempt 0: native streaming pipeThrough; Attempt 1: buffered arrayBuffer + magic-byte check
-          jsonText = await _readResponseTextAutoGzip(resp, onProgress, attempt === 1);
-          if (jsonText && jsonText.length > 2) {
-            lastReadErr = null;
-            break;
-          }
+          const { resp, url: winningUrl } = await _fetchStaticPayloadResponse(candidates);
+          // Attempt 0: true magic-byte streaming pipeThrough; Attempt 1: buffered arrayBuffer + magic-byte check
+          const textStream = await _openAutoGzipTextStream(resp, attempt === 1);
+          return await _streamParseBundleToCacheObj(textStream, mtimeStr, winningUrl, onProgress);
         } catch (err) {
           lastReadErr = err;
           if (attempt === 0) {
@@ -1092,25 +1628,7 @@
           }
         }
       }
-      if (lastReadErr || !jsonText) {
-        throw lastReadErr || new Error('ไม่สามารถอ่านข้อมูลแคชแผนที่ได้');
-      }
-      if (typeof onProgress === 'function') {
-        onProgress(94, 'กำลังอ่านโครงสร้างข้อมูลแผนที่ (JSON)...');
-        await yieldIfVisible();
-      }
-      let parsed = JSON.parse(jsonText);
-      jsonText = '';
-      const lutObj = parsed && typeof parsed.lut === 'object' ? parsed.lut : null;
-      const resolvedMtime = mtimeStr || String((parsed && parsed.mtime) || '');
-      let csvText = parsed && parsed.csv ? String(parsed.csv) : '';
-      if (parsed) {
-        parsed.csv = '';
-        parsed = null;
-      }
-      const res = await _buildCacheObjFromDecoded(resolvedMtime, lutObj, csvText, onProgress);
-      csvText = '';
-      return res;
+      throw lastReadErr || new Error('ไม่สามารถอ่านข้อมูลแคชแผนที่ได้');
     })();
 
     if (host) {
@@ -1339,10 +1857,14 @@
     buildProjectIndex: buildProjectIndex,
     buildIdLookupIndex: buildIdLookupIndex,
     computeTypeCounts: computeTypeCounts,
+    getEffectiveSelfOrigin: getEffectiveSelfOrigin,
     getParentHost: getParentHost,
     getValidParentCache: getValidParentCache,
     buildAndStoreParentCache: buildAndStoreParentCache,
     fetchAndBuildParentCache: fetchAndBuildParentCache,
+    loadDetailChunk: loadDetailChunk,
+    ensureDetailsForItems: ensureDetailsForItems,
+    prefetchDetailForItem: prefetchDetailForItem,
     getParentBoundaryCache: getParentBoundaryCache,
     storeParentBoundaryCache: storeParentBoundaryCache,
     getParentTileCache: getParentTileCache,

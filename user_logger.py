@@ -369,11 +369,33 @@ def _get_trusted_proxies():
     return {p.strip() for p in raw.split(",") if p.strip()}
 
 
+def _ip_matches_trusted(clean_ip, trusted_proxies=None):
+    if not clean_ip:
+        return False
+    proxies = _get_trusted_proxies() if trusted_proxies is None else trusted_proxies
+    if not proxies:
+        return False
+    if clean_ip in proxies:
+        return True
+    try:
+        ip_obj = ipaddress.ip_address(clean_ip)
+    except ValueError:
+        return False
+    for entry in proxies:
+        if "/" in entry:
+            try:
+                if ip_obj in ipaddress.ip_network(entry, strict=False):
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
 def _is_trusted_proxy(direct_ip):
     if not direct_ip:
         return False
     norm = _extract_clean_ip(direct_ip)
-    return norm in _get_trusted_proxies()
+    return _ip_matches_trusted(norm)
 
 
 def get_client_ip():
@@ -392,11 +414,12 @@ def get_client_ip():
 
         trusted_proxies = _get_trusted_proxies()
         norm_direct = _extract_clean_ip(direct_ip) if direct_ip else ""
+        is_trusted_peer = _ip_matches_trusted(norm_direct, trusted_proxies)
 
-        if direct_ip and not (trusted_proxies and norm_direct in trusted_proxies):
+        if direct_ip and not is_trusted_peer:
             return re.sub(r'[^a-zA-Z0-9_\-\.\:]', '_', str(direct_ip).strip())[:45]
 
-        if trusted_proxies and norm_direct in trusted_proxies:
+        if is_trusted_peer:
             headers = getattr(st.context, "headers", {})
             ip_headers = [
                 "X-Forwarded-For",
@@ -418,7 +441,7 @@ def get_client_ip():
                         if ip and ip not in ("", "unknown", "::1"):
                             try:
                                 valid_ip = str(ipaddress.ip_address(ip))
-                                if valid_ip in trusted_proxies:
+                                if _ip_matches_trusted(valid_ip, trusted_proxies):
                                     continue
                                 return f"{valid_ip} (Proxy)"
                             except ValueError:

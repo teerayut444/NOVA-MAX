@@ -949,15 +949,13 @@ function setMapPinMode(mode) {
     referencePoint = null;
     updateDeckLayers();
     updateSvgBoundaries();
-    const hasProvSelected = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
-    const hasDistOrSubdistSelected = Boolean(
-      (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
-      (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
-    );
+    const hasProvSelected = currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__';
+    const hasDistOrSubdist = (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__')
+      || (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__');
     if (!hasProvSelected) {
-      showToast('<i class="fa-solid fa-hand-pointer" style="color:#059669; margin-right:6px;"></i>กรุณาเลือกจังหวัดและอำเภอ/เขต ทางซ้ายบน เพื่อแสดงหมุดตามทำเล');
-    } else if (!hasDistOrSubdistSelected) {
-      showToast('<i class="fa-solid fa-hand-pointer" style="color:#059669; margin-right:6px;"></i>กรุณาเลือกอำเภอ/เขต ทางซ้ายบน เพื่อแสดงหมุดตามทำเล');
+      showToast('<i class="fa-solid fa-hand-pointer" style="color:#059669; margin-right:6px;"></i>กรุณาเลือกจังหวัด และอำเภอ/ตำบลทางซ้ายบน เพื่อแสดงหมุดตามทำเล');
+    } else if (!hasDistOrSubdist && !currentRefProp) {
+      showToast('<i class="fa-solid fa-hand-pointer" style="color:#059669; margin-right:6px;"></i>กรุณาเลือกอำเภอ/เขต หรือตำบล/แขวง เพื่อแสดงหมุดบนแผนที่');
     }
   }
 
@@ -1106,13 +1104,14 @@ function loadProvinceBoundariesAsync() {
     if (pBound && pBound.provinces && Object.keys(pBound.provinces).length > 0) {
       window.ALL_PROVINCES_BOUNDARIES = pBound.provinces;
     }
+    const _resStatic = (typeof resolveNovaStaticUrl === 'function') ? resolveNovaStaticUrl : (u => u);
     if (!window.ALL_PROVINCES_BOUNDARIES || Object.keys(window.ALL_PROVINCES_BOUNDARIES).length === 0) {
-      await _loadScriptAsync('/app/static/provinces_geojson.js?v=20261001');
+      await _loadScriptAsync(_resStatic('/app/static/provinces_geojson.js?v=20261001'));
     }
     if (!window.ALL_PROVINCES_BOUNDARIES || Object.keys(window.ALL_PROVINCES_BOUNDARIES).length === 0) {
       const _bUrls = (typeof window.resolveStaticUrlCandidates === 'function')
-        ? window.resolveStaticUrlCandidates('/app/static/provinces_geojson.json')
-        : ['/app/static/provinces_geojson.json', '/~/+/app/static/provinces_geojson.json'];
+        ? window.resolveStaticUrlCandidates(_resStatic('/app/static/provinces_geojson.json'))
+        : [_resStatic('/app/static/provinces_geojson.json'), '/app/static/provinces_geojson.json', '/~/+/app/static/provinces_geojson.json'];
       for (const u of _bUrls) {
         try {
           const resp = await fetch(u);
@@ -1153,13 +1152,14 @@ function loadSubdistrictBoundariesAsync() {
     if (pBound && pBound.subdistricts && Object.keys(pBound.subdistricts).length > 0) {
       window.ALL_SUBDISTRICTS_BOUNDARIES = pBound.subdistricts;
     }
+    const _resStatic = (typeof resolveNovaStaticUrl === 'function') ? resolveNovaStaticUrl : (u => u);
     if (!window.ALL_SUBDISTRICTS_BOUNDARIES || Object.keys(window.ALL_SUBDISTRICTS_BOUNDARIES).length === 0) {
-      await _loadScriptAsync('/app/static/subdistricts_geojson.js?v=20261001');
+      await _loadScriptAsync(_resStatic('/app/static/subdistricts_geojson.js?v=20261001'));
     }
     if (!window.ALL_SUBDISTRICTS_BOUNDARIES || Object.keys(window.ALL_SUBDISTRICTS_BOUNDARIES).length === 0) {
       const _subUrls = (typeof window.resolveStaticUrlCandidates === 'function')
-        ? window.resolveStaticUrlCandidates('/app/static/subdistricts_geojson.json?v=20261001')
-        : ['/app/static/subdistricts_geojson.json?v=20261001', '/~/+/app/static/subdistricts_geojson.json?v=20261001'];
+        ? window.resolveStaticUrlCandidates(_resStatic('/app/static/subdistricts_geojson.json?v=20261001'))
+        : [_resStatic('/app/static/subdistricts_geojson.json?v=20261001'), '/app/static/subdistricts_geojson.json?v=20261001', '/~/+/app/static/subdistricts_geojson.json?v=20261001'];
       for (const u of _subUrls) {
         try {
           const resp = await fetch(u);
@@ -1301,6 +1301,7 @@ function onMapProvinceChange(prov) {
     currentSelectedSubdist = '';
     currentRefProp = null;
     referencePoint = null;
+    if (typeof closePropertyCard === 'function') closePropertyCard();
 
     cachedScopedProjectsKey = '';
     if (inMapFilterState && inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) {
@@ -1351,7 +1352,11 @@ function onMapProvinceChange(prov) {
     // 5. Center & Fly to province
     flyToCurrentLocation();
 
-    const hasActiveProj = inMapFilterState && ((inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) || (inMapFilterState.samProject && inMapFilterState.samProject !== '') || inMapFilterState.onlyWithProject);
+    const hasActiveProj = inMapFilterState && (
+      (inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) ||
+      (inMapFilterState.samProject && inMapFilterState.samProject !== '') ||
+      inMapFilterState.onlyWithProject
+    );
     if (selectedProv && !hasActiveProj) {
       showToast(`<i class="fa-solid fa-map-location-dot" style="color:#059669; margin-right:6px;"></i>จังหวัด${escapeHtml(selectedProv)}: กรุณาเลือกอำเภอ/เขต เพื่อแสดงหมุดทรัพย์สิน`);
     }
@@ -1381,24 +1386,30 @@ function onMapProvinceChange(prov) {
   } catch(e) {
     console.warn('onMapProvinceChange error:', e);
   }
-  // 7. Auto-sync to Streamlit for realtime comparison
+  // 7. Auto-sync to Streamlit only when clearing province, when a project is active,
+  //    or when an existing analytics fragment is currently open and needs to be hidden
   const curProjProv = (inMapFilterState && inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0)
     ? Array.from(inMapFilterState.samProjects).join(',')
     : (inMapFilterState && inMapFilterState.samProject ? inMapFilterState.samProject : '');
-  triggerStreamlitSync({
-    prov: (selectedProv && selectedProv !== '__ALL__') ? selectedProv.trim() : '__ALL__',
-    dist: '',
-    subdist: '',
-    proj: curProjProv,
-    cos: (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) ? Array.from(inMapFilterState.companies) : [],
-    types: (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) ? Array.from(inMapFilterState.types) : [],
-    id: '',
-    price_center_id: '',
-    lat: 0,
-    lon: 0,
-    mode: 'location',
-    compare_active: true
-  });
+  const shouldSyncProvChange = !selectedProv
+    || Boolean(curProjProv)
+    || (typeof hasActiveParentAnalyticsFragment === 'function' && hasActiveParentAnalyticsFragment());
+  if (shouldSyncProvChange) {
+    triggerStreamlitSync({
+      prov: (selectedProv && selectedProv !== '__ALL__') ? selectedProv.trim() : '__ALL__',
+      dist: '',
+      subdist: '',
+      proj: curProjProv,
+      cos: (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) ? Array.from(inMapFilterState.companies) : [],
+      types: (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) ? Array.from(inMapFilterState.types) : [],
+      id: '',
+      price_center_id: '',
+      lat: 0,
+      lon: 0,
+      mode: 'location',
+      compare_active: true
+    });
+  }
 }
 
 function onMapDistrictChange(dist) {
@@ -1408,6 +1419,7 @@ function onMapDistrictChange(dist) {
     currentSelectedSubdist = '';
     currentRefProp = null;
     referencePoint = null;
+    if (!selectedDist && typeof closePropertyCard === 'function') closePropertyCard();
 
     cachedScopedProjectsKey = '';
     if (inMapFilterState && inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) {
@@ -1475,21 +1487,26 @@ function onMapDistrictChange(dist) {
   } catch(e) {
     console.warn('onMapDistrictChange error:', e);
   }
-  // 7. Auto-sync to Streamlit for realtime comparison
+  // 7. Auto-sync to Streamlit when a district/project is selected or when an existing fragment needs to be hidden
   const curProjDist = (inMapFilterState && inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0)
     ? Array.from(inMapFilterState.samProjects).join(',')
     : (inMapFilterState && inMapFilterState.samProject ? inMapFilterState.samProject : '');
-  triggerStreamlitSync({
-    prov: (currentSelectedProv && currentSelectedProv !== '__ALL__') ? currentSelectedProv.trim() : '',
-    dist: (selectedDist && selectedDist !== '__ALL__') ? selectedDist.trim() : '',
-    subdist: '',
-    proj: curProjDist,
-    cos: (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) ? Array.from(inMapFilterState.companies) : [],
-    types: (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) ? Array.from(inMapFilterState.types) : [],
-    id: '',
-    mode: 'location',
-    compare_active: true
-  });
+  const shouldSyncDistChange = Boolean(selectedDist)
+    || Boolean(curProjDist)
+    || (typeof hasActiveParentAnalyticsFragment === 'function' && hasActiveParentAnalyticsFragment());
+  if (shouldSyncDistChange) {
+    triggerStreamlitSync({
+      prov: (currentSelectedProv && currentSelectedProv !== '__ALL__') ? currentSelectedProv.trim() : '',
+      dist: (selectedDist && selectedDist !== '__ALL__') ? selectedDist.trim() : '',
+      subdist: '',
+      proj: curProjDist,
+      cos: (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) ? Array.from(inMapFilterState.companies) : [],
+      types: (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) ? Array.from(inMapFilterState.types) : [],
+      id: '',
+      mode: 'location',
+      compare_active: true
+    });
+  }
 }
 
 function onMapSubdistrictChange(subdist) {
@@ -1978,7 +1995,8 @@ function searchPropertyIdAsReference(idStr) {
     showPropertyCard(match, true);
 
     const locDetail = [match._subdistrict, match._district, match._prov].filter(x => x && x !== '-' && x !== 'ไม่มีข้อมูล').join(' ');
-    showToast(`<i class="fa-solid fa-location-crosshairs" style="color:#10b981; margin-right:4px;"></i>พบรหัส [${match._company}] ${match._id}: ${match._title || ''} (${locDetail})`);
+    const toastTitle = match._title || (match._project && match._project !== '-' ? match._project : match._type) || '';
+    showToast(`<i class="fa-solid fa-location-crosshairs" style="color:#10b981; margin-right:4px;"></i>พบรหัส [${match._company}] ${match._id}: ${toastTitle} (${locDetail})`);
 
     try {
       if (window.parent) {

@@ -381,17 +381,11 @@ function updateLegendContent() {
   ));
 
   let dataForLegend = [];
-  const hasProvSelectedForLegend = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
-  const hasDistOrSubdistForLegend = Boolean(
-    (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
-    (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
-  );
-  const hasOnlyProjForLegend = !!(inMapFilterState && inMapFilterState.onlyWithProject);
-
   if (hasProjFilter) {
     dataForLegend = (currentNearbyData && currentNearbyData.length > 0) ? currentNearbyData : (currentScopePool || []);
   } else if (mapPinMode === 'location') {
-    if (!hasDistOrSubdistForLegend && !hasOnlyProjForLegend) {
+    const hasProvSelected = currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__';
+    if (!hasProvSelected) {
       dataForLegend = [];
     } else {
       dataForLegend = currentNearbyData || [];
@@ -416,13 +410,9 @@ function updateLegendContent() {
     if (hasProjFilter) {
       emptyMsg = 'ไม่พบพิกัดทรัพย์สินในโครงการที่เลือก';
     } else if (mapPinMode === 'location') {
-      if (hasDistOrSubdistForLegend || hasOnlyProjForLegend) {
-        emptyMsg = 'ไม่พบทรัพย์สินตามเงื่อนไขที่เลือก';
-      } else if (hasProvSelectedForLegend) {
-        emptyMsg = 'กรุณาเลือกอำเภอ/เขต เพื่อแสดงหมุดทรัพย์สิน';
-      } else {
-        emptyMsg = 'กรุณาเลือกจังหวัดและอำเภอ/เขต ในแถบด้านบน';
-      }
+      emptyMsg = (currentSelectedProv && currentSelectedProv !== '__ALL__')
+        ? 'ไม่พบทรัพย์สินตามเงื่อนไขที่เลือก'
+        : 'กรุณาเลือกจังหวัด และอำเภอ/ตำบล ในแถบด้านบน';
     } else {
       emptyMsg = referencePoint ? 'ไม่พบทรัพย์สินในรัศมีที่กำหนด' : 'คลิกบนแผนที่เพื่อปักหมุดรัศมี';
     }
@@ -811,7 +801,7 @@ function toggleCardPropertyComparison() {
       _id: id,
       lat: parseFloat(activePropertyData.lat),
       lon: parseFloat(activePropertyData.lon),
-      title: activePropertyData._title || '',
+      title: activePropertyData._title || (activePropertyData._project && activePropertyData._project !== '-' ? activePropertyData._project : activePropertyData._type) || '',
       price: activePropertyData._price_str || '',
       company: activePropertyData._company || '',
       type: activePropertyData._type || '',
@@ -1017,6 +1007,49 @@ function createPreviewDotLayer() {
   });
 }
 
+function isProvinceOnlyLocationState() {
+  if (mapPinMode !== 'location') return false;
+  const hasProjFilter = Boolean(inMapFilterState && (
+    (inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) ||
+    (inMapFilterState.samProject && inMapFilterState.samProject !== '')
+  ));
+  if (hasProjFilter || referencePoint || currentRefProp) return false;
+  const hasProvSelected = Boolean(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
+  const hasDistSelected = Boolean(currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__');
+  const hasSubdistSelected = Boolean(currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__');
+  return hasProvSelected && !hasDistSelected && !hasSubdistSelected;
+}
+
+function hasActiveParentAnalyticsFragment() {
+  try {
+    return Boolean(window.parent && window.parent.document && window.parent.document.getElementById('median-card-1'));
+  } catch (_e) {
+    return false;
+  }
+}
+
+function shouldRenderMapPins() {
+  if (!currentNearbyData || currentNearbyData.length === 0) return false;
+  const hasProjFilter = Boolean(inMapFilterState && (
+    (inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) ||
+    (inMapFilterState.samProject && inMapFilterState.samProject !== '')
+  ));
+  if (hasProjFilter) return true;
+  if (mapPinMode === 'radius') return Boolean(referencePoint);
+
+  const hasProvSelected = Boolean(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
+  const hasDistSelected = Boolean(currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__');
+  const hasSubdistSelected = Boolean(currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__');
+  if (hasProvSelected) {
+    // Do not render pins when only a province is selected; show pins once district or subdistrict is chosen (or an explicit searched property)
+    return hasDistSelected || hasSubdistSelected || Boolean(currentRefProp);
+  }
+
+  const hasOnlyProjFilter = Boolean(inMapFilterState && inMapFilterState.onlyWithProject);
+  const hasCompaniesFilter = Boolean(inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0);
+  return hasOnlyProjFilter || (hasCompaniesFilter && inMapFilterState.companies.size <= 2);
+}
+
 function updateDeckLayers() {
   if (!deckglInstance) return;
   const basemapLayer = createBasemapLayer(currentStyle);
@@ -1067,8 +1100,8 @@ function updateDeckLayers() {
     if (prevDot) layers.push(prevDot);
   }
 
-  // Render Property Points (in location mode: all matching location pins; in radius mode: nearby pins)
-  if (currentNearbyData && currentNearbyData.length > 0) {
+  // Render Property Points (in location mode: only when district/subdistrict is selected; in radius/project mode: matching pins)
+  if (shouldRenderMapPins()) {
     const ptLayers = createPointLayers(currentNearbyData);
     if (ptLayers && ptLayers.length > 0) {
       layers.push(...ptLayers);
@@ -1836,39 +1869,48 @@ function applyInMapFilters(skipParentNotify = false) {
       countEl.innerText = `โครงการ: ${projDesc}${locDesc} (${currentNearbyData.length.toLocaleString()} รายการ)`;
     }
   } else if (mapPinMode === 'location') {
-    const hasProvSelected = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
-    const hasDistOrSubdistSelected = Boolean(
-      (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
-      (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
-    );
+    const hasProvSelected = Boolean(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
+    const hasDistSelected = Boolean(currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__');
+    const hasSubdistSelected = Boolean(currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__');
     const hasOnlyProjFilter = !!(inMapFilterState && inMapFilterState.onlyWithProject);
     const hasCompaniesFilter = !!(inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0);
+    const allowNationwidePins = hasOnlyProjFilter || (hasCompaniesFilter && inMapFilterState.companies.size <= 2);
 
-    if (!hasDistOrSubdistSelected && !hasOnlyProjFilter) {
+    if (!hasProvSelected && !allowNationwidePins) {
       currentScopePool = [];
       currentNearbyData = [];
       currentCoordMap = new Map();
       updateDuplicateStats(currentNearbyData, currentCoordMap);
 
       const statusEl = document.getElementById('radius-status-text');
+      if (statusEl) {
+        statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-map-location-dot" style="margin-right:4px;"></i> ทุกจังหวัด:</span> กรุณาเลือกจังหวัด และอำเภอ/ตำบล เพื่อแสดงหมุดตามทำเล`;
+      }
       const countEl = document.getElementById('points-count');
-      if (hasProvSelected) {
-        if (statusEl) {
-          statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-map-location-dot" style="margin-right:4px;"></i> ${escapeHtml(currentSelectedProv)}:</span> กรุณาเลือกอำเภอ/เขต เพื่อแสดงหมุดทรัพย์สิน`;
-        }
-        if (countEl) {
-          countEl.innerText = `${currentSelectedProv}: กรุณาเลือกอำเภอ/เขต เพื่อแสดงหมุดทรัพย์สิน`;
-        }
-      } else {
-        if (statusEl) {
-          statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-map-location-dot" style="margin-right:4px;"></i> ทุกจังหวัด:</span> กรุณาเลือกจังหวัดและอำเภอ/เขต เพื่อแสดงหมุดตามทำเล`;
-        }
-        if (countEl) {
-          countEl.innerText = `ทุกจังหวัด: กรุณาเลือกจังหวัดและอำเภอ/เขต เพื่อแสดงหมุด`;
-        }
+      if (countEl) {
+        countEl.innerText = `ทุกจังหวัด: กรุณาเลือกจังหวัด และอำเภอ/ตำบล เพื่อแสดงหมุด`;
+      }
+    } else if (hasProvSelected && !hasDistSelected && !hasSubdistSelected && !currentRefProp) {
+      // Province-only selection: keep province stats for KPI/Median/Legend/Table, but hide map pins until district or subdistrict is selected
+      currentScopePool = (cachedData || []).filter(isItemInCurrentLocation);
+      currentNearbyData = currentScopePool.filter(filterItemPasses);
+      currentCoordMap = new Map();
+
+      const overlapText = document.getElementById('legend-overlap-text');
+      if (overlapText) {
+        overlapText.innerHTML = `เลือกอำเภอ/เขต หรือตำบล/แขวง เพื่อแสดงหมุดบนแผนที่`;
+      }
+
+      const statusEl = document.getElementById('radius-status-text');
+      if (statusEl) {
+        statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-map-location-dot" style="margin-right:4px;"></i> จ.${escapeHtml(currentSelectedProv)}:</span> พบ <b>${currentNearbyData.length.toLocaleString()}</b> รายการ — กรุณาเลือกอำเภอ/เขต หรือตำบล/แขวง เพื่อแสดงหมุด`;
+      }
+      const countEl = document.getElementById('points-count');
+      if (countEl) {
+        countEl.innerText = `จ.${currentSelectedProv}: พบ ${currentNearbyData.length.toLocaleString()} รายการ (เลือกอำเภอ/ตำบลเพื่อแสดงหมุด)`;
       }
     } else {
-      // Location mode: district/subdistrict selected OR nationwide/province with onlyWithProject filter
+      // Location mode with district/subdistrict selected (or nationwide with specific filters e.g. onlyWithProject)
       currentScopePool = hasProvSelected ? (cachedData || []).filter(isItemInCurrentLocation) : (cachedData || []);
       currentNearbyData = currentScopePool.filter(filterItemPasses);
       currentCoordMap = buildCoordMap(currentNearbyData);
@@ -2070,7 +2112,9 @@ function notifyParentFilterChange() {
         u.searchParams.delete('map_filter_only_proj');
       }
       window.parent.history.replaceState({}, '', u.toString());
-      triggerStreamlitSync(null, 80);
+      if (!isProvinceOnlyLocationState() || hasActiveParentAnalyticsFragment()) {
+        triggerStreamlitSync(null, 80);
+      }
     } catch(e) {
       console.warn('notifyParentFilterChange error:', e);
     }

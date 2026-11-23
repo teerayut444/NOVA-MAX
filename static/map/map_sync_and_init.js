@@ -81,13 +81,9 @@ function calculateKpiStats(data) {
 function _getSharedActiveParentData() {
   const hasRef = !!referencePoint;
   const isRadiusMode = (mapPinMode === 'radius');
-  const hasDistOrSubdist = Boolean(
-    (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
-    (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
-  );
-  const hasOnlyProjFilter = !!(inMapFilterState && inMapFilterState.onlyWithProject);
+  const hasProv = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
   const hasProjFilter = inMapFilterState && ((inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) || (inMapFilterState.samProject && inMapFilterState.samProject !== ''));
-  if (hasProjFilter || (isRadiusMode && hasRef) || (mapPinMode === 'location' && (hasDistOrSubdist || hasOnlyProjFilter))) {
+  if (hasProjFilter || (isRadiusMode && hasRef) || (mapPinMode === 'location' && hasProv)) {
     return (currentNearbyData && currentNearbyData.length > 0) ? currentNearbyData : [];
   }
   return (cachedData || []).filter(filterItemPasses);
@@ -113,11 +109,6 @@ function updateParentKpiCards(sharedActiveData) {
   let subCountDesc = '';
   let subTotalDesc = '';
 
-  const hasDistOrSubdist = Boolean(
-    (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
-    (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
-  );
-  const hasOnlyProjFilter = !!(inMapFilterState && inMapFilterState.onlyWithProject);
   const hasProjFilter = inMapFilterState && ((inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) || (inMapFilterState.samProject && inMapFilterState.samProject !== ''));
   const hasOtherFilters = inMapFilterState && (
     (inMapFilterState.companies && inMapFilterState.companies.size > 0) ||
@@ -143,11 +134,10 @@ function updateParentKpiCards(sharedActiveData) {
     scopeBadgeText = projDesc;
     subCountDesc = `โครงการ: ${projDesc}`;
     subTotalDesc = `มูลค่ารวมในโครงการ`;
-  } else if (mapPinMode === 'location' && (hasDistOrSubdist || hasOnlyProjFilter)) {
+  } else if (mapPinMode === 'location' && currentSelectedProv && currentSelectedProv !== '__ALL__') {
     activeData = Array.isArray(sharedActiveData) ? sharedActiveData : ((currentNearbyData && currentNearbyData.length > 0) ? currentNearbyData : []);
-    let locDesc = (currentSelectedProv && currentSelectedProv !== '__ALL__') ? currentSelectedProv : 'ทั่วประเทศ';
+    let locDesc = currentSelectedProv;
     if (currentSelectedDist) locDesc += ' > ' + currentSelectedDist;
-    if (currentSelectedSubdist) locDesc += ' > ' + currentSelectedSubdist;
     scopeBadgeText = locDesc;
     subCountDesc = `ตามทำเล: ${locDesc}`;
     subTotalDesc = `มูลค่ารวมในพื้นที่เลือก`;
@@ -233,16 +223,10 @@ function updateParentFilterStatusBanner(sharedActiveData) {
     const hasRef = !!referencePoint;
     const isRadiusMode = (mapPinMode === 'radius');
     const hasProv = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
-    const hasDistOrSubdist = Boolean(
-      (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__') ||
-      (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__')
-    );
-    const hasOnlyProjFilter = !!(inMapFilterState && inMapFilterState.onlyWithProject);
     const hasProjFilter = inMapFilterState && ((inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) || (inMapFilterState.samProject && inMapFilterState.samProject !== ''));
-    const isProvOnlyWaitingForDist = !hasRef && !hasProjFilter && !hasOnlyProjFilter && mapPinMode === 'location' && hasProv && !hasDistOrSubdist;
     const activeData = Array.isArray(sharedActiveData) ? sharedActiveData : _getSharedActiveParentData();
 
-    const matchedCount = isProvOnlyWaitingForDist ? 0 : activeData.length;
+    const matchedCount = activeData.length;
 
     // 1. Mode Badge
     const modeBadgeEl = pdoc.getElementById('active-filter-mode-val');
@@ -286,7 +270,7 @@ function updateParentFilterStatusBanner(sharedActiveData) {
         const cleanD = dist.split(' (')[0].trim();
         locStr = `จ.${prov || '-'} > อ.${cleanD}`;
       } else if (prov) {
-        locStr = isProvOnlyWaitingForDist ? `จ.${prov} (รอเลือกอำเภอ/เขต)` : `จ.${prov}`;
+        locStr = `จ.${prov}`;
       }
 
       if (hasProjFilter) {
@@ -877,6 +861,18 @@ function updateParentMedianCards(sharedActiveData) {
 let kpiUpdateRaf = null;
 let _parentTabRetryTimer = null;
 let _ttObserverInstance = null;
+
+function scheduleParentKpiUpdate() {
+  if (kpiUpdateRaf) cancelAnimationFrame(kpiUpdateRaf);
+  kpiUpdateRaf = requestAnimationFrame(() => {
+    kpiUpdateRaf = null;
+    const sharedData = _getSharedActiveParentData();
+    updateParentKpiCards(sharedData);
+    updateParentFilterStatusBanner(sharedData);
+    updateParentMedianCards(sharedData);
+  });
+}
+
 let _mapResizeObserver = null;
 let _mapResizeRaf = null;
 let _deferredBoundaryTimer = null;
@@ -896,17 +892,6 @@ function _triggerImmediateMapRedraw() {
       }
       updateSvgBoundaries();
     } catch (_e) {}
-  });
-}
-
-function scheduleParentKpiUpdate() {
-  if (kpiUpdateRaf) cancelAnimationFrame(kpiUpdateRaf);
-  kpiUpdateRaf = requestAnimationFrame(() => {
-    kpiUpdateRaf = null;
-    const sharedData = _getSharedActiveParentData();
-    updateParentKpiCards(sharedData);
-    updateParentFilterStatusBanner(sharedData);
-    updateParentMedianCards(sharedData);
   });
 }
 
@@ -1001,6 +986,7 @@ function cleanupMapResources() {
     if (placeSearchAbortCtrl) { try { placeSearchAbortCtrl.abort(); } catch (_e) {} placeSearchAbortCtrl = null; }
     if (_parentTabRetryTimer) { clearInterval(_parentTabRetryTimer); _parentTabRetryTimer = null; }
     if (_deferredBoundaryTimer) { clearTimeout(_deferredBoundaryTimer); _deferredBoundaryTimer = null; }
+    if (typeof _hoverDetailPrefetchTimer !== 'undefined' && _hoverDetailPrefetchTimer) { clearTimeout(_hoverDetailPrefetchTimer); _hoverDetailPrefetchTimer = null; }
     if (_ttObserverInstance) { _ttObserverInstance.disconnect(); _ttObserverInstance = null; }
     if (_mapResizeObserver) { _mapResizeObserver.disconnect(); _mapResizeObserver = null; }
     if (typeof dismissInstantMapBackdrop === 'function') { dismissInstantMapBackdrop(); }
@@ -1312,7 +1298,8 @@ function setBasemapStyle(styleName) {
 async function initMap() {
   try {
     if (!window.NovaMapCache) {
-      await _loadScriptAsync('/app/static/map_cache_builder.js?v=' + encodeURIComponent(cacheBuilderVerToken || '1'));
+      const _builderUrl = '/app/static/map_cache_builder.js?v=' + encodeURIComponent(cacheBuilderVerToken || '1');
+      await _loadScriptAsync(typeof resolveNovaStaticUrl === 'function' ? resolveNovaStaticUrl(_builderUrl) : _builderUrl);
     }
 
     let _lut = { co: [], ty: [], pv: [], st: [], rg: [], dt: [], subdt: [], prj: [], plaintiff: [], co_rgb: [] };
@@ -1355,6 +1342,7 @@ async function initMap() {
       _lut = cacheObj.lut;
       data = cacheObj.data;
       cachedData = data;
+      window._activeMapCacheObj = cacheObj;
       const _isIOSCache = !!(window.NovaMapCache && typeof window.NovaMapCache.isIOSOrIPadOS === 'function' && window.NovaMapCache.isIOSOrIPadOS());
       if (cacheObj.idExactLookupMap && cacheObj.idStrippedLookupMap) {
         idExactLookupMap = cacheObj.idExactLookupMap;
@@ -1393,6 +1381,7 @@ async function initMap() {
       }
 
       cachedData = data;
+      window._activeMapCacheObj = null;
       buildIdLookupIndex(data);
       spatialGrid = buildSpatialGrid(data);
       buildSamProjectOptions(data, _lut);
@@ -1642,7 +1631,7 @@ async function initMap() {
             _id: String(d._id).trim(),
             lat: parseFloat(d.lat),
             lon: parseFloat(d.lon),
-            title: d._title || '',
+            title: d._title || (d._project && d._project !== '-' ? d._project : d._type) || '',
             price: d._price_str || '',
             company: d._company || '',
             type: d._type || '',

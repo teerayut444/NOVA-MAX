@@ -449,19 +449,18 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
             continue
 
         c_val = st_data["val"]
-        c_centroid = st_data.get("centroid", 0)
-        
+
         pct_count = (c_count / total_market_count * 100) if total_market_count > 0 else 0.0
         pct_val = (c_val / total_market_val * 100) if total_market_val > 0 else 0.0
-        
+
         active_pct = pct_count if is_count_metric else pct_val
         active_fraction = active_pct / 100.0
-        
+
         if active_fraction > 0:
-            radius = int(60 + 68 * math.sqrt(active_fraction))
-            radius = max(60, min(118, radius))
+            radius = int(76 + 52 * math.sqrt(active_fraction))
+            radius = max(76, min(112, radius))
         else:
-            radius = 60
+            radius = 76
 
         cx, cy = comp["base_cx"], comp["base_cy"]
         bubble_id = f"bubble-{comp['id']}"
@@ -469,7 +468,7 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
         # Outer bubble slice & shadow
         slices = f'<g filter="url(#shadow)"><circle cx="{cx}" cy="{cy}" r="{radius}" fill="url(#{comp["scraped_grad"]})" stroke="rgba(255, 255, 255, 0.7)" stroke-width="2.5" /></g>'
         sheen = f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="rgba(255, 255, 255, 0.45)" stroke-width="2.5" />'
-        
+
         hcx = cx - radius * 0.35
         hcy = cy - radius * 0.35
         hrx = radius * 0.4
@@ -477,42 +476,47 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
         highlight = f'<ellipse cx="{hcx}" cy="{hcy}" rx="{hrx}" ry="{hry}" fill="url(#highlight-grad)" transform="rotate(-30, {hcx}, {hcy})" />'
 
         # Pure Native SVG interior (100% immune to iPadOS WebKit <foreignObject> scaling & compositing bugs)
-        logo_badge_r = max(18.0, min(26.0, radius * 0.21))
-        logo_img_sz = (logo_badge_r - 3.0) * 1.75
+        # Uniform enlarged typography across ALL bubbles with compact SVG vector icons so pills stay 100% inside every circle
+        logo_badge_r = 21.0
+        logo_img_sz = (logo_badge_r - 2.5) * 1.78
         logo_data_uri = get_company_logo_data_uri(comp["id"])
         clip_id = f"clip-logo-{comp['id']}"
         bubble_clip_defs.append(
             f'<clipPath id="{clip_id}"><circle cx="{cx}" cy="{{LOGO_CY}}" r="{logo_badge_r - 2.0:.1f}" /></clipPath>'
         )
 
-        title_size = max(12.0, min(18.5, radius * 0.158))
-        stat_label_size = max(8.5, min(11.5, radius * 0.098))
-        stat_val_size = max(9.2, min(12.6, radius * 0.108))
-        pill_h = max(14.5, min(20.0, radius * 0.172))
-        pill_gap = max(2.2, min(3.8, radius * 0.032))
-        gap_logo_title = max(3.5, radius * 0.045)
-        gap_title_pills = max(3.5, radius * 0.045)
+        title_size = 20.0
+        stat_label_size = 14.0
+        stat_val_size = 15.5
+        pill_h = 25.0
+        pill_r_cap = pill_h / 2.0
+        pill_gap = 4.0
+        gap_logo_title = 3.5
+        gap_title_pills = 4.5
 
-        card_bg_color = "rgba(15, 23, 42, 0.78)" if is_dark_mode else "rgba(255, 255, 255, 0.88)"
-        card_stroke_color = "rgba(255, 255, 255, 0.35)" if is_dark_mode else "rgba(255, 255, 255, 0.75)"
+        card_bg_color = "rgba(15, 23, 42, 0.84)" if is_dark_mode else "rgba(255, 255, 255, 0.94)"
+        card_stroke_color = "rgba(255, 255, 255, 0.42)" if is_dark_mode else "rgba(255, 255, 255, 0.92)"
         text_title_color = "#f8fafc" if is_dark_mode else "#0f172a"
         text_sub_color = "#cbd5e1" if is_dark_mode else "#475569"
         text_val_color = "#ffffff" if is_dark_mode else "#0f172a"
         pct_accent_color = "#34d399" if is_dark_mode else "#047857"
+        icon_house_color = "#34d399" if is_dark_mode else "#059669"
+        icon_cal_color = "#cbd5e1" if is_dark_mode else "#475569"
 
         comp_date_str = co_dates_map.get(comp_name) or FALLBACK_COMPANY_DATES.get(comp_name, "-")
 
         if comp["id"] in ("led_legal", "led_sold"):
-            date_badge_label = "เดือน"
-            date_badge_val = led_sold_month_num
+            date_prefix = "เดือน "
+            date_badge_val = str(led_sold_month_num)
         else:
-            date_badge_label = "ดึงข้อมูล"
-            date_badge_val = comp_date_str
+            date_prefix = ""
+            date_badge_val = str(comp_date_str)
 
-        val_str = format_price_thai(c_val)
         pills_spec = [
             (
-                "ทรัพย์สิน",
+                "house",
+                icon_house_color,
+                "",
                 f"{c_count:,}",
                 f" ({pct_count:.1f}%)",
                 card_bg_color,
@@ -522,18 +526,10 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
                 pct_accent_color,
             ),
             (
-                "มูลค่า",
-                val_str,
-                "",
-                card_bg_color,
-                card_stroke_color,
-                text_sub_color,
-                text_val_color,
-                "",
-            ),
-            (
-                date_badge_label,
-                str(date_badge_val),
+                "calendar",
+                icon_cal_color,
+                date_prefix,
+                date_badge_val,
                 "",
                 card_bg_color,
                 card_stroke_color,
@@ -542,19 +538,6 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
                 "",
             ),
         ]
-        if c_centroid > 0:
-            pills_spec.append(
-                (
-                    "△ กึ่งกลาง",
-                    f"{c_centroid:,}",
-                    "",
-                    "rgba(254, 243, 199, 0.96)",
-                    "#fde68a",
-                    "#b45309",
-                    "#92400e",
-                    "",
-                )
-            )
 
         n_pills = len(pills_spec)
         total_stack_h = (
@@ -565,22 +548,9 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
             + (n_pills * pill_h)
             + (max(0, n_pills - 1) * pill_gap)
         )
-        # Keep stack comfortably inside circle if 4 pills on smaller bubble
-        max_inner_h = radius * 1.82
-        if total_stack_h > max_inner_h:
-            scale_y = max_inner_h / total_stack_h
-            logo_badge_r *= scale_y
-            logo_img_sz = (logo_badge_r - 2.5) * 1.75
-            title_size *= scale_y
-            stat_label_size *= scale_y
-            stat_val_size *= scale_y
-            pill_h *= scale_y
-            pill_gap *= scale_y
-            gap_logo_title *= scale_y
-            gap_title_pills *= scale_y
-            total_stack_h = max_inner_h
 
-        top_y = cy - (total_stack_h / 2.0)
+        # Shift stack slightly upward so the lower pill sits in a wider chord and stays 100% inside even the smallest circle
+        top_y = (cy - 7.0) - (total_stack_h / 2.0)
         logo_cy = top_y + logo_badge_r
         title_y = logo_cy + logo_badge_r + gap_logo_title + (title_size * 0.5)
         first_pill_cy = title_y + (title_size * 0.5) + gap_title_pills + (pill_h * 0.5)
@@ -590,17 +560,81 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
             f'<clipPath id="{clip_id}"><circle cx="{cx}" cy="{logo_cy:.1f}" r="{max(8.0, logo_badge_r - 2.0):.1f}" /></clipPath>'
         )
 
+        # Weighted visual width helper (ignores zero-width Thai combining marks; narrow punctuation takes less space)
+        _thai_combining = frozenset("\u0e31\u0e34\u0e35\u0e36\u0e37\u0e38\u0e39\u0e3a\u0e47\u0e48\u0e49\u0e4a\u0e4b\u0e4c\u0e4d\u0e4e")
+        _narrow_chars = frozenset(" .,()-/:")
+
+        def _visual_text_px(txt: str, font_sz: float) -> float:
+            w = 0.0
+            for ch in txt:
+                if ch in _thai_combining:
+                    continue
+                if ch in _narrow_chars:
+                    w += font_sz * 0.34
+                elif ch == "%":
+                    w += font_sz * 0.85
+                else:
+                    w += font_sz * 0.60
+            return w
+
+        icon_sz = 13.0
+        icon_gap = 4.0
+        rim_margin = 3.5
+
         pills_svg_parts = []
-        for p_idx, (lbl, val, pct_s, bg_c, st_c, lbl_c, val_c, pct_c) in enumerate(pills_spec):
+        for p_idx, (icon_kind, icon_col, lbl, val, pct_s, bg_c, st_c, lbl_c, val_c, pct_c) in enumerate(pills_spec):
             py = first_pill_cy + p_idx * (pill_h + pill_gap)
             dy = abs(py - cy)
-            max_chord = max(radius * 0.7, 2.0 * math.sqrt(max(0.0, radius * radius - dy * dy)) - 10.0)
-            plain_len = len(lbl) + 1 + len(val) + len(pct_s)
-            est_w = plain_len * (stat_val_size * 0.56) + 16.0
-            pill_w = min(max_chord, max(radius * 0.85, est_w))
+            # Exact capsule-in-circle max width: sqrt((W/2 - r_cap)^2 + dy^2) + r_cap <= R - rim_margin
+            r_inner = max(0.0, radius - rim_margin - pill_r_cap)
+            if r_inner > dy:
+                max_capsule_w = 2.0 * (math.sqrt(r_inner * r_inner - dy * dy) + pill_r_cap)
+            else:
+                max_capsule_w = 2.0 * pill_r_cap
+
+            text_w = (
+                _visual_text_px(lbl, stat_label_size)
+                + _visual_text_px(val, stat_val_size)
+                + _visual_text_px(pct_s, stat_val_size)
+            )
+            content_w = icon_sz + icon_gap + text_w
+            pill_w = min(max_capsule_w, max(98.0, content_w + 20.0))
+
+            content_left = cx - (content_w / 2.0)
+            # Keep icon inside pill rounded cap padding
+            min_left = (cx - pill_w / 2.0) + 7.5
+            if content_left < min_left:
+                content_left = min_left
+            icon_x = content_left
+            icon_y = py - (icon_sz / 2.0)
+            text_x = icon_x + icon_sz + icon_gap
+
+            if icon_kind == "house":
+                icon_svg = (
+                    f'<g transform="translate({icon_x:.1f}, {icon_y:.1f}) scale(0.8125)" '
+                    f'fill="none" stroke="{icon_col}" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round">'
+                    f'<path d="M2.2 7.6L8 2.4l5.8 5.2" />'
+                    f'<path d="M3.8 6.8V13.6h8.4V6.8" />'
+                    f'<path d="M6.7 13.6V9.7h2.6v3.9" />'
+                    f'</g>'
+                )
+            else:
+                icon_svg = (
+                    f'<g transform="translate({icon_x:.1f}, {icon_y:.1f}) scale(0.8125)" '
+                    f'fill="none" stroke="{icon_col}" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">'
+                    f'<rect x="2.2" y="3.5" width="11.6" height="10.2" rx="2" />'
+                    f'<path d="M5.2 2v2.6M10.8 2v2.6M2.2 7.2h11.6" />'
+                    f'</g>'
+                )
+
             safe_lbl = html.escape(lbl, quote=True)
             safe_val = html.escape(val, quote=True)
             safe_pct = html.escape(pct_s, quote=True)
+            lbl_tspan = (
+                f'<tspan fill="{lbl_c}" font-weight="600" font-size="{stat_label_size:.1f}">{safe_lbl}</tspan>'
+                if safe_lbl
+                else ""
+            )
             pct_tspan = (
                 f'<tspan fill="{pct_c}" font-weight="700" font-size="{stat_val_size:.1f}">{safe_pct}</tspan>'
                 if safe_pct
@@ -608,11 +642,12 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
             )
             pills_svg_parts.append(
                 f'<rect x="{cx - pill_w / 2.0:.1f}" y="{py - pill_h / 2.0:.1f}" '
-                f'width="{pill_w:.1f}" height="{pill_h:.1f}" rx="{pill_h / 2.0:.1f}" '
-                f'fill="{bg_c}" stroke="{st_c}" stroke-width="1" />'
-                f'<text x="{cx}" y="{py:.1f}" text-anchor="middle" dominant-baseline="central" '
+                f'width="{pill_w:.1f}" height="{pill_h:.1f}" rx="{pill_r_cap:.1f}" '
+                f'fill="{bg_c}" stroke="{st_c}" stroke-width="1.2" filter="url(#badge-shadow)" />'
+                f'{icon_svg}'
+                f'<text x="{text_x:.1f}" y="{py:.1f}" text-anchor="start" dominant-baseline="central" '
                 f'font-family="Outfit, Sarabun, Noto Sans Thai, sans-serif">'
-                f'<tspan fill="{lbl_c}" font-weight="600" font-size="{stat_label_size:.1f}">{safe_lbl} </tspan>'
+                f'{lbl_tspan}'
                 f'<tspan fill="{val_c}" font-weight="800" font-size="{stat_val_size:.1f}">{safe_val}</tspan>'
                 f'{pct_tspan}</text>'
             )
@@ -661,9 +696,9 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
         s_val = s_data["val"]
         s_pct_cnt = (s_cnt / total_market_count * 100) if total_market_count > 0 else 0.0
         s_pct_val = (s_val / total_market_val * 100) if total_market_val > 0 else 0.0
-        
+
         stat_display = f"{s_cnt:,} รายการ ({s_pct_cnt:.1f}%)" if is_count_metric else f"{format_price_thai(s_val)} ({s_pct_val:.1f}%)"
-        
+
         bg_card = "rgba(17, 40, 32, 0.92)" if is_dark_mode else "rgba(255, 255, 255, 0.96)"
         title_c = "#f8fafc" if is_dark_mode else "#0f172a"
         border_c = s_data["bg_border"]
@@ -678,9 +713,9 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
         pod_svg = f"""
         <g class="sector-pod-group sector-pod-{s_key}" id="pod-{s_key}">
             <!-- Glassmorphic Pod Container Box -->
-            <rect x="{s_data['x']}" y="{s_data['y']}" width="{s_data['w']}" height="{s_data['h']}" rx="24" ry="24" 
+            <rect x="{s_data['x']}" y="{s_data['y']}" width="{s_data['w']}" height="{s_data['h']}" rx="24" ry="24"
                   fill="{s_data['bg_tint']}" stroke="{border_c}" stroke-width="1.5" stroke-dasharray="none" />
-                  
+
             <!-- Top Sector Header Pill (Pure SVG) -->
             <g filter="url(#badge-shadow)">
                 <rect x="{hdr_cx - hdr_w / 2.0:.1f}" y="{hdr_cy - hdr_h / 2.0:.1f}" width="{hdr_w:.1f}" height="{hdr_h:.1f}" rx="20" ry="20"

@@ -208,6 +208,117 @@ function closePropertyCard() {
   }
 }
 
+let _hoverDetailPrefetchTimer = null;
+let _lastPrefetchedChunkIdx = -1;
+
+function _getDisplayItemTitle(item) {
+  if (!item) return 'ไม่มีชื่อประกาศ';
+  const raw = (item._title || '').trim();
+  if (raw) return raw;
+  const prj = (item._project || '').trim();
+  const typ = (item._type || '').trim();
+  const hasPrj = prj && prj !== '-' && prj !== 'ไม่มีข้อมูล' && prj !== 'ไม่ระบุ';
+  const hasTyp = typ && typ !== '-' && typ !== 'ไม่มีข้อมูล' && typ !== 'ไม่ระบุ';
+  if (hasTyp && hasPrj) return `${typ} • ${prj}`;
+  if (hasPrj) return prj;
+  const loc = [item._district, item._prov].filter(x => x && x !== '-' && x !== 'ไม่มีข้อมูล' && x !== 'ไม่ระบุ').join(', ');
+  if (hasTyp && loc) return `${typ} • ${loc}`;
+  return hasTyp ? typ : (loc || 'ไม่มีชื่อประกาศ');
+}
+
+function scheduleHoverDetailPrefetch(item) {
+  try {
+    if (!item || item._detailLoaded) return;
+    const cacheObj = window._activeMapCacheObj;
+    if (!cacheObj || !cacheObj.detailConfig || !window.NovaMapCache || typeof window.NovaMapCache.prefetchDetailForItem !== 'function') return;
+    const chunkSize = cacheObj.detailConfig.chunkSize || 7000;
+    const uid = Number(item._uid);
+    if (!Number.isInteger(uid) || uid < 0) return;
+    const ci = Math.floor(uid / chunkSize);
+    if (cacheObj.loadedDetailChunks && cacheObj.loadedDetailChunks.has(ci)) return;
+    if (ci === _lastPrefetchedChunkIdx && _hoverDetailPrefetchTimer) return;
+    if (_hoverDetailPrefetchTimer) clearTimeout(_hoverDetailPrefetchTimer);
+    _lastPrefetchedChunkIdx = ci;
+    _hoverDetailPrefetchTimer = setTimeout(() => {
+      _hoverDetailPrefetchTimer = null;
+      window.NovaMapCache.prefetchDetailForItem(item, cacheObj);
+    }, 120);
+  } catch (_e) {}
+}
+
+function _refreshCardDetailFields(d) {
+  if (!d || activePropertyData !== d) return;
+  const titleEl = document.getElementById('card-title');
+  if (titleEl) {
+    titleEl.innerText = _getDisplayItemTitle(d);
+  }
+  const selectEl = document.getElementById('card-stack-select');
+  if (selectEl && activeCoordStack && activeCoordStack.length > 1) {
+    selectEl.innerHTML = activeCoordStack.map((item, i) => {
+      const co = item._company || '-';
+      const p = item._price_str || '-';
+      const uStr = (item._unit_price && item._unit_price > 0) ? ` • ฿${Math.round(item._unit_price).toLocaleString()}/หน่วย` : '';
+      const t = _getDisplayItemTitle(item).substring(0, 20);
+      return `<option value="${i}" ${i === activeCoordStackIndex ? 'selected' : ''}>${i + 1}. [${escapeHtml(co)}] ${escapeHtml(t)} (${escapeHtml(p)}${uStr})</option>`;
+    }).join('');
+  }
+  const deedEl = document.getElementById('card-deed');
+  const rawDeed = String(d._deed || '').trim();
+  const hasValidDeed = rawDeed && rawDeed !== '-' && rawDeed !== 'ไม่มีข้อมูล' && rawDeed !== 'nan' && rawDeed !== 'null';
+  if (deedEl) {
+    if (hasValidDeed) {
+      deedEl.innerHTML = `<span style="cursor:pointer; color:#0284c7; font-weight:700; text-decoration:underline dotted;" title="คลิกเพื่อคัดลอกเลขโฉนด" onclick="copyCardDeed()">${escapeHtml(rawDeed)}</span> <i class="fa-regular fa-copy" style="cursor:pointer; font-size:11px; color:#94a3b8; margin-left:2px;" title="คัดลอกเลขโฉนด" onclick="copyCardDeed()"></i>`;
+    } else {
+      deedEl.innerText = '-';
+    }
+  }
+  const soldDateLabel = document.getElementById('card-sold-date-label');
+  const soldDateVal = document.getElementById('card-sold-date-val');
+  const soldDate = String(d._sold_date || '').trim();
+  if (soldDateLabel && soldDateVal) {
+    if (soldDate && soldDate !== '-' && soldDate !== 'nan') {
+      soldDateLabel.style.display = 'block';
+      soldDateVal.style.display = 'block';
+      soldDateVal.innerText = soldDate;
+    } else {
+      soldDateLabel.style.display = 'none';
+      soldDateVal.style.display = 'none';
+    }
+  }
+  const btnLink = document.getElementById('btn-open-link');
+  const link = (d._link || '').trim();
+  if (btnLink) {
+    if (link && link !== '-' && link !== 'nan' && link !== 'None') {
+      btnLink.style.display = 'inline-flex';
+      btnLink.innerHTML = '<i class="fa-solid fa-arrow-up-right-from-square"></i> เปิดดูทรัพย์สิน (เว็บไซต์)';
+      btnLink.disabled = false;
+      btnLink.style.opacity = '1';
+      btnLink.style.cursor = 'pointer';
+    } else {
+      btnLink.style.display = 'inline-flex';
+      btnLink.innerHTML = '<i class="fa-solid fa-link-slash"></i> ไม่มีลิงก์ประกาศ';
+      btnLink.disabled = true;
+      btnLink.style.opacity = '0.5';
+      btnLink.style.cursor = 'not-allowed';
+    }
+  }
+  const companyName = d._company || 'ไม่ระบุ';
+  const isCentroid = (String(d._centroid) === '1' || d._centroid === true || d._centroid === 'true');
+  const btnLedRow = document.getElementById('card-row-led');
+  const btnGmapTop = document.getElementById('btn-gmap-top');
+  const btnGmap = document.getElementById('btn-gmap');
+  const isLedComp = (companyName === 'LED' || String(companyName).toUpperCase().indexOf('LED') !== -1 || String(companyName).indexOf('กรมบังคับคดี') !== -1);
+  if (isLedComp || hasValidDeed) {
+    if (btnLedRow) btnLedRow.style.display = 'flex';
+    if (btnGmapTop) btnGmapTop.style.display = 'none';
+    if (btnGmap) btnGmap.style.display = isCentroid ? 'none' : 'inline-flex';
+  } else {
+    if (btnLedRow) btnLedRow.style.display = 'none';
+    if (btnGmapTop) btnGmapTop.style.display = isCentroid ? 'none' : 'inline-flex';
+    if (btnGmap) btnGmap.style.display = 'none';
+  }
+}
+
 function showPropertyCard(d, rebuildStack = true) {
   activePropertyData = d;
   const card = document.getElementById('property-card');
@@ -264,7 +375,7 @@ function showPropertyCard(d, rebuildStack = true) {
           const co = item._company || '-';
           const p = item._price_str || '-';
           const uStr = (item._unit_price && item._unit_price > 0) ? ` • ฿${Math.round(item._unit_price).toLocaleString()}/หน่วย` : '';
-          const t = (item._title || 'ไม่มีชื่อ').substring(0, 20);
+          const t = _getDisplayItemTitle(item).substring(0, 20);
           return `<option value="${i}" ${i === activeCoordStackIndex ? 'selected' : ''}>${i + 1}. [${escapeHtml(co)}] ${escapeHtml(t)} (${escapeHtml(p)}${uStr})</option>`;
         }).join('');
       }
@@ -298,7 +409,7 @@ function showPropertyCard(d, rebuildStack = true) {
   if (centroidBadge) centroidBadge.style.display = isCentroid ? 'inline-flex' : 'none';
   if (centroidWarning) centroidWarning.style.display = isCentroid ? 'flex' : 'none';
 
-  title.innerText = d._title || 'ไม่มีชื่อประกาศ';
+  title.innerText = _getDisplayItemTitle(d);
   price.innerText = d._price_str || 'ไม่ระบุราคา';
 
   const idEl = document.getElementById('card-id');
@@ -644,6 +755,15 @@ function showPropertyCard(d, rebuildStack = true) {
     }
   }
 
+  const cacheObjForDetail = window._activeMapCacheObj;
+  const needsDetailFetch = !!(
+    cacheObjForDetail &&
+    cacheObjForDetail.detailConfig &&
+    window.NovaMapCache &&
+    typeof window.NovaMapCache.ensureDetailsForItems === 'function' &&
+    (!d._detailLoaded || (activeCoordStack && activeCoordStack.some(it => it && !it._detailLoaded)))
+  );
+
   const link = (d._link || '').trim();
   if (link && link !== '-' && link !== 'nan' && link !== 'None') {
     btnLink.style.display = 'inline-flex';
@@ -651,12 +771,25 @@ function showPropertyCard(d, rebuildStack = true) {
     btnLink.disabled = false;
     btnLink.style.opacity = '1';
     btnLink.style.cursor = 'pointer';
+  } else if (needsDetailFetch) {
+    btnLink.style.display = 'inline-flex';
+    btnLink.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลดรายละเอียด...';
+    btnLink.disabled = true;
+    btnLink.style.opacity = '0.75';
+    btnLink.style.cursor = 'wait';
   } else {
     btnLink.style.display = 'inline-flex';
     btnLink.innerHTML = '<i class="fa-solid fa-link-slash"></i> ไม่มีลิงก์ประกาศ';
     btnLink.disabled = true;
     btnLink.style.opacity = '0.5';
     btnLink.style.cursor = 'not-allowed';
+  }
+
+  if (needsDetailFetch) {
+    const itemsToHydrate = (activeCoordStack && activeCoordStack.length > 0) ? activeCoordStack : [d];
+    window.NovaMapCache.ensureDetailsForItems(itemsToHydrate, cacheObjForDetail)
+      .then(() => { _refreshCardDetailFields(d); })
+      .catch(() => { _refreshCardDetailFields(d); });
   }
 
   const btnLedRow = document.getElementById('card-row-led');
@@ -806,6 +939,9 @@ function openPropertyLink() {
   if (link && link !== '-' && link !== 'nan' && link !== 'None') {
     if (link.startsWith('app/static/')) {
       link = '/' + link;
+    }
+    if (typeof resolveNovaStaticUrl === 'function' && link.startsWith('/app/static/')) {
+      link = resolveNovaStaticUrl(link);
     }
     if (isSafeNavUrl(link)) {
       window.open(link, '_blank', 'noopener,noreferrer');
@@ -1106,7 +1242,12 @@ function clearPriceCenter() {
 window.clearPriceCenter = clearPriceCenter;
 
 window.addEventListener('message', function(ev) {
-  if (!ev || ev.origin !== window.location.origin || ev.source !== window.parent) return;
+  const expectedOrigin = (window.NovaMapCache && typeof window.NovaMapCache.getEffectiveSelfOrigin === 'function')
+    ? window.NovaMapCache.getEffectiveSelfOrigin()
+    : ((window.location && window.location.origin && window.location.origin !== 'null')
+      ? window.location.origin
+      : ((typeof window.origin === 'string' && window.origin !== 'null') ? window.origin : ''));
+  if (!ev || !expectedOrigin || ev.origin !== expectedOrigin || ev.source !== window.parent) return;
   if (ev.data && ev.data.action === 'clear_price_center') {
     clearPriceCenter();
   }
@@ -1531,7 +1672,10 @@ function getMapTooltip(info) {
     }
 
     const topItem = (stack && stack.length > 0) ? stack[0] : d;
-    const title = escapeHtml(topItem._title || 'ไม่มีชื่อประกาศ');
+    if (!topItem._detailLoaded) {
+      scheduleHoverDetailPrefetch(topItem);
+    }
+    const title = escapeHtml(_getDisplayItemTitle(topItem));
     const company = escapeHtml(topItem._company || '-');
     const id = escapeHtml(topItem._id || '-');
     const price = escapeHtml(topItem._price_str || 'ไม่ระบุราคา');

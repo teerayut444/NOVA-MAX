@@ -1,5 +1,49 @@
+import os
+import re
 import numpy as np
 import pandas as pd
+
+_SAFE_BASE_URL_PATH_RE = re.compile(r"^[A-Za-z0-9_/-]+$")
+
+
+def get_base_url_prefix() -> str:
+    """Returns normalized base URL prefix (e.g. '/nova' or '') from NOVA_BASE_URL_PATH or Streamlit server.baseUrlPath."""
+    raw = os.environ.get("NOVA_BASE_URL_PATH")
+    if raw is None:
+        raw = os.environ.get("STREAMLIT_SERVER_BASE_URL_PATH")
+    if not raw:
+        try:
+            import streamlit as st
+            raw = st.get_option("server.baseUrlPath")
+        except Exception:
+            raw = ""
+    cleaned = str(raw or "").strip().strip("/")
+    if not cleaned or not _SAFE_BASE_URL_PATH_RE.match(cleaned):
+        return ""
+    return f"/{cleaned}"
+
+
+def get_static_url(rel_path: str = "") -> str:
+    """Builds a baseUrlPath-aware static asset URL, e.g. '/app/static/d3.js' or '/nova/app/static/d3.js'."""
+    prefix = get_base_url_prefix()
+    clean_rel = str(rel_path or "").strip().lstrip("/")
+    if clean_rel.startswith("app/static/"):
+        clean_rel = clean_rel[len("app/static/"):]
+    elif clean_rel == "app/static":
+        clean_rel = ""
+    return f"{prefix}/app/static/{clean_rel}" if clean_rel else f"{prefix}/app/static"
+
+
+def rewrite_static_paths(text: str) -> str:
+    """Rewrites root-relative '/app/static/' references in HTML/CSS/JS templates when server.baseUrlPath is configured."""
+    if not text or not isinstance(text, str):
+        return text
+    prefix = get_base_url_prefix()
+    if not prefix:
+        return text
+    target = f"{prefix}/app/static/"
+    placeholder = "\x00NOVA_STATIC_PREFIX\x00"
+    return text.replace(target, placeholder).replace("/app/static/", target).replace(placeholder, target)
 
 # Thai Administrative Regions Mapping
 REGION_PROVINCES = {

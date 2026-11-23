@@ -236,15 +236,21 @@ def _build_tab2_show_df_uncached(
         valid_l_mask = raw_links.notna()
         links_clean = pd.Series(None, index=filtered_nearby.index, dtype=object)
         if valid_l_mask.any():
+            from modules.config.constants import get_base_url_prefix
+            base_prefix = get_base_url_prefix()
             l_str = raw_links.loc[valid_l_mask].astype(str).str.strip()
             rel_m = l_str.str.startswith('app/static/led_')
             if rel_m.any():
-                l_str = l_str.where(~rel_m, '/' + l_str)
+                l_str = l_str.where(~rel_m, f'{base_prefix}/' + l_str)
+            if base_prefix:
+                root_m = l_str.str.startswith('/app/static/led_')
+                if root_m.any():
+                    l_str = l_str.where(~root_m, base_prefix + l_str)
             if 'บริษัท' in filtered_nearby.columns:
                 is_legal_l = filtered_nearby.loc[valid_l_mask, 'บริษัท'].astype(str).str.strip().str.upper().isin(['LED LEGAL', 'LED_LEGAL', 'LED_SOLD'])
                 if is_legal_l.any():
                     l_str = l_str.where(~is_legal_l, l_str.str.replace('led_bridge.html', 'led_legal_bridge.html', regex=False))
-            safe_l = l_str.str.match(r'^(?:https?://|/app/static/led(?:_legal)?_bridge\.html\?)', case=False, na=False)
+            safe_l = l_str.str.match(r'^(?:https?://|(?:/[A-Za-z0-9_/-]+)?/app/static/led(?:_legal)?_bridge\.html\?)', case=False, na=False)
             links_clean.loc[valid_l_mask] = l_str.where(safe_l, None)
         show_df['เปิดลิงก์'] = links_clean
 

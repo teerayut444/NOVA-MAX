@@ -81,7 +81,7 @@ st.set_page_config(
     page_title="NOVA NPA Dashboard",
     page_icon=_load_app_page_icon(),
     layout="wide",
-    initial_sidebar_state="auto",
+    initial_sidebar_state="collapsed",
     menu_items={},
 )
 
@@ -102,27 +102,6 @@ st.html(
     header[data-testid="stHeader"] a[href*="github.com"] {
         display: none !important;
         visibility: hidden !important;
-    }
-    .st-key-btn_lazy_load_tab3,
-    div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_tab3),
-    div[data-testid="stButton"]:has(.st-key-btn_lazy_load_tab3),
-    .st-key-btn_lazy_load_tab4,
-    div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_tab4),
-    div[data-testid="stButton"]:has(.st-key-btn_lazy_load_tab4),
-    .st-key-btn_lazy_load_tab5,
-    div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_tab5),
-    div[data-testid="stButton"]:has(.st-key-btn_lazy_load_tab5) {
-        position: fixed !important;
-        bottom: -9999px !important;
-        right: -9999px !important;
-        width: 1px !important;
-        height: 1px !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        overflow: hidden !important;
-        opacity: 0 !important;
-        pointer-events: none !important;
-        z-index: -9999 !important;
     }
     </style>
     """
@@ -206,6 +185,41 @@ inject_global_theme_css(is_dark_mode)
 render_floating_kpi_cards(df_raw, df_raw, is_dark_mode)
 
 # ----------------- MAIN NAVIGATION TABS (Tab 1 & Tab 2 Eager; Tabs 3, 4, 5 Lazy via @st.fragment) -----------------
+st.html(
+    """
+    <style>
+    .st-key-btn_lazy_load_tab3,
+    .st-key-btn_lazy_load_tab4,
+    .st-key-btn_lazy_load_tab5,
+    div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_tab3),
+    div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_tab4),
+    div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_tab5),
+    div[data-testid="stButton"]:has(.st-key-btn_lazy_load_tab3),
+    div[data-testid="stButton"]:has(.st-key-btn_lazy_load_tab4),
+    div[data-testid="stButton"]:has(.st-key-btn_lazy_load_tab5) {
+        position: fixed !important;
+        bottom: -9999px !important;
+        right: -9999px !important;
+        width: 1px !important;
+        height: 1px !important;
+        overflow: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        z-index: -9999 !important;
+    }
+    @keyframes novaLazySpin {
+        to { transform: rotate(360deg); }
+    }
+    </style>
+    """
+)
+
+
+def _mark_lazy_tab_ready(state_key):
+    """Callback invoked before fragment rerun so the hidden trigger button is never rendered once clicked."""
+    st.session_state[state_key] = True
+
+
 def _render_lazy_tab_watcher(tab_id, label_text, is_dark_mode=False):
     """Renders a lightweight placeholder + visibility observer that auto-loads the tab fragment when clicked."""
     bg_card = "rgba(30, 41, 59, 0.55)" if is_dark_mode else "rgba(255, 255, 255, 0.85)"
@@ -213,24 +227,6 @@ def _render_lazy_tab_watcher(tab_id, label_text, is_dark_mode=False):
     border_col = "rgba(16, 185, 129, 0.22)" if is_dark_mode else "rgba(16, 185, 129, 0.18)"
     st.markdown(
         f"""
-        <style>
-        .st-key-btn_lazy_load_{tab_id},
-        div[data-testid="stElementContainer"]:has(.st-key-btn_lazy_load_{tab_id}),
-        div[data-testid="stButton"]:has(.st-key-btn_lazy_load_{tab_id}) {{
-            position: fixed !important;
-            bottom: -9999px !important;
-            right: -9999px !important;
-            width: 1px !important;
-            height: 1px !important;
-            overflow: hidden !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
-            z-index: -9999 !important;
-        }}
-        @keyframes novaLazySpin {{
-            to {{ transform: rotate(360deg); }}
-        }}
-        </style>
         <div style="margin: 36px auto; max-width: 460px; padding: 28px 24px; border-radius: 16px; background: {bg_card}; border: 1px solid {border_col}; text-align: center; box-shadow: 0 8px 24px rgba(0,0,0,0.04);">
             <div style="width: 28px; height: 28px; margin: 0 auto 12px auto; border: 3px solid rgba(16,185,129,0.2); border-top-color: #10b981; border-radius: 50%; animation: novaLazySpin 0.8s linear infinite;"></div>
             <div style="font-size: 0.92rem; font-weight: 600; color: {text_col};">{label_text}</div>
@@ -287,11 +283,6 @@ def _render_lazy_tab_watcher(tab_id, label_text, is_dark_mode=False):
         </script></body></html>""",
         height=0,
     )
-
-
-def _mark_lazy_tab_ready(state_key: str) -> None:
-    """Runs before the fragment reruns so the hidden trigger button is never rendered once activated."""
-    st.session_state[state_key] = True
 
 
 @_fragment_decorator

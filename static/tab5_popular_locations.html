@@ -1771,8 +1771,15 @@
 
     function resolveStaticUrlCandidates(rawUrl) {
         if (!rawUrl) return [];
-        const clean = String(rawUrl).replace(/^(\.\/|\/)+/, '').replace(/^~\/\+\//, '');
+        const raw = String(rawUrl).trim();
+        const staticIdx = raw.indexOf('app/static/');
+        const clean = (staticIdx >= 0)
+            ? raw.slice(staticIdx)
+            : raw.replace(/^(\.\/|\/)+/, '').replace(/^~\/\+\//, '');
         const out = [];
+        if (raw.startsWith('/') && staticIdx > 1) {
+            out.push(raw);
+        }
         try {
             const pLoc = (window.parent && window.parent.location && window.parent.location.origin && window.parent.location.origin !== 'null')
                 ? window.parent.location
@@ -1829,6 +1836,47 @@
         } catch(_e) {}
     }
 
+    async function readAutoGzipText(resp) {
+        const readStreamBytes = async (stream) => {
+            const reader = stream.getReader();
+            const chunks = [];
+            let total = 0;
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    if (value && value.byteLength > 0) {
+                        chunks.push(value);
+                        total += value.byteLength;
+                    }
+                }
+            } finally {
+                try { reader.releaseLock(); } catch (_e) {}
+            }
+            const out = new Uint8Array(total);
+            let off = 0;
+            for (let i = 0; i < chunks.length; i++) {
+                out.set(chunks[i], off);
+                off += chunks[i].byteLength;
+            }
+            return out;
+        };
+        const buf = await resp.arrayBuffer();
+        let bytes = new Uint8Array(buf);
+        for (let pass = 0; pass < 2; pass++) {
+            if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+                if (typeof DecompressionStream !== 'function') {
+                    throw new Error('DecompressionStream unavailable');
+                }
+                const ds = new DecompressionStream('gzip');
+                bytes = await readStreamBytes(new Blob([bytes]).stream().pipeThrough(ds));
+            } else {
+                break;
+            }
+        }
+        return new TextDecoder('utf-8').decode(bytes);
+    }
+
     async function loadProjectsPayloadIfOffloaded() {
         if (!TAB5_PAYLOAD_URL || ALL_PROJECTS.length > 0) {
             renderView();
@@ -1845,17 +1893,7 @@
                 ALL_PROJECTS = pHost.__NOVA_TAB5_CACHE__.projects;
             } else {
                 const resp = await fetchStaticCandidate(TAB5_PAYLOAD_URL);
-                let txt = '';
-                if (typeof DecompressionStream === 'function' && resp.body && typeof resp.body.pipeThrough === 'function') {
-                    const ds = new DecompressionStream('gzip');
-                    txt = await new Response(resp.body.pipeThrough(ds)).text();
-                } else if (typeof DecompressionStream === 'function') {
-                    const buf = await resp.arrayBuffer();
-                    const ds = new DecompressionStream('gzip');
-                    txt = await new Response(new Blob([buf]).stream().pipeThrough(ds)).text();
-                } else {
-                    throw new Error('DecompressionStream unavailable');
-                }
+                const txt = await readAutoGzipText(resp);
                 const parsed = JSON.parse(txt);
                 if (Array.isArray(parsed)) {
                     annotateRegions(parsed);

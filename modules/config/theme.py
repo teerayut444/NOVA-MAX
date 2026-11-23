@@ -7,7 +7,7 @@ _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 @st.cache_resource(show_spinner=False)
 def get_fa_solid_data_uri() -> str:
-    """Returns a base64 data URI for static/fa-solid-900.ttf so FontAwesome works under any Cloud subpath (/~/+/)."""
+    """Returns a base64 data URI for static/fa-solid-900.ttf so FontAwesome works under both Cloud (/~/+/) and subpaths."""
     ttf_path = os.path.join(_ROOT_DIR, "static", "fa-solid-900.ttf")
     if os.path.exists(ttf_path):
         try:
@@ -29,6 +29,10 @@ def get_inlined_fa_local_css() -> str:
         with open(fa_css_path, "r", encoding="utf-8") as f:
             css = f.read()
         data_uri = get_fa_solid_data_uri()
+        css = css.replace(
+            "url('./fa-solid-900.ttf') format('truetype'), url('/app/static/fa-solid-900.ttf') format('truetype')",
+            f"url('{data_uri}') format('truetype')",
+        )
         return css.replace("/app/static/fa-solid-900.ttf", data_uri)
     except Exception:
         return ""
@@ -158,6 +162,8 @@ def load_global_css_template():
 
 def inject_global_theme_css(is_dark_mode=False):
     """Injects Google Fonts (Inter, Noto Sans Thai, Material Symbols), inlined Base64 FontAwesome, root variables, and CSS."""
+    from modules.config.constants import rewrite_static_paths
+
     root_vars = get_root_css_variables(is_dark_mode)
     css_template = load_global_css_template()
     fa_inlined_css = get_inlined_fa_local_css()
@@ -177,13 +183,13 @@ def inject_global_theme_css(is_dark_mode=False):
                 full_css = css_template.replace("ROOT_VARS_PLACEHOLDER", root_vars)
             else:
                 full_css = css_template.replace("<style>", f"<style>\n{font_imports}{fa_inlined_css}\n:root {{ {root_vars} }}\n", 1)
-            st.html(f"{head_links}\n{full_css}")
+            st.html(rewrite_static_paths(f"{head_links}\n{full_css}"))
         else:
             if "ROOT_VARS_PLACEHOLDER" in css_template:
                 rendered_css = css_template.replace("ROOT_VARS_PLACEHOLDER", root_vars)
             else:
                 rendered_css = f":root {{ {root_vars} }}\n{css_template}"
-            st.html(f"{head_links}\n<style>\n{font_imports}{fa_inlined_css}\n{rendered_css}\n</style>")
+            st.html(rewrite_static_paths(f"{head_links}\n<style>\n{font_imports}{fa_inlined_css}\n{rendered_css}\n</style>"))
     else:
-        st.html(f"{head_links}\n<style>\n{font_imports}{fa_inlined_css}\n:root {{ {root_vars} }}\n</style>")
+        st.html(rewrite_static_paths(f"{head_links}\n<style>\n{font_imports}{fa_inlined_css}\n:root {{ {root_vars} }}\n</style>"))
 

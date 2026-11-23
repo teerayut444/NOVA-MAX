@@ -4,7 +4,7 @@
   font-style: normal;
   font-weight: 900;
   font-display: block;
-  src: url('/app/static/fa-solid-900.ttf') format('truetype');
+  src: url('./fa-solid-900.ttf') format('truetype'), url('/app/static/fa-solid-900.ttf') format('truetype');
 }
 .fa, .fas, .far, .fab, .fa-solid, .fa-regular, .fa-brands {
   -moz-osx-font-smoothing: grayscale;

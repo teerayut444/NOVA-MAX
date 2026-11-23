@@ -79,8 +79,9 @@ def _load_tab5_html_template(template_mtime: float) -> str:
 
 def _render_tab5_template(replacements: dict[str, str]) -> str:
     """Single-pass placeholder renderer immune to chained token expansion."""
+    from modules.config.constants import rewrite_static_paths
     tmpl_mtime = os.path.getmtime(_TAB5_TEMPLATE_PATH) if os.path.exists(_TAB5_TEMPLATE_PATH) else 0.0
-    tmpl = _load_tab5_html_template(tmpl_mtime)
+    tmpl = rewrite_static_paths(_load_tab5_html_template(tmpl_mtime))
     pattern = re.compile("|".join(re.escape(k) for k in replacements))
     return pattern.sub(lambda m: replacements[m.group(0)], tmpl)
 
@@ -92,12 +93,14 @@ def _strip_unused_project_fields(projects):
 
 def get_static_tab5_payload_meta(data_mtime=None, th_date=None):
     """Returns deterministic 128-bit tokenized static payload metadata for Tab 5 Livinginsider projects."""
-    from modules.services.data_loader import get_data_size_token
+    from modules.config.constants import get_static_url
+    from modules.services.data_loader import get_data_size_token, get_payload_secret
+
     mtime_token = get_data_mtime_token(data_mtime)
     day_str = str(th_date or _today_th_str())
     size_token = get_data_size_token()
     token_hex = hmac.new(
-        _SERVER_PAYLOAD_SECRET,
+        get_payload_secret(),
         f"tab5|sz={size_token}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()[:32]
@@ -105,7 +108,7 @@ def get_static_tab5_payload_meta(data_mtime=None, th_date=None):
     return {
         "filename": filename,
         "path": os.path.join(_STATIC_DIR, filename),
-        "url": f"/app/static/{filename}",
+        "url": get_static_url(filename),
         "token": token_hex,
         "mtime": mtime_token,
         "th_date": day_str,
@@ -215,8 +218,9 @@ def _build_tab5_popular_locations_uncached(df_raw, is_dark_mode=False, has_custo
     regions_json = _safe_json_inline(region_names)
     prov_to_region_json = _safe_json_inline(PROVINCE_TO_REGION)
     prop_types_json = _safe_json_inline(prop_types)
+    from modules.config.constants import get_static_url
     payload_url_json = _safe_json_inline(tab5_payload_url)
-    geo_url_json = _safe_json_inline("/app/static/provinces_outer_geojson.json")
+    geo_url_json = _safe_json_inline(get_static_url("provinces_outer_geojson.json"))
     theme_class = "" if is_dark_mode else "light-theme"
 
     html_app = _render_tab5_template({

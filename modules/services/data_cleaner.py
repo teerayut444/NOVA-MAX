@@ -8,7 +8,23 @@ import urllib.parse
 from pathlib import Path
 import numpy as np
 import pandas as pd
-import streamlit as st
+try:
+    import streamlit as st
+except ImportError:
+    class _NoOpStreamlit:
+        @staticmethod
+        def cache_resource(*args, **kwargs):
+            def _decorator(fn):
+                return fn
+            return _decorator
+
+        @staticmethod
+        def cache_data(*args, **kwargs):
+            def _decorator(fn):
+                return fn
+            return _decorator
+
+    st = _NoOpStreamlit()
 
 from modules.config.constants import (
     PROPERTY_TYPE_MAPPING,
@@ -817,6 +833,34 @@ def get_dataset_month_year(_df, data_mtime=None, exclude_legal=True):
     row_cnt = len(_df) if _df is not None else 0
     return _get_dataset_month_year_cached(_df, cache_key=(data_mtime, row_cnt, exclude_legal, 'no_led_legal_v2'), exclude_legal=exclude_legal)
 
+def _sanitize_unit_prices(df):
+    """Clear unit prices when total price is missing/invalid or when unit rates exceed realistic bounds."""
+    has_price = 'ราคา' in df.columns
+    if has_price:
+        invalid_price = df['ราคา'].isna() | (df['ราคา'] < 500)
+        if invalid_price.any():
+            df.loc[invalid_price, 'ราคา'] = np.nan
+    else:
+        invalid_price = None
+
+    if 'ราคาต่อตารางวา' in df.columns:
+        puw = pd.to_numeric(df['ราคาต่อตารางวา'], errors='coerce').astype('float64')
+        bad_puw = (~np.isfinite(puw)) | (puw <= 0) | (puw > 50_000_000)
+        if invalid_price is not None:
+            bad_puw |= invalid_price
+        puw = puw.mask(bad_puw, np.nan)
+        df['ราคาต่อตารางวา'] = puw
+
+    if 'ราคาต่อตารางเมตร' in df.columns:
+        pum = pd.to_numeric(df['ราคาต่อตารางเมตร'], errors='coerce').astype('float64')
+        bad_pum = (~np.isfinite(pum)) | (pum <= 0) | (pum > 20_000_000)
+        if invalid_price is not None:
+            bad_pum |= invalid_price
+        pum = pum.mask(bad_pum, np.nan)
+        df['ราคาต่อตารางเมตร'] = pum
+    return df
+
+
 def _apply_led_legal_sold_prices(df):
     """For LED Legal (LED_SOLD): uses 'ราคาขายได้' as the selling price 'ราคา'
     and recalculates per-sqw and per-sqm unit rates based on the actual sold price.
@@ -834,8 +878,8 @@ def _apply_led_legal_sold_prices(df):
 
                 sqw_col = 'พื้นที่_ตารางวา' if 'พื้นที่_ตารางวา' in df.columns else ('เนื้อที่ (ตร.ว.)' if 'เนื้อที่ (ตร.ว.)' in df.columns else None)
                 if sqw_col and 'ราคาต่อตารางวา' in df.columns:
-                    if df['ราคาต่อตารางวา'].dtype != 'float32':
-                        df['ราคาต่อตารางวา'] = pd.to_numeric(df['ราคาต่อตารางวา'], errors='coerce').astype('float32')
+                    if df['ราคาต่อตารางวา'].dtype != 'float64':
+                        df['ราคาต่อตารางวา'] = pd.to_numeric(df['ราคาต่อตารางวา'], errors='coerce').astype('float64')
                     if sqw_col == 'พื้นที่_ตารางวา':
                         sqw_vals = pd.to_numeric(df.loc[target_idx, sqw_col], errors='coerce')
                     else:
@@ -845,16 +889,17 @@ def _apply_led_legal_sold_prices(df):
                     valid_sqw = sqw_vals.notna() & (sqw_vals > 0) & (sold_p.loc[target_idx] > 0)
                     if valid_sqw.any():
                         v_idx = target_idx[valid_sqw.values]
-                        df.loc[v_idx, 'ราคาต่อตารางวา'] = (sold_p.loc[v_idx] / sqw_vals.loc[v_idx]).astype('float32')
+                        df.loc[v_idx, 'ราคาต่อตารางวา'] = (sold_p.loc[v_idx] / sqw_vals.loc[v_idx]).astype('float64')
 
                 if 'พื้นที่ใช้สอย (ตร.ม.)' in df.columns and 'ราคาต่อตารางเมตร' in df.columns:
-                    if df['ราคาต่อตารางเมตร'].dtype != 'float32':
-                        df['ราคาต่อตารางเมตร'] = pd.to_numeric(df['ราคาต่อตารางเมตร'], errors='coerce').astype('float32')
+                    if df['ราคาต่อตารางเมตร'].dtype != 'float64':
+                        df['ราคาต่อตารางเมตร'] = pd.to_numeric(df['ราคาต่อตารางเมตร'], errors='coerce').astype('float64')
                     sqm_vals = pd.to_numeric(df.loc[target_idx, 'พื้นที่ใช้สอย (ตร.ม.)'], errors='coerce')
                     valid_sqm = sqm_vals.notna() & (sqm_vals > 0) & (sold_p.loc[target_idx] > 0)
                     if valid_sqm.any():
                         v_idx = target_idx[valid_sqm.values]
-                        df.loc[v_idx, 'ราคาต่อตารางเมตร'] = (sold_p.loc[v_idx] / sqm_vals.loc[v_idx]).astype('float32')
+                        df.loc[v_idx, 'ราคาต่อตารางเมตร'] = (sold_p.loc[v_idx] / sqm_vals.loc[v_idx]).astype('float64')
+    df = _sanitize_unit_prices(df)
     return df
 
 
@@ -904,17 +949,9 @@ def ensure_derived_cols(df, persist_cache=False):
                     df['is_centroid'] = df['is_centroid'].astype(object).fillna('').astype(str).str.strip().str.lower().isin({'true', '1', '1.0', 'yes', 't'})
             if 'โจทก์' in df.columns:
                 df['โจทก์'] = _clean_plaintiff_series_fast(df['โจทก์'])
-            for f64_col in ['ราคา', 'ราคาขายได้', 'ละติจูด', 'ลองจิจูด']:
+            for f64_col in ['ราคา', 'ราคาขายได้', 'ละติจูด', 'ลองจิจูด', 'พื้นที่_ตารางวา', 'พื้นที่ใช้สอย (ตร.ม.)', 'ราคาต่อตารางวา', 'ราคาต่อตารางเมตร']:
                 if f64_col in df.columns and df[f64_col].dtype != 'float64':
                     df[f64_col] = pd.to_numeric(df[f64_col], errors='coerce').astype('float64')
-            for f32_col in ['พื้นที่_ตารางวา', 'พื้นที่ใช้สอย (ตร.ม.)', 'ราคาต่อตารางวา', 'ราคาต่อตารางเมตร']:
-                if f32_col in df.columns and df[f32_col].dtype != 'float32':
-                    df[f32_col] = pd.to_numeric(df[f32_col], errors='coerce').astype('float32')
-            for i32_col in ['ยอดเข้าชม', 'ยอดคลิก']:
-                if i32_col in df.columns and str(df[i32_col].dtype) != 'Int32':
-                    num_s = pd.to_numeric(df[i32_col], errors='coerce')
-                    num_s = num_s.where(np.isfinite(num_s) & (num_s >= 0) & (num_s <= 2_147_483_647), np.nan)
-                    df[i32_col] = num_s.round(0).astype('Int32')
             if 'norm_project_name' not in df.columns:
                 if 'ชื่อโครงการ' in df.columns:
                     u_projs = df['ชื่อโครงการ'].dropna().unique()
@@ -923,10 +960,17 @@ def ensure_derived_cols(df, persist_cache=False):
                 else:
                     df['norm_project_name'] = ''
             if 'ลิงก์' in df.columns:
+                from modules.config.constants import get_base_url_prefix
+                base_prefix = get_base_url_prefix()
                 link_s = df['ลิงก์'].astype(str)
                 rel_bridge_mask = link_s.str.startswith('app/static/led_')
                 if rel_bridge_mask.any():
-                    df.loc[rel_bridge_mask, 'ลิงก์'] = '/' + link_s.loc[rel_bridge_mask]
+                    df.loc[rel_bridge_mask, 'ลิงก์'] = f"{base_prefix}/" + link_s.loc[rel_bridge_mask]
+                    link_s = df['ลิงก์'].astype(str)
+                if base_prefix:
+                    root_bridge_mask = link_s.str.startswith('/app/static/led_')
+                    if root_bridge_mask.any():
+                        df.loc[root_bridge_mask, 'ลิงก์'] = base_prefix + link_s.loc[root_bridge_mask]
             for col in ['บริษัท', 'ประเภททรัพย์', 'จังหวัด', 'ภาค', 'ประเภทการขาย', 'อำเภอ', 'ตำบล']:
                 if col in df.columns and not isinstance(df[col].dtype, pd.CategoricalDtype):
                     df[col] = df[col].astype('category')
@@ -1118,6 +1162,9 @@ def ensure_derived_cols(df, persist_cache=False):
             courts_s = df.loc[led_mask, 'ศาล'].fillna('').astype(str) if 'ศาล' in df.columns else pd.Series('', index=codes_s.index)
             plaintiffs_s = df.loc[led_mask, 'โจทก์'].fillna('').astype(str) if 'โจทก์' in df.columns else pd.Series('', index=codes_s.index)
 
+            from modules.config.constants import get_static_url
+            led_bridge_base = get_static_url("led_bridge.html")
+
             def _build_led_url(code, court, plaintiff):
                 s = str(code).strip()
                 if not s or s in ['nan', 'None', '-']:
@@ -1126,9 +1173,9 @@ def ensure_derived_cols(df, persist_cache=False):
                 if '/' in s_pure:
                     parts = s_pure.split('/', 1)
                     s_no, s_yr = parts[0].strip(), parts[1].strip()
-                    base_u = f"/app/static/led_bridge.html?suit_no={urllib.parse.quote(s_no)}&suit_year={urllib.parse.quote(s_yr)}"
+                    base_u = f"{led_bridge_base}?suit_no={urllib.parse.quote(s_no)}&suit_year={urllib.parse.quote(s_yr)}"
                 else:
-                    base_u = f"/app/static/led_bridge.html?suit_no={urllib.parse.quote(s_pure)}"
+                    base_u = f"{led_bridge_base}?suit_no={urllib.parse.quote(s_pure)}"
                 p_raw = str(plaintiff).strip()
                 if p_raw and p_raw not in ['nan', 'None', 'null', '<NA>', 'NaN', '-']:
                     p_clean = clean_plaintiff_name(p_raw)
@@ -1148,6 +1195,8 @@ def ensure_derived_cols(df, persist_cache=False):
         # For LED Legal: use dedicated led_legal_bridge.html targeting reports.asp with only lawsuit and year
         legal_mask = df['บริษัท'].astype(str).str.strip().str.upper().isin(_LED_LEGAL_COMPANIES)
         if legal_mask.any():
+            from modules.config.constants import get_static_url
+            led_legal_bridge_base = get_static_url("led_legal_bridge.html")
             codes_legal = df.loc[legal_mask, 'รหัสทรัพย์'].fillna('').astype(str)
 
             def _build_led_legal_url(code):
@@ -1158,8 +1207,8 @@ def ensure_derived_cols(df, persist_cache=False):
                 if '/' in s_pure:
                     parts = s_pure.split('/', 1)
                     s_no, s_yr = parts[0].strip(), parts[1].strip()
-                    return f"/app/static/led_legal_bridge.html?suit_no={urllib.parse.quote(s_no)}&suit_year={urllib.parse.quote(s_yr)}"
-                return f"/app/static/led_legal_bridge.html?suit_no={urllib.parse.quote(s_pure)}"
+                    return f"{led_legal_bridge_base}?suit_no={urllib.parse.quote(s_no)}&suit_year={urllib.parse.quote(s_yr)}"
+                return f"{led_legal_bridge_base}?suit_no={urllib.parse.quote(s_pure)}"
 
             df.loc[legal_mask, 'ลิงก์'] = [
                 _build_led_legal_url(c)
@@ -1168,7 +1217,7 @@ def ensure_derived_cols(df, persist_cache=False):
 
     if 'ราคา' in df.columns:
         df['ราคา'] = _coerce_numeric_price_series(df['ราคา'])
-        df.loc[df['ราคา'] < 1000, 'ราคา'] = np.nan
+        df.loc[df['ราคา'] < 500, 'ราคา'] = np.nan
     else:
         df['ราคา'] = np.nan
 
@@ -1280,12 +1329,12 @@ def ensure_derived_cols(df, persist_cache=False):
 
     for _cnt_col in ('ยอดเข้าชม', 'ยอดคลิก'):
         if _cnt_col not in df.columns:
-            df[_cnt_col] = pd.Series(pd.NA, index=df.index, dtype='Int32')
+            df[_cnt_col] = pd.Series(pd.NA, index=df.index, dtype='Int64')
         else:
             num_s = pd.to_numeric(df[_cnt_col], errors='coerce')
             # Reject non-finite, negative, or scraper phone-number anomalies (> 2^31-1) cleanly without Int32 crash
             num_s = num_s.where(np.isfinite(num_s) & (num_s >= 0) & (num_s <= 2_147_483_647), np.nan)
-            df[_cnt_col] = num_s.round(0).astype('Int32')
+            df[_cnt_col] = num_s.round(0).astype('Int64')
 
     if 'อำเภอ' in df.columns:
         s_amp = df['อำเภอ'].astype(object).where(df['อำเภอ'].notna(), '').astype(str).str.strip().str.strip(" ,;.-'\"/\\")
@@ -1321,13 +1370,10 @@ def ensure_derived_cols(df, persist_cache=False):
         else:
             df['norm_project_name'] = ''
 
-    # Preserve float64 for high-value prices (>16.77M Baht) and 5-6 decimal coordinates; use float32 for areas & unit rates
-    for f64_col in ['ราคา', 'ราคาขายได้', 'ละติจูด', 'ลองจิจูด']:
+    # Preserve float64 for high-value prices (>16.77M Baht), 5-6 decimal coordinates, areas, and unit rates
+    for f64_col in ['ราคา', 'ราคาขายได้', 'ละติจูด', 'ลองจิจูด', 'พื้นที่_ตารางวา', 'พื้นที่ใช้สอย (ตร.ม.)', 'ราคาต่อตารางวา', 'ราคาต่อตารางเมตร']:
         if f64_col in df.columns:
             df[f64_col] = pd.to_numeric(df[f64_col], errors='coerce').astype('float64')
-    for f32_col in ['พื้นที่_ตารางวา', 'พื้นที่ใช้สอย (ตร.ม.)', 'ราคาต่อตารางวา', 'ราคาต่อตารางเมตร']:
-        if f32_col in df.columns:
-            df[f32_col] = pd.to_numeric(df[f32_col], errors='coerce').astype('float32')
 
     # Convert repeated string columns to category for 5x faster filtering and 70% less RAM
     for col in ['บริษัท', 'ประเภททรัพย์', 'จังหวัด', 'ภาค', 'ประเภทการขาย', 'อำเภอ', 'ตำบล']:

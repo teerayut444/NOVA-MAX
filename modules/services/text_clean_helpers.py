@@ -21,47 +21,47 @@ _CENTROIDS_SET_CACHE: set[str] | None = None
 _CANONICAL_PROJ_MAP_CACHE: dict[str, str] | None = None
 
 _PERSON_TITLES_PATTERN = re.compile(
-    r"(?<![ทน])นาย|"
-    r"นางสาว|น\.ส\.|"
-    r"นาง(?!รอง|เลิ้ง)|"
+    r"(?<![ทน])นาย(?!หน้า|ายอาม)|"
+    r"นางสาว|น\.?ส\.|"
+    r"นาง(?!รอง|เลิ้ง|แล)|"
     r"เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|"
     r"ว่าที่\s*ร้อย|ว่าที่\s*ร\.ต\.|ว่าที่\s*ร\.ท\.|ว่าที่\s*ร\.อ\.|"
     r"(?:ร้อย|พัน|พล)\s*(?:ตรี|โท|เอก)|"
     r"(?:ร้อย|พัน|พล)\s*ตำรวจ\s*(?:ตรี|โท|เอก)|"
-    r"(?:ร|พ|พล)\.ต\.[อตท]\.|"
+    r"(?:ร|พ|พล)\.ต\.[อตท]\.|(?:ร|พ|พล|น)\.[อตท]\.|"
     r"ดาบตำรวจ|ด\.ต\.|จ่าสิบ|จ\.ส\.[อตท]\.|สิบตำรวจ|ส\.ต\.[อตท]\.|"
     r"นายแพทย์|แพทย์หญิง|นพ\.|พญ\.|"
     r"ผศ\.|รศ\.|ศ\.ดร\.|"
-    r"มิสเตอร์|มิส|มิสซิส|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)",
+    r"มิสเตอร์|มิสซิส|มิส(?!ทีน)|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)",
     re.IGNORECASE,
 )
 
 _PERSON_START_PATTERN = re.compile(
     r"^(?:"
-    r"นาย|นางสาว|น\.ส\.|นาง(?!รอง|เลิ้ง)|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|"
+    r"นาย(?!หน้า|ายอาม)|นางสาว|น\.?ส\.|นาง(?!รอง|เลิ้ง|แล)|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|"
     r"ว่าที่\s*ร้อย|ว่าที่\s*ร\.ต\.|ว่าที่\s*ร\.ท\.|ว่าที่\s*ร\.อ\.|"
     r"(?:ร้อย|พัน|พล)\s*(?:ตรี|โท|เอก)|"
     r"(?:ร้อย|พัน|พล)\s*ตำรวจ\s*(?:ตรี|โท|เอก)|"
-    r"(?:ร|พ|พล)\.ต\.[อตท]\.|"
+    r"(?:ร|พ|พล)\.ต\.[อตท]\.|(?:ร|พ|พล|น)\.[อตท]\.|"
     r"ดาบตำรวจ|ด\.ต\.|จ่าสิบ|จ\.ส\.[อตท]\.|สิบตำรวจ|ส\.ต\.[อตท]\.|"
     r"นายแพทย์|แพทย์หญิง|นพ\.|พญ\.|"
     r"ผศ\.|รศ\.|ศ\.ดร\.|"
-    r"มิสเตอร์|มิส|มิสซิส|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)"
+    r"มิสเตอร์|มิสซิส|มิส(?!ทีน)|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)"
     r")",
     re.IGNORECASE,
 )
 
 _PERSON_SUFFIX_STRIP_PATTERN = re.compile(
     r"[\s,]+(?:โดย\s*)?(?:"
-    r"นาย|นางสาว|น\.ส\.|นาง(?!รอง|เลิ้ง)|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|"
+    r"นาย(?!หน้า|ายอาม)|นางสาว|น\.?ส\.|นาง(?!รอง|เลิ้ง|แล)|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|"
     r"ว่าที่\s*ร้อย|ว่าที่\s*ร\.ต\.|ว่าที่\s*ร\.ท\.|ว่าที่\s*ร\.อ\.|"
     r"(?:ร้อย|พัน|พล)\s*(?:ตรี|โท|เอก)|"
     r"(?:ร้อย|พัน|พล)\s*ตำรวจ\s*(?:ตรี|โท|เอก)|"
-    r"(?:ร|พ|พล)\.ต\.[อตท]\.|(?:ร|พ|พล)\.[อตท]\.|"
+    r"(?:ร|พ|พล)\.ต\.[อตท]\.|(?:ร|พ|พล|น)\.[อตท]\.|"
     r"ดาบตำรวจ|ด\.ต\.|จ่าสิบ|จ\.ส\.[อตท]\.|สิบตำรวจ|ส\.ต\.[อตท]\.|"
     r"นายแพทย์|แพทย์หญิง|นพ\.|พญ\.|"
     r"ผศ\.|รศ\.|ศ\.ดร\.|"
-    r"มิสเตอร์|มิส|มิสซิส|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)"
+    r"มิสเตอร์|มิสซิส|มิส(?!ทีน)|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)"
     r").*$",
     re.IGNORECASE,
 )
@@ -72,7 +72,7 @@ def clean_plaintiff_name(name) -> str:
     PDPA Privacy Compliance redactor for LED plaintiff names:
     - Personal names (นาย, นาง, นางสาว, military/police/medical titles, Mr/Mrs/Ms) -> ""
     - Legal entities with trailing representative person name -> keep legal entity only
-    - Preserves public office titles like นายกเทศมนตรี, นายกองค์การ, นายกสมาคม
+    - Preserves public office titles like นายกเทศมนตรี, นายกองค์การ, นายกสมาคม (stripping trailing representative)
     """
     if name is None or pd.isna(name):
         return ""
@@ -80,11 +80,19 @@ def clean_plaintiff_name(name) -> str:
     if s.lower() in ("none", "null", "nan", "<na>", "-", ""):
         return ""
     if s.startswith(("นายกเทศมนตรี", "นายกองค์การ", "นายกสมาคม")):
-        return s
+        return _PERSON_SUFFIX_STRIP_PATTERN.sub("", s).strip()
     if _PERSON_START_PATTERN.search(s):
         return ""
     s_cleaned = _PERSON_SUFFIX_STRIP_PATTERN.sub("", s).strip()
-    s_check = s_cleaned.replace("ทนายความ", "").replace("ทนาย", "").replace("นครนายก", "")
+    s_check = (
+        s_cleaned.replace("ทนายความ", "")
+        .replace("ทนาย", "")
+        .replace("นครนายก", "")
+        .replace("มิสทีน", "")
+        .replace("นางแล", "")
+        .replace("นายหน้า", "")
+        .replace("นายายอาม", "")
+    )
     if _PERSON_TITLES_PATTERN.search(s_check):
         return ""
     return s_cleaned

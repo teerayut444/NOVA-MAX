@@ -20,7 +20,22 @@ _TH_TZ = timezone(timedelta(hours=7))
 _STATIC_DIR = _ROOT_DIR / "static"
 _LEGACY_STATIC_MAP_PAYLOAD_PATH = str(_STATIC_DIR / "map_payload_cache.js")
 _STATIC_PAYLOAD_LOCK = threading.Lock()
-_SERVER_PAYLOAD_SECRET = b"NOVA_NPA_STATIC_MAP_BUNDLE_V3_2026"
+_DEFAULT_PAYLOAD_SECRET = b"NOVA_NPA_STATIC_MAP_BUNDLE_V3_2026"
+_BOOT_RANDOM_PAYLOAD_SECRET = secrets.token_bytes(32)
+
+
+def get_payload_secret() -> bytes:
+    """Returns deterministic bundle secret by default (so pre-built .gz + sidecar loads in <20ms on Cloud/LAN),
+    or honors NOVA_PAYLOAD_SECRET ('random' for per-boot ephemeral secret, or any custom secret string)."""
+    env_val = str(os.environ.get("NOVA_PAYLOAD_SECRET") or "").strip()
+    if not env_val:
+        return _DEFAULT_PAYLOAD_SECRET
+    if env_val.lower() == "random":
+        return _BOOT_RANDOM_PAYLOAD_SECRET
+    return env_val.encode("utf-8")
+
+
+_SERVER_PAYLOAD_SECRET = get_payload_secret()
 
 from modules.config.constants import COMPANY_COLORS
 from modules.services.data_cleaner import (
@@ -190,35 +205,47 @@ def get_cache_builder_version():
     return f"{max_mt:.0f}" if max_mt > 0 else "1"
 
 
+_MAP_PAYLOAD_BUNDLE_VERSION = 4
+_MAP_DETAIL_CHUNK_SIZE = 7000
+
+
 def get_static_map_payload_meta(data_mtime=None, th_date=None):
-    """Returns deterministic 128-bit static payload metadata keyed by dataset byte size so pre-built .gz works on Cloud."""
+    """Returns deterministic 128-bit static payload metadata keyed by dataset byte size (and optional NOVA_PAYLOAD_SECRET)."""
     mtime_token = get_data_mtime_token(data_mtime)
     day_str = str(th_date or _today_th_str())
     size_token = get_data_size_token()
     token_hex = hmac.new(
-        _SERVER_PAYLOAD_SECRET,
-        f"map|sz={size_token}".encode("utf-8"),
+        get_payload_secret(),
+        f"map_v{_MAP_PAYLOAD_BUNDLE_VERSION}|sz={size_token}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()[:32]
+    from modules.config.constants import get_static_url
     filename = f"map_payload_{token_hex}.gz"
     sidecar_filename = f"map_meta_{token_hex}.json.gz"
+    details_dir_name = f"map_details_{token_hex}"
     full_path = str(_STATIC_DIR / filename)
     sidecar_path = str(_STATIC_DIR / sidecar_filename)
+    details_dir_path = str(_STATIC_DIR / details_dir_name)
     return {
         "filename": filename,
         "path": full_path,
         "sidecar_filename": sidecar_filename,
         "sidecar_path": sidecar_path,
-        "url": f"/app/static/{filename}",
+        "details_dir_name": details_dir_name,
+        "details_dir_path": details_dir_path,
+        "details_base_url": get_static_url(details_dir_name),
+        "url": get_static_url(filename),
         "token": token_hex,
         "mtime": mtime_token,
         "th_date": day_str,
         "size_token": size_token,
+        "bundle_version": _MAP_PAYLOAD_BUNDLE_VERSION,
     }
 
 
-def _cleanup_stale_map_payload_files(keep_filename=None, keep_sidecar=None):
-    """Deletes legacy predictable map_payload_cache.js and any outdated tokenized map_payload_*.gz / map_meta_*.gz files."""
+def _cleanup_stale_map_payload_files(keep_filename=None, keep_sidecar=None, keep_details_dir=None):
+    """Deletes legacy predictable map_payload_cache.js and any outdated tokenized map_payload_*.gz / map_meta_*.gz / map_details_* dirs."""
+    import shutil
     try:
         if os.path.exists(_LEGACY_STATIC_MAP_PAYLOAD_PATH):
             os.remove(_LEGACY_STATIC_MAP_PAYLOAD_PATH)
@@ -228,9 +255,14 @@ def _cleanup_stale_map_payload_files(keep_filename=None, keep_sidecar=None):
         if _STATIC_DIR.exists():
             for p in _STATIC_DIR.iterdir():
                 name = p.name
-                if name in (keep_filename, keep_sidecar):
+                if name in (keep_filename, keep_sidecar, keep_details_dir):
                     continue
-                if (name.startswith(("map_payload_", "map_meta_")) and (name.endswith(".gz") or name.endswith(".js") or ".tmp." in name)):
+                if p.is_dir() and name.startswith("map_details_"):
+                    try:
+                        shutil.rmtree(p, ignore_errors=True)
+                    except Exception:
+                        pass
+                elif (name.startswith(("map_payload_", "map_meta_")) and (name.endswith(".gz") or name.endswith(".js") or ".tmp." in name)):
                     try:
                         p.unlink()
                     except Exception:
@@ -239,32 +271,174 @@ def _cleanup_stale_map_payload_files(keep_filename=None, keep_sidecar=None):
         pass
 
 
-def ensure_static_map_payload_gz(data_mtime, lookup_obj, csv_utf8_bytes, th_date=None, legend_content="", map_data_full_len=0, sam_project_options=None):
-    """Writes a single-pass GZIP JSON bundle and lightweight metadata sidecar under /app/static/."""
+def _slim_lookup_for_bundle(lookup_obj):
+    """Removes redundant project-name duplicates (all_prj & prj_stats dict keys) from lookup_obj losslessly (~6 MB saved)."""
+    if not isinstance(lookup_obj, dict):
+        return {}
+    out = {k: v for k, v in lookup_obj.items() if k not in ("all_prj", "prj_stats")}
+    prj_stats = lookup_obj.get("prj_stats")
+    sam_prj = lookup_obj.get("sam_prj")
+    other_prj = lookup_obj.get("other_prj")
+    if isinstance(prj_stats, dict) and isinstance(sam_prj, list):
+        out["sam_stats"] = [prj_stats.get(p, [1, 0]) for p in sam_prj]
+    if isinstance(prj_stats, dict) and isinstance(other_prj, list):
+        out["other_stats"] = [int((prj_stats.get(p, [0, 1]) or [0, 1])[1]) for p in other_prj]
+    return out
+
+
+def _write_detail_chunks_dir(details_dir_path, detail_records, chunk_size=_MAP_DETAIL_CHUNK_SIZE):
+    """Writes spatially-ordered on-demand detail chunks (c00.gz, c01.gz, ...) atomically into details_dir_path.
+
+    Each chunk stores compact prefix-coded links and [title, encoded_link, deed, sold_date] rows (~250-350 KB gz each).
+    """
+    import shutil
+
+    if not detail_records:
+        return None
+    titles, links, deeds, sold_dates = detail_records
+    total = len(titles)
+    if total == 0:
+        return None
+
+    chunk_size = max(1, int(chunk_size or _MAP_DETAIL_CHUNK_SIZE))
+    num_chunks = (total + chunk_size - 1) // chunk_size
+    tmp_dir = f"{details_dir_path}.tmp.{os.getpid()}.{threading.get_ident()}"
+    try:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        os.makedirs(tmp_dir, exist_ok=True)
+        for ci in range(num_chunks):
+            start = ci * chunk_size
+            end = min(total, start + chunk_size)
+            pref_list = []
+            pref_map = {}
+            rows_out = []
+            for idx in range(start, end):
+                t = titles[idx] or ""
+                lnk = links[idx] or ""
+                if lnk:
+                    q_pos = lnk.find("?")
+                    if q_pos >= 0:
+                        pref = lnk[: q_pos + 1]
+                    else:
+                        s_pos = lnk.rfind("/")
+                        pref = lnk[: s_pos + 1] if s_pos >= 0 else ""
+                    if pref:
+                        pi = pref_map.get(pref)
+                        if pi is None:
+                            pi = len(pref_list)
+                            pref_list.append(pref)
+                            pref_map[pref] = pi
+                        enc_lnk = f"{pi}|{lnk[len(pref):]}"
+                    else:
+                        enc_lnk = f"|{lnk}"
+                else:
+                    enc_lnk = ""
+                deed = deeds[idx] or ""
+                sd = sold_dates[idx] or ""
+                if sd:
+                    rows_out.append([t, enc_lnk, deed, sd])
+                elif deed:
+                    rows_out.append([t, enc_lnk, deed])
+                elif enc_lnk:
+                    rows_out.append([t, enc_lnk])
+                elif t:
+                    rows_out.append([t])
+                else:
+                    rows_out.append([])
+            chunk_bytes = json.dumps(
+                {"s": start, "lp": pref_list, "r": rows_out},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            chunk_name = f"c{ci:02d}.gz"
+            with gzip.open(os.path.join(tmp_dir, chunk_name), "wb", compresslevel=6) as gz_c:
+                gz_c.write(chunk_bytes)
+
+        # Atomic-ish swap into target directory
+        old_dir = f"{details_dir_path}.old.{os.getpid()}.{threading.get_ident()}"
+        if os.path.exists(details_dir_path):
+            try:
+                shutil.rmtree(old_dir, ignore_errors=True)
+                os.replace(details_dir_path, old_dir)
+            except Exception:
+                shutil.rmtree(details_dir_path, ignore_errors=True)
+        os.replace(tmp_dir, details_dir_path)
+        shutil.rmtree(old_dir, ignore_errors=True)
+        return {
+            "dir": os.path.basename(details_dir_path),
+            "chunk_size": chunk_size,
+            "chunks": num_chunks,
+        }
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return None
+
+
+def ensure_static_map_payload_gz(
+    data_mtime,
+    lookup_obj,
+    csv_utf8_bytes,
+    th_date=None,
+    legend_content="",
+    map_data_full_len=0,
+    sam_project_options=None,
+    skip_if_exists=False,
+    detail_records=None,
+    detail_chunk_size=_MAP_DETAIL_CHUNK_SIZE,
+):
+    """Writes a compact newline-delimited GZIP streaming bundle (v4), optional on-demand detail chunks, and sidecar under /app/static/.
+
+    Format (v4):
+      Line 1: JSON header {"v":4,"mtime":...,"th_date":...,"rows":...,"detail":{...}|null,"lut":{...}}
+      Line 2+: Raw UTF-8 CSV (no JSON escaping overhead -> streamable line-by-line in browser with ~80% lower peak RAM)
+
+    Uses threading.Lock + temp-file + os.replace so concurrent requests never race or see partial writes,
+    and automatically deletes legacy predictable map_payload_cache.js and stale tokenized payloads/dirs.
+    """
     if not csv_utf8_bytes:
         return None
     meta = get_static_map_payload_meta(data_mtime=data_mtime, th_date=th_date)
     target = meta["path"]
     sidecar_target = meta["sidecar_path"]
+    details_dir_target = meta["details_dir_path"]
 
     with _STATIC_PAYLOAD_LOCK:
         os.makedirs(os.path.dirname(target), exist_ok=True)
-        if not (os.path.exists(target) and os.path.getsize(target) > 0):
+        has_existing_details = (
+            detail_records is None
+            or (os.path.isdir(details_dir_target) and any(fn.endswith(".gz") for fn in os.listdir(details_dir_target)))
+        )
+        need_write_payload = (
+            (not skip_if_exists)
+            or not (os.path.exists(target) and os.path.getsize(target) > 0)
+            or not has_existing_details
+        )
+        detail_info = None
+        if need_write_payload:
+            if detail_records is not None:
+                detail_info = _write_detail_chunks_dir(
+                    details_dir_target, detail_records, chunk_size=detail_chunk_size
+                )
             tmp_path = f"{target}.tmp.{os.getpid()}.{threading.get_ident()}"
             try:
-                csv_str = csv_utf8_bytes.decode("utf-8") if isinstance(csv_utf8_bytes, (bytes, bytearray)) else str(csv_utf8_bytes)
-                payload_bytes = json.dumps(
+                csv_bytes = csv_utf8_bytes if isinstance(csv_utf8_bytes, (bytes, bytearray)) else str(csv_utf8_bytes).encode("utf-8")
+                slim_lut = _slim_lookup_for_bundle(lookup_obj)
+                header_bytes = json.dumps(
                     {
+                        "v": _MAP_PAYLOAD_BUNDLE_VERSION,
                         "mtime": meta["mtime"],
                         "th_date": meta["th_date"],
-                        "lut": lookup_obj or {},
-                        "csv": csv_str,
+                        "rows": int(map_data_full_len),
+                        "detail": detail_info,
+                        "lut": slim_lut,
                     },
                     ensure_ascii=False,
                     separators=(",", ":"),
                 ).encode("utf-8")
                 with gzip.open(tmp_path, "wb", compresslevel=6) as gz_out:
-                    gz_out.write(payload_bytes)
+                    gz_out.write(header_bytes)
+                    gz_out.write(b"\n")
+                    gz_out.write(csv_bytes)
                 os.replace(tmp_path, target)
             except Exception:
                 try:
@@ -280,6 +454,7 @@ def ensure_static_map_payload_gz(data_mtime, lookup_obj, csv_utf8_bytes, th_date
                 sc_bytes = json.dumps(
                     {
                         "size_token": meta["size_token"],
+                        "bundle_version": _MAP_PAYLOAD_BUNDLE_VERSION,
                         "legend_content": legend_content,
                         "map_data_full_len": int(map_data_full_len),
                         "sam_project_options": list(sam_project_options) if sam_project_options is not None else None,
@@ -297,7 +472,11 @@ def ensure_static_map_payload_gz(data_mtime, lookup_obj, csv_utf8_bytes, th_date
                 except Exception:
                     pass
 
-        _cleanup_stale_map_payload_files(keep_filename=meta["filename"], keep_sidecar=meta["sidecar_filename"])
+        _cleanup_stale_map_payload_files(
+            keep_filename=meta["filename"],
+            keep_sidecar=meta["sidecar_filename"],
+            keep_details_dir=meta["details_dir_name"] if detail_records is not None or os.path.isdir(details_dir_target) else None,
+        )
         return meta
 
 
@@ -550,14 +729,25 @@ def get_sam_project_options(_df, cache_key=None, return_meta=False):
 
 
 @st.cache_resource(show_spinner=False, max_entries=2)
-def get_base_map_html(mtime=None):
-    """Load and cache the base HTML template for Deck.gl interactive map, inlining CSS/JS for Cloud (/~/+/) compatibility."""
+def _read_raw_base_map_html(mtime=None):
+    """Read and cache raw static/map_template.html keyed by modification timestamp."""
+    try:
+        tmpl_path = _resolve_root_file("static/map_template.html")
+        with open(tmpl_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
+@st.cache_resource(show_spinner=False, max_entries=2)
+def _read_inlined_base_map_html(mtime=None):
+    """Load and cache static/map_template.html with CSS/JS inlined for Streamlit Cloud (/~/+/) & zero-404 root serving."""
     try:
         from modules.config.theme import get_inlined_fa_local_css
 
-        tmpl_path = _resolve_root_file("static/map_template.html")
-        with open(tmpl_path, "r", encoding="utf-8") as f:
-            html_str = f.read()
+        html_str = _read_raw_base_map_html(mtime)
+        if not html_str:
+            return ""
 
         def _read_static_text(rel_p):
             p = _resolve_root_file(rel_p)
@@ -599,24 +789,44 @@ def get_base_map_html(mtime=None):
         return ""
 
 
+def get_base_map_html(mtime=None):
+    """Load the base HTML template for Deck.gl interactive map.
+
+    Under an explicit enterprise subpath (NOVA_BASE_URL_PATH, e.g. '/nova'), preserves browser-cached
+    '/nova/app/static/...' links. At root or Streamlit Cloud ('/~/+/'), inlines CSS/JS/FontAwesome so
+    assets never 404 across Cloud proxy prefixes.
+    """
+    from modules.config.constants import get_base_url_prefix, rewrite_static_paths
+
+    if get_base_url_prefix():
+        return rewrite_static_paths(_read_raw_base_map_html(mtime))
+    return _read_inlined_base_map_html(mtime)
+
+
 def _sanitize_map_links(map_data):
     """Extracts and allowlists safe navigation links (http/https or local LED bridge paths)."""
+    from modules.config.constants import get_base_url_prefix
     n = len(map_data)
     if 'ลิงก์' not in map_data.columns:
         return [''] * n
 
+    base_prefix = get_base_url_prefix()
     _lnk = _safe_str_series(map_data['ลิงก์'], '')
-    # Normalize relative app/static/led_ -> /app/static/led_
+    # Normalize relative app/static/led_ -> {base_prefix}/app/static/led_
     rel_m = _lnk.str.startswith('app/static/led_')
     if rel_m.any():
-        _lnk = _lnk.where(~rel_m, '/' + _lnk)
+        _lnk = _lnk.where(~rel_m, f'{base_prefix}/' + _lnk)
+    if base_prefix:
+        root_m = _lnk.str.startswith('/app/static/led_')
+        if root_m.any():
+            _lnk = _lnk.where(~root_m, base_prefix + _lnk)
 
     if 'บริษัท' in map_data.columns:
         is_legal = _safe_str_series(map_data['บริษัท'], '').str.upper().isin(['LED LEGAL', 'LED_LEGAL', 'LED_SOLD'])
         if is_legal.any():
             _lnk = _lnk.where(~is_legal, _lnk.str.replace('led_bridge.html', 'led_legal_bridge.html', regex=False))
 
-    safe_mask = _lnk.str.match(r'^(?:https?://|/app/static/led(?:_legal)?_bridge\.html\?)', case=False, na=False)
+    safe_mask = _lnk.str.match(r'^(?:https?://|(?:/[A-Za-z0-9_/-]+)?/app/static/led(?:_legal)?_bridge\.html\?)', case=False, na=False)
     return _lnk.where(safe_mask, '').tolist()
 
 
@@ -628,12 +838,18 @@ def _build_map_payload_raw_from_df(
     custom_companies=None,
     custom_company=None,
     custom_color=None,
+    split_details=False,
 ):
-    """Builds raw UTF-8 CSV bytes, lookup dict, and legend HTML safely across Pandas 3 Categoricals and missing cols."""
+    """Builds raw UTF-8 CSV bytes, lookup dict, and legend HTML safely across Pandas 3 Categoricals and missing cols.
+
+    When split_details=True, spatially sorts rows by (province, district, lat, lon), strips heavy detail fields
+    (_title, _link, _deed, _sold_date) from the Core CSV, omits default 0/-1 numeric cells to shrink Core payload
+    by ~75%, and returns a 5-tuple including `detail_records = (titles, links, deeds, sold_dates)` aligned 1:1.
+    """
     if df is None or df.empty:
-        return b"", {}, "", 0
+        return (b"", {}, "", 0, None) if split_details else (b"", {}, "", 0)
     if 'ละติจูด' not in df.columns or 'ลองจิจูด' not in df.columns:
-        return b"", {}, "", 0
+        return (b"", {}, "", 0, None) if split_details else (b"", {}, "", 0)
 
     lat_num = pd.to_numeric(df['ละติจูด'], errors='coerce')
     lon_num = pd.to_numeric(df['ลองจิจูด'], errors='coerce')
@@ -646,7 +862,7 @@ def _build_map_payload_raw_from_df(
         & lon_num.between(97.0, 106.0)
     )
     if not valid_coord_mask.any():
-        return b"", {}, "", 0
+        return (b"", {}, "", 0, None) if split_details else (b"", {}, "", 0)
 
     map_data = df.loc[valid_coord_mask]
     lat_vals = lat_num.loc[valid_coord_mask].to_numpy(dtype='float64')
@@ -897,19 +1113,123 @@ def _build_map_payload_raw_from_df(
     _sqw_f32 = np.clip(np.nan_to_num(_sqw_calc.to_numpy(dtype='float64'), nan=0.0, posinf=0.0, neginf=0.0), 0.0, 1e9).round(1).astype('float32')
     _sqm_f32 = np.clip(np.nan_to_num(_sqm_calc.to_numpy(dtype='float64'), nan=0.0, posinf=0.0, neginf=0.0), 0.0, 1e9).round(1).astype('float32')
 
+    _co_codes = _co_cat.codes.astype('int16')
+    _ty_codes = _ty_cat.codes.astype('int16')
+    _pv_codes = _pv_cat.codes.astype('int16')
+    _st_codes = _st_cat.codes.astype('int16')
+    _rg_codes = _rg_cat.codes.astype('int16')
+    _dt_codes = _dt_cat.codes.astype('int16')
+    _subdt_codes = _subdt_cat.codes.astype('int16')
+    _prj_codes = _prj_cat.codes.astype('int32')
+    _plain_codes = _plain_cat.codes.astype('int32' if (len(_plain_cat.codes) > 0 and _plain_cat.codes.max() > 32767) else 'int16')
+    _lon_r6 = np.round(lon_vals, 6)
+    _lat_r6 = np.round(lat_vals, 6)
+
+    if split_details:
+        # Spatially group rows by (province, district, lat_grid, lon_grid) so nearby & overlapping pins
+        # live in the exact same ~300 KB detail chunk (1 fetch caches the entire neighborhood).
+        order = np.lexsort((np.round(_lon_r6, 2), np.round(_lat_r6, 2), _dt_codes, _pv_codes))
+        _lon_r6 = _lon_r6[order]
+        _lat_r6 = _lat_r6[order]
+        ids_sorted = [ids[i] for i in order]
+        titles_sorted = [titles[i] for i in order]
+        links_sorted = [links[i] for i in order]
+        deeds_list = deeds.tolist() if hasattr(deeds, "tolist") else list(deeds)
+        deeds_sorted = [deeds_list[i] for i in order]
+        sold_dates_sorted = [sold_date_list[i] for i in order]
+        centroid_arr = np.asarray(centroid_flags, dtype='uint8')[order]
+
+        _co_codes = _co_codes[order]
+        _ty_codes = _ty_codes[order]
+        _pv_codes = _pv_codes[order]
+        _st_codes = _st_codes[order]
+        _rg_codes = _rg_codes[order]
+        _dt_codes = _dt_codes[order]
+        _subdt_codes = _subdt_codes[order]
+        _prj_codes = _prj_codes[order]
+        _plain_codes = _plain_codes[order]
+
+        _p_s = _p_int64[order]
+        _up_s = _up_int64[order]
+        _sqw_s = _sqw_f32[order]
+        _sqm_s = _sqm_f32[order]
+        _puw_s = _puw_int64[order]
+        _pum_s = _pum_int64[order]
+        _fl_s = fl_final[order]
+        _bed_s = bed_final[order]
+        _bath_s = bath_final[order]
+        _pkg_s = pkg_final[order]
+        _age_s = age_final[order]
+        _sold_p_s = sold_p_num[order]
+
+        def _omit_zero_int(arr):
+            s = pd.Series(arr, dtype='Int64')
+            return s.mask(arr == 0)
+
+        def _omit_neg_int(arr):
+            s = pd.Series(arr, dtype='Int32')
+            return s.mask(arr < 0)
+
+        def _omit_zero_float(arr):
+            s = pd.Series(arr, dtype='float32')
+            return s.mask(arr == 0.0)
+
+        def _omit_neg_float(arr):
+            s = pd.Series(arr, dtype='float32')
+            return s.mask(arr < 0.0)
+
+        _pti_col = (
+            pd.Series(_plain_codes, dtype='Int32').mask(_plain_codes == 0)
+            if (len(_plain_cat.categories) > 0 and _plain_cat.categories[0] == '')
+            else _plain_codes
+        )
+
+        csv_df = pd.DataFrame({
+            'lon': _lon_r6,
+            'lat': _lat_r6,
+            '_id': ids_sorted,
+            '_ci': _co_codes,
+            '_ti': _ty_codes,
+            '_pi': _pv_codes,
+            '_sti': _st_codes,
+            '_rgi': _rg_codes,
+            '_dti': _dt_codes,
+            '_subdti': _subdt_codes,
+            '_prji': _prj_codes,
+            '_p': _omit_zero_int(_p_s),
+            '_up': _omit_zero_int(_up_s),
+            '_sqw': _omit_zero_float(_sqw_s),
+            '_sqm': _omit_zero_float(_sqm_s),
+            '_puw': _omit_zero_int(_puw_s),
+            '_pum': _omit_zero_int(_pum_s),
+            '_fl': _omit_neg_float(_fl_s),
+            '_bed': _omit_neg_int(_bed_s),
+            '_bath': _omit_neg_int(_bath_s),
+            '_pkg': _omit_neg_int(_pkg_s),
+            '_age': _omit_neg_int(_age_s),
+            '_centroid': pd.Series(centroid_arr, dtype='UInt8').mask(centroid_arr == 0),
+            '_pti': _pti_col,
+            '_sold_p': _omit_zero_int(_sold_p_s),
+        })
+        csv_utf8_bytes = csv_df.to_csv(index=False, na_rep='').encode('utf-8')
+        del csv_df
+        gc.collect()
+        detail_records = (titles_sorted, links_sorted, deeds_sorted, sold_dates_sorted)
+        return csv_utf8_bytes, lookup_obj, legend_content, map_data_full_len, detail_records
+
     csv_df = pd.DataFrame({
-        'lon': np.round(lon_vals, 6),
-        'lat': np.round(lat_vals, 6),
+        'lon': _lon_r6,
+        'lat': _lat_r6,
         '_title': titles,
         '_id': ids,
-        '_ci': _co_cat.codes.astype('int16'),
-        '_ti': _ty_cat.codes.astype('int16'),
-        '_pi': _pv_cat.codes.astype('int16'),
-        '_sti': _st_cat.codes.astype('int16'),
-        '_rgi': _rg_cat.codes.astype('int16'),
-        '_dti': _dt_cat.codes.astype('int16'),
-        '_subdti': _subdt_cat.codes.astype('int16'),
-        '_prji': _prj_cat.codes.astype('int32'),
+        '_ci': _co_codes,
+        '_ti': _ty_codes,
+        '_pi': _pv_codes,
+        '_sti': _st_codes,
+        '_rgi': _rg_codes,
+        '_dti': _dt_codes,
+        '_subdti': _subdt_codes,
+        '_prji': _prj_codes,
         '_p': _p_int64,
         '_up': _up_int64,
         '_sqw': _sqw_f32,
@@ -924,7 +1244,7 @@ def _build_map_payload_raw_from_df(
         '_link': links,
         '_centroid': centroid_flags,
         '_deed': deeds,
-        '_pti': _plain_cat.codes.astype('int32' if (len(_plain_cat.codes) > 0 and _plain_cat.codes.max() > 32767) else 'int16'),
+        '_pti': _plain_codes,
         '_sold_p': sold_p_num,
         '_sold_date': sold_date_list,
     })
@@ -968,32 +1288,39 @@ def build_map_payload_from_df(
 
 @st.cache_resource(show_spinner=False, max_entries=1)
 def _ensure_static_map_bundle_cached(data_mtime, th_date):
-    """Loads pre-built static .gz map bundle & sidecar metadata from disk in <20ms (0 GB RAM spike), or builds once if missing."""
+    """Loads pre-built static .gz map bundle, detail chunks dir & sidecar metadata from disk in <20ms, or builds once if missing."""
     meta = get_static_map_payload_meta(data_mtime=data_mtime, th_date=th_date)
+    has_details_dir = (
+        os.path.isdir(meta["details_dir_path"])
+        and any(fn.endswith(".gz") for fn in os.listdir(meta["details_dir_path"]))
+    )
     if (
         os.path.exists(meta["path"])
         and os.path.getsize(meta["path"]) > 0
         and os.path.exists(meta["sidecar_path"])
         and os.path.getsize(meta["sidecar_path"]) > 0
+        and has_details_dir
     ):
         try:
             with gzip.open(meta["sidecar_path"], "rb") as gz_sc:
                 sc_data = json.loads(gz_sc.read().decode("utf-8"))
             leg = str(sc_data.get("legend_content") or "")
             cnt = int(sc_data.get("map_data_full_len") or 0)
-            if leg and cnt > 0:
+            ver = int(sc_data.get("bundle_version") or 0)
+            if leg and cnt > 0 and ver == _MAP_PAYLOAD_BUNDLE_VERSION:
                 return leg, cnt, meta, "", ""
         except Exception:
             pass
 
     df = load_properties_data(data_mtime)
-    csv_utf8_bytes, lookup_obj, legend_content, map_data_full_len = _build_map_payload_raw_from_df(
+    csv_utf8_bytes, lookup_obj, legend_content, map_data_full_len, detail_records = _build_map_payload_raw_from_df(
         df,
         df_project_source=df,
         data_mtime=data_mtime,
         custom_companies={},
         custom_company="",
         custom_color="#6366f1",
+        split_details=True,
     )
     if map_data_full_len == 0:
         return "", 0, None, "", ""
@@ -1007,17 +1334,28 @@ def _ensure_static_map_bundle_cached(data_mtime, th_date):
         legend_content=legend_content,
         map_data_full_len=map_data_full_len,
         sam_project_options=spo,
+        skip_if_exists=True,
+        detail_records=detail_records,
     )
     if static_meta is not None:
         csv_inject = ""
         lut_inject = ""
     else:
-        csv_inject = base64.b64encode(gzip.compress(csv_utf8_bytes, compresslevel=1)).decode('utf-8')
+        csv_full, lut_full, _, _ = _build_map_payload_raw_from_df(
+            df,
+            df_project_source=df,
+            data_mtime=data_mtime,
+            custom_companies={},
+            custom_company="",
+            custom_color="#6366f1",
+            split_details=False,
+        )
+        csv_inject = base64.b64encode(gzip.compress(csv_full, compresslevel=1)).decode('utf-8')
         lut_inject = base64.b64encode(
-            gzip.compress(json.dumps(lookup_obj, ensure_ascii=False, separators=(",", ":")).encode('utf-8'), compresslevel=1)
+            gzip.compress(json.dumps(lut_full, ensure_ascii=False, separators=(",", ":")).encode('utf-8'), compresslevel=1)
         ).decode('utf-8')
 
-    del csv_utf8_bytes, lookup_obj
+    del csv_utf8_bytes, lookup_obj, detail_records
     gc.collect()
     return legend_content, map_data_full_len, static_meta, csv_inject, lut_inject
 
@@ -1030,19 +1368,6 @@ def get_precomputed_map_payload(data_mtime):
         return "", "", "", 0
     if csv_inject and lut_inject:
         return csv_inject, lut_inject, legend_content, map_data_full_len
-    if static_meta and os.path.exists(static_meta["path"]):
-        try:
-            with gzip.open(static_meta["path"], "rb") as gz_in:
-                bundle = json.loads(gz_in.read().decode("utf-8"))
-            csv_b64 = base64.b64encode(gzip.compress(bundle.get("csv", "").encode("utf-8"), compresslevel=1)).decode("utf-8")
-            lut_b64 = base64.b64encode(
-                gzip.compress(json.dumps(bundle.get("lut", {}), ensure_ascii=False, separators=(",", ":")).encode("utf-8"), compresslevel=1)
-            ).decode("utf-8")
-            del bundle
-            gc.collect()
-            return csv_b64, lut_b64, legend_content, map_data_full_len
-        except Exception:
-            pass
     df = load_properties_data(data_mtime)
     return build_map_payload_from_df(df, df_project_source=df, data_mtime=data_mtime)
 
@@ -1111,8 +1436,12 @@ def precompute_full_map_html(data_mtime):
     _day_str = _today_th_str()
     _payload_meta = get_static_map_payload_meta(data_mtime=data_mtime, th_date=_day_str)
 
-    # Self-heal if tokenized static payload or sidecar file is missing even though resource/session cache exists
-    if not os.path.exists(_payload_meta["path"]) or not os.path.exists(_payload_meta["sidecar_path"]):
+    # Self-heal if tokenized static payload, detail chunks dir, or sidecar file is missing
+    if (
+        not os.path.exists(_payload_meta["path"])
+        or not os.path.exists(_payload_meta["sidecar_path"])
+        or not os.path.isdir(_payload_meta["details_dir_path"])
+    ):
         _ensure_static_map_bundle_cached.clear()
         _build_full_map_html_v2.clear()
 

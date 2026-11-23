@@ -77,8 +77,8 @@ def _safe_hover_label(val):
 
 
 @st.cache_resource(show_spinner=False)
-def _highcharts_script_tags():
-    """Inlines local Highcharts & Highcharts-3D scripts so Tab 3 charts work under Cloud (/~/+/) without 404."""
+def _highcharts_inline_script_tags():
+    """Reads and caches local Highcharts & Highcharts-3D scripts for inline Cloud (/~/+/) serving."""
     import os
     root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     tags = []
@@ -90,11 +90,22 @@ def _highcharts_script_tags():
                     tags.append(f"<script>\n{f.read()}\n</script>")
             except Exception:
                 pass
-    if tags:
-        return "\n".join(tags)
+    return "\n".join(tags)
+
+
+def _highcharts_script_tags():
+    """Local-First Highcharts script tags: subpath-aware URLs under NOVA_BASE_URL_PATH, inlined under root/Cloud (/~/+/)."""
+    from modules.config.constants import get_base_url_prefix, get_static_url
+
+    if not get_base_url_prefix():
+        inlined = _highcharts_inline_script_tags()
+        if inlined:
+            return inlined
+    hc_url = get_static_url("vendor/highcharts/highcharts.js")
+    hc3d_url = get_static_url("vendor/highcharts/highcharts-3d.js")
     return (
-        '<script src="https://code.highcharts.com/highcharts.js"></script>\n'
-        '<script src="https://code.highcharts.com/highcharts-3d.js"></script>'
+        f'<script src="{hc_url}"></script>\n'
+        f'        <script src="{hc3d_url}"></script>'
     )
 
 
@@ -738,10 +749,19 @@ def _build_tab3_subtab2_uncached(df_filtered, is_val_metric, is_dark_mode):
                     if (window.frameElement) {{
                         window.frameElement.style.height = targetH + 'px';
                     }}
-                    window.parent.postMessage({{
-                        type: 'streamlit:setFrameHeight',
-                        height: targetH
-                    }}, window.location.origin);
+                    const targetOrigin = (window.location && window.location.origin && window.location.origin !== 'null')
+                        ? window.location.origin
+                        : ((typeof window.origin === 'string' && window.origin && window.origin !== 'null')
+                            ? window.origin
+                            : ((window.parent && window.parent.location && window.parent.location.origin && window.parent.location.origin !== 'null')
+                                ? window.parent.location.origin
+                                : ''));
+                    if (targetOrigin) {{
+                        window.parent.postMessage({{
+                            type: 'streamlit:setFrameHeight',
+                            height: targetH
+                        }}, targetOrigin);
+                    }}
                 }} catch(e) {{}}
             }}
 

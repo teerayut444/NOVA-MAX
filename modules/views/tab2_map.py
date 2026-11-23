@@ -102,28 +102,67 @@ def _inject_dynamic_map_placeholders(
     effective_subdists=None,
     current_prov_str="",
     payload_url="",
+    invariant_runtime=False,
 ):
-    """Injects runtime session placeholders while keeping map HTML invariant across in-map filter/pin clicks so Streamlit never reloads the iframe."""
+    """Injects runtime session/filter placeholders atomically in a single regex pass.
+
+    When invariant_runtime=True (live render path), keeps filter/pin placeholders invariant across
+    in-map clicks so Streamlit never reloads the iframe (client JS reads initial state from URL).
+    """
     body_cls = "dark-theme" if is_dark_mode else ""
     day_str = _today_th_str()
     mtime_tok = f"{get_data_mtime_token(get_data_mtime())}|{day_str}"
 
-    replacements = {
-        "BODY_CLASS_PLACEHOLDER": body_cls,
-        "INIT_REF_LAT_PLACEHOLDER": "",
-        "INIT_REF_LON_PLACEHOLDER": "",
-        "INIT_RADIUS_PLACEHOLDER": "5.0",
-        "INIT_REF_ID_PLACEHOLDER": "",
-        "INIT_PRICE_REF_ID_PLACEHOLDER": "",
-        "INIT_COMPARE_IDS_PLACEHOLDER": "[]",
-        "BOUNDARY_GEOJSON_PLACEHOLDER": "null",
-        "CURRENT_PROV_PLACEHOLDER": "",
-        "CUSTOM_COMPANY_COLORS_PLACEHOLDER": _build_custom_company_colors_str(),
-        "DATA_MTIME_PLACEHOLDER": _safe_js_inner_str(mtime_tok),
-        "CACHE_BUILDER_VER_PLACEHOLDER": _safe_js_inner_str(get_cache_builder_version()),
-        "MAP_PAYLOAD_URL_PLACEHOLDER": _safe_js_inner_str(payload_url),
-    }
-    return _replace_placeholders_single_pass(html_str, replacements)
+    if invariant_runtime:
+        replacements = {
+            "BODY_CLASS_PLACEHOLDER": body_cls,
+            "INIT_REF_LAT_PLACEHOLDER": "",
+            "INIT_REF_LON_PLACEHOLDER": "",
+            "INIT_RADIUS_PLACEHOLDER": "5.0",
+            "INIT_REF_ID_PLACEHOLDER": "",
+            "INIT_PRICE_REF_ID_PLACEHOLDER": "",
+            "INIT_COMPARE_IDS_PLACEHOLDER": "[]",
+            "BOUNDARY_GEOJSON_PLACEHOLDER": "null",
+            "CURRENT_PROV_PLACEHOLDER": "",
+            "CUSTOM_COMPANY_COLORS_PLACEHOLDER": _build_custom_company_colors_str(),
+            "DATA_MTIME_PLACEHOLDER": _safe_js_inner_str(mtime_tok),
+            "CACHE_BUILDER_VER_PLACEHOLDER": _safe_js_inner_str(get_cache_builder_version()),
+            "MAP_PAYLOAD_URL_PLACEHOLDER": _safe_js_inner_str(payload_url),
+        }
+    else:
+        init_ref_id = str(
+            st.session_state.get("tab2_search_prop_id") or st.query_params.get("map_ref_id") or search_prop_id or ""
+        ).strip()
+        init_price_ref_id = str(
+            st.session_state.get("tab2_price_center_id") or st.query_params.get("map_price_ref_id") or ""
+        ).strip()
+        active_comp_ids = st.session_state.get("tab2_compare_ids", [])
+        comp_ids_json = _safe_json_inline(active_comp_ids)
+
+        boundary_obj = (
+            get_boundary_geojson_features(effective_provs, effective_dists, effective_subdists)
+            if effective_provs
+            else None
+        )
+        boundary_json = _safe_json_inline(boundary_obj) if boundary_obj else "null"
+
+        replacements = {
+            "BODY_CLASS_PLACEHOLDER": body_cls,
+            "INIT_REF_LAT_PLACEHOLDER": _safe_float_str(active_ref_lat, ""),
+            "INIT_REF_LON_PLACEHOLDER": _safe_float_str(active_ref_lon, ""),
+            "INIT_RADIUS_PLACEHOLDER": _safe_float_str(active_ref_radius, "5.0"),
+            "INIT_REF_ID_PLACEHOLDER": _safe_js_inner_str(init_ref_id),
+            "INIT_PRICE_REF_ID_PLACEHOLDER": _safe_js_inner_str(init_price_ref_id),
+            "INIT_COMPARE_IDS_PLACEHOLDER": comp_ids_json,
+            "BOUNDARY_GEOJSON_PLACEHOLDER": boundary_json,
+            "CURRENT_PROV_PLACEHOLDER": _safe_js_inner_str(current_prov_str),
+            "CUSTOM_COMPANY_COLORS_PLACEHOLDER": _build_custom_company_colors_str(),
+            "DATA_MTIME_PLACEHOLDER": _safe_js_inner_str(mtime_tok),
+            "CACHE_BUILDER_VER_PLACEHOLDER": _safe_js_inner_str(get_cache_builder_version()),
+            "MAP_PAYLOAD_URL_PLACEHOLDER": _safe_js_inner_str(payload_url),
+        }
+    from modules.config.constants import rewrite_static_paths
+    return rewrite_static_paths(_replace_placeholders_single_pass(html_str, replacements))
 
 
 def _render_map_html_component(html_str, height=870):
@@ -332,6 +371,7 @@ def render_tab2_map_view(df_raw, df_filtered, is_dark_mode):
             or st.session_state.get("cached_map_th_date") != _cur_day_str
             or st.session_state.get("cached_map_payload_url") != _payload_meta["url"]
             or not os.path.exists(_payload_meta["path"])
+            or not os.path.isdir(_payload_meta["details_dir_path"])
         ):
             precompute_full_map_html(_cur_data_mtime)
 
@@ -347,15 +387,8 @@ def render_tab2_map_view(df_raw, df_filtered, is_dark_mode):
             _instant_html = _inject_dynamic_map_placeholders(
                 st.session_state["cached_map_html_base"],
                 is_dark_mode=is_dark_mode,
-                active_ref_lat=active_ref_lat,
-                active_ref_lon=active_ref_lon,
-                active_ref_radius=active_ref_radius,
-                search_prop_id=search_prop_id,
-                effective_provs=effective_provs,
-                effective_dists=effective_dists,
-                effective_subdists=effective_subdists,
-                current_prov_str=current_prov_str,
                 payload_url=st.session_state.get("cached_map_payload_url", _payload_meta["url"]),
+                invariant_runtime=True,
             )
             _render_map_html_component(_instant_html, height=870)
             _instant_rendered = True
@@ -427,15 +460,8 @@ def render_tab2_map_view(df_raw, df_filtered, is_dark_mode):
                 html_content = _inject_dynamic_map_placeholders(
                     base_with_static,
                     is_dark_mode=is_dark_mode,
-                    active_ref_lat=active_ref_lat,
-                    active_ref_lon=active_ref_lon,
-                    active_ref_radius=active_ref_radius,
-                    search_prop_id=search_prop_id,
-                    effective_provs=effective_provs,
-                    effective_dists=effective_dists,
-                    effective_subdists=effective_subdists,
-                    current_prov_str=current_prov_str,
                     payload_url="",
+                    invariant_runtime=True,
                 )
                 if progress_bar:
                     progress_bar.progress(100, text="เรนเดอร์แผนที่สำเร็จแล้ว (100%)")

@@ -1,0 +1,24 @@
+# Python & Local Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+
+# Secrets & User Credentials (use Streamlit Secrets on Cloud)
+.streamlit/secrets.toml
+users.txt
+.env
+*.env
+.env.*
+
+# Runtime Logs, Databases & Temp Files
+logs/
+*.log
+*.db
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db

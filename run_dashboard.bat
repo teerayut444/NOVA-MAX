@@ -13,11 +13,16 @@ echo.
 
 set "PYTHON_EXE="
 
-rem 1. Check local virtual environment (.venv)
+rem 1. Check local virtual environment (.venv) and verify it works on this machine
 if exist "%~dp0.venv\Scripts\python.exe" (
-    set "PYTHON_EXE=%~dp0.venv\Scripts\python.exe"
-) else if exist ".venv\Scripts\python.exe" (
-    set "PYTHON_EXE=.venv\Scripts\python.exe"
+    "%~dp0.venv\Scripts\python.exe" -c "import sys" >nul 2>nul
+    if not errorlevel 1 set "PYTHON_EXE=%~dp0.venv\Scripts\python.exe"
+)
+if not defined PYTHON_EXE (
+    if exist ".venv\Scripts\python.exe" (
+        ".venv\Scripts\python.exe" -c "import sys" >nul 2>nul
+        if not errorlevel 1 set "PYTHON_EXE=.venv\Scripts\python.exe"
+    )
 )
 
 rem 2. Check Python Launcher (py) - standard on Windows
