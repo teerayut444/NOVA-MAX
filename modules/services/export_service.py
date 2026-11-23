@@ -7,7 +7,11 @@ import pandas as pd
 import streamlit as st
 
 from modules.config.constants import COMPANY_COLORS
-from modules.services.data_cleaner import format_coord_vectorized
+from modules.services.data_cleaner import (
+    combine_split_land_area_columns,
+    detect_split_land_area_columns,
+    format_coord_vectorized,
+)
 
 _SAFE_HEX_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
 _CSV_RNW_EXACT_RE = re.compile(r'^[ \t]*="\d+-\d+-\d+(?:\.\d+)?"$')
@@ -315,7 +319,167 @@ def _read_uploaded_dataframe(uploaded_file):
 
     if u_df is not None and len(u_df) > MAX_UPLOAD_ROWS:
         raise ValueError(f"จำนวนแถวในไฟล์เกินขีดจำกัด ({MAX_UPLOAD_ROWS:,} แถวต่อครั้ง)")
+    if u_df is not None:
+        u_df.columns = [str(c).strip() for c in u_df.columns]
     return u_df
+
+
+_IMPORT_ESSENTIAL_COLS = (
+    ("รหัสทรัพย์", "จำเป็นสำหรับระบุอ้างอิงทรัพย์บนแผนที่และตารางเปรียบเทียบ"),
+    ("ประเภททรัพย์", "หากไม่มีจะจัดเป็น 'อื่นๆ'"),
+    ("ราคา", "หากไม่มีจะไม่คำนวณราคากลางและราคาต่อหน่วย"),
+    ("ละติจูด", "จำเป็นสำหรับปักหมุดบนแผนที่ Tab 2"),
+    ("ลองจิจูด", "จำเป็นสำหรับปักหมุดบนแผนที่ Tab 2"),
+    ("จังหวัด", "จำเป็นสำหรับกรองตามจังหวัดและจัดกลุ่มภาค"),
+)
+
+_IMPORT_LAND_ANY_COLS = frozenset({
+    "เนื้อที่ (ตร.ว.)",
+    "เนื้อที่ (ไร่-งาน-ตร.ว.)",
+    "เนื้อที่(ไร่-งาน-ตร.ว.)",
+    "เนื้อที่ (ไร่-งาน-วา)",
+    "พื้นที่ (ไร่-งาน-วา)",
+    "พื้นที่ (ไร่-งาน-ตร.ว.)",
+    "พื้นที่_ตารางวา",
+    "เนื้อที่_ตารางวา",
+    "เนื้อที่",
+    "พื้นที่ดิน",
+})
+_CONDO_ONLY_TYPE_RE = re.compile(r'คอนโด|ห้องชุด|อาคารชุด|condo|penthouse|duplex', re.I)
+
+
+def _is_condo_only_dataframe(df):
+    """Returns True when every non-empty 'ประเภททรัพย์' row in `df` is a condo/unit type."""
+    if df is None or df.empty or "ประเภททรัพย์" not in df.columns:
+        return False
+    u_types = [
+        str(v).strip()
+        for v in df["ประเภททรัพย์"].dropna().unique()
+        if str(v).strip() not in ("", "-", "nan", "None", "null", "<NA>", "NaN")
+    ]
+    return bool(u_types) and all(_CONDO_ONLY_TYPE_RE.search(t) for t in u_types)
+
+
+def _inspect_uploaded_columns(df):
+    """Inspects uploaded DataFrame columns against dashboard expectations and detects split Rai/Ngan/Wah columns."""
+    cols = [str(c).strip() for c in df.columns]
+    col_set = set(cols)
+    split_info = detect_split_land_area_columns(cols, df=df)
+
+    missing_essential = [(col, desc) for col, desc in _IMPORT_ESSENTIAL_COLS if col not in col_set]
+    present_essential = [col for col, _ in _IMPORT_ESSENTIAL_COLS if col in col_set]
+
+    matched_land_cols = [c for c in cols if c in _IMPORT_LAND_ANY_COLS]
+    has_land_area = bool(split_info["source_cols"]) or bool(matched_land_cols)
+    is_condo_only_with_sqm = ("พื้นที่ใช้สอย (ตร.ม.)" in col_set) and _is_condo_only_dataframe(df)
+
+    if has_land_area:
+        if split_info["combined"]:
+            present_essential.append(str(split_info["combined"]))
+        elif split_info["source_cols"]:
+            present_essential.append(" + ".join(str(c) for c in split_info["source_cols"]))
+        else:
+            present_essential.append(matched_land_cols[0])
+    elif is_condo_only_with_sqm:
+        present_essential.append("พื้นที่ใช้สอย (ตร.ม.)")
+    else:
+        missing_essential.append((
+            "เนื้อที่ (ตร.ว.) หรือ เนื้อที่ (ไร่-งาน-ตร.ว.)",
+            "จำเป็นสำหรับแสดงขนาดที่ดินและคำนวณราคาต่อ ตร.ว. (รองรับคอลัมน์แยก ไร่ / งาน / ตร.ว. ด้วย)",
+        ))
+
+    has_company = "บริษัท" in col_set
+    return {
+        "has_company": has_company,
+        "present_essential": present_essential,
+        "missing_essential": missing_essential,
+        "has_land_area": has_land_area,
+        "is_condo_only_with_sqm": is_condo_only_with_sqm,
+        "split_info": split_info,
+    }
+
+
+def _build_map_pin_preview_html(symbol, color_hex, company_name, count):
+    """Builds inline HTML preview matching the real circular Deck.gl / Leaflet map pin and compact legend item."""
+    safe_col = _safe_hex_color(color_hex)
+    sym_clean = str(symbol or "").strip().upper()
+    sym_disp = html.escape(sym_clean if sym_clean else "?", quote=True)
+    co_raw = str(company_name or "").strip()
+    co_short = (co_raw[:20] + "…") if len(co_raw) > 21 else co_raw
+    co_esc = html.escape(co_short, quote=True)
+    co_title = html.escape(co_raw, quote=True)
+
+    s_len = len(sym_clean)
+    if s_len <= 1:
+        f_px = 18
+    elif s_len == 2:
+        f_px = 14
+    elif s_len == 3:
+        f_px = 11.5
+    else:
+        f_px = 9.5
+
+    return (
+        f'<div style="font-size:14px; font-weight:400; line-height:1.4; margin-bottom:4px; color:inherit;">'
+        f'ตัวอย่างหมุดบนแผนที่'
+        f'</div>'
+        f'<div style="display:flex; align-items:center; gap:10px; min-height:42px;">'
+        f'  <div title="หมุดบนแผนที่: {sym_disp}" style="width:40px; height:40px; min-width:40px; border-radius:50%; '
+        f'      background:#ffffff; border:3px solid {safe_col}; color:{safe_col}; '
+        f'      display:flex; align-items:center; justify-content:center; '
+        f'      font-family:Segoe UI, Tahoma, sans-serif; font-weight:800; font-size:{f_px}px; '
+        f'      letter-spacing:-0.2px; line-height:1; box-shadow:0 2px 6px rgba(15,23,42,0.20);">'
+        f'      {sym_disp}'
+        f'  </div>'
+        f'  <div title="{co_title}" style="display:inline-flex; align-items:center; gap:6px; '
+        f'      background:rgba(148,163,184,0.10); border:1px solid rgba(148,163,184,0.28); '
+        f'      border-radius:6px; padding:4px 8px; max-width:100%; overflow:hidden;">'
+        f'      <span style="width:9px; height:9px; min-width:9px; border-radius:50%; background:{safe_col}; display:inline-block;"></span>'
+        f'      <span style="font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{co_esc}</span>'
+        f'      <span style="font-size:11px; opacity:0.72; white-space:nowrap;">({int(count):,})</span>'
+        f'  </div>'
+        f'</div>'
+    )
+
+
+def _render_import_column_guide():
+    """Renders collapsible complete column specification guide for file import."""
+    with st.expander("คู่มือคอลัมน์ที่รองรับในการนำเข้าไฟล์ (คลิกเพื่อดูรายละเอียด)", icon=":material/table_chart:", expanded=False):
+        st.markdown(
+            """
+**1. คอลัมน์สำคัญ (แนะนำให้มีครบเพื่อให้แผนที่และการวิเคราะห์ทำงานได้เต็มประสิทธิภาพ)**
+| ชื่อคอลัมน์ | รายละเอียด / ตัวอย่างรูปแบบ |
+|---|---|
+| `บริษัท` | ชื่อบริษัท/เจ้าของทรัพย์ (หากไม่ระบุ ระบบตั้งค่าเป็น `"ไฟล์นำเข้า"` และกำหนดตัวย่อ+สีหมุดได้) |
+| `รหัสทรัพย์` | รหัสอ้างอิงทรัพย์สิน (ใช้เลือกทรัพย์อ้างอิงบนแผนที่และตารางเปรียบเทียบ) |
+| `ประเภททรัพย์` | เช่น `บ้านเดี่ยว`, `ทาวน์เฮ้าส์`, `ห้องชุดพักอาศัย`, `ที่ดินเปล่า`, `อาคารพาณิชย์` ฯลฯ |
+| `ราคา` | ราคาขาย (บาท) รองรับตัวเลขหรือข้อความมีคอมม่า เช่น `3,500,000` |
+| `เนื้อที่ (ตร.ว.)` หรือ `เนื้อที่ (ไร่-งาน-ตร.ว.)` | **แบบรวมช่องเดียว** เช่น `1-2-30` หรือตัวเลขตารางวา เช่น `630` *(กรณีไฟล์คอนโดล้วนที่มี `พื้นที่ใช้สอย (ตร.ม.)` ไม่ต้องใส่ช่องนี้)* |
+| `ไร่`, `งาน`, `ตร.ว.` *(แบบแยกคอลัมน์)* | **รองรับคอลัมน์แยกแทนช่องรวม!** เช่น `ไร่` / `เนื้อที่ (ไร่)` / `Rai`, `งาน` / `เนื้อที่ (งาน)` / `Ngan`, `ตร.ว.` / `ตารางวา` / `วา` / `Wah` — ระบบจะคำนวณรวมและทดหน่วยมาตรฐานเป็นช่องเดียวให้อัตโนมัติ (เช่น `0 ไร่ 0 งาน 150 ตร.ว.` → `0-1-50`) |
+| `ละติจูด` | พิกัดละติจูด (เช่น `13.756312`) — จำเป็นสำหรับปักหมุดบนแผนที่ |
+| `ลองจิจูด` | พิกัดลองจิจูด (เช่น `100.501812`) — จำเป็นสำหรับปักหมุดบนแผนที่ |
+| `จังหวัด` | ชื่อจังหวัด เช่น `กรุงเทพมหานคร`, `ชลบุรี` (ระบบจัดกลุ่ม `ภาค` ให้อัตโนมัติ) |
+
+**2. คอลัมน์แนะนำ (เพิ่มความสมบูรณ์ของตารางและการคำนวณราคาต่อหน่วย)**
+| ชื่อคอลัมน์ | รายละเอียด / ตัวอย่างรูปแบบ |
+|---|---|
+| `ชื่อโครงการ` | ชื่อหมู่บ้าน / คอนโด / โครงการ |
+| `ชื่อประกาศ` | หัวข้อประกาศ (หากว่าง ระบบจะใช้ `ชื่อโครงการ` หรือ `รหัสทรัพย์` แทน) |
+| `อำเภอ`, `ตำบล` | ใช้สำหรับกรองพื้นที่และวิเคราะห์ทำเล |
+| `ประเภทการขาย` | เช่น `ขาย`, `ขายทอดตลาด` (หากว่างจะตั้งเป็น `"ขาย"`; รายการเช่า/NPL จะถูกคัดออก) |
+| `พื้นที่ใช้สอย (ตร.ม.)` | พื้นที่ใช้สอยเป็นตารางเมตร เช่น `145.5` *(สำคัญสำหรับคอนโด/ห้องชุด)* |
+| `ลิงก์` | URL หน้าประกาศ (`https://...`) |
+
+**3. คอลัมน์รายละเอียดเพิ่มเติม (ไม่บังคับ)**
+- `ID`, `ห้องนอน`, `ห้องน้ำ`, `ที่จอดรถ`, `ชั้น`, `เลขโฉนด`, `วันประกาศ` *(เช่น `15/10/2569` หรือ `2026-10-15`)*, `วันที่ดึงข้อมูล`
+
+**4. คอลัมน์เฉพาะทาง (LED / เว็บประกาศ — ไม่บังคับ)**
+- กรมบังคับคดี (LED / LED Legal): `โจทก์`, `ศาล`, `ราคาขายได้`, `วันที่ขาย`
+- เว็บประกาศ (Livinginsider): `ยอดเข้าชม`, `ยอดคลิก`
+
+> **หมายเหตุ:** ระบบจะคำนวณคอลัมน์ `พื้นที่_ตารางวา`, `ราคาต่อตารางวา`, `ราคาต่อตารางเมตร`, `ภาค` และ `is_centroid` ให้อัตโนมัติ ไม่จำเป็นต้องใส่ในไฟล์ต้นทาง
+"""
+        )
 
 
 def _compute_export_fingerprint(df_to_export):
@@ -365,13 +529,18 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
     # Left: Import File
     with col_imp:
         st.markdown("###### <i class='fa-solid fa-file-import' style='color:#64748b; margin-right:6px;'></i>นำเข้าข้อมูลเพิ่มเติม (Import File)", unsafe_allow_html=True)
+        _render_import_column_guide()
         uploader_gen_key = f"_uploader_gen_{key_suffix}"
         uploader_gen = int(st.session_state.get(uploader_gen_key, 0))
         uploaded_file = st.file_uploader(
             "เลือกไฟล์ Excel หรือ CSV เพื่อเพิ่มข้อมูล",
             type=["xlsx", "xls", "csv"],
             key=f"custom_file_uploader_{key_suffix}_{uploader_gen}",
-            help=f"รองรับไฟล์ไม่เกิน {MAX_UPLOAD_BYTES // (1024 * 1024)} MB / {MAX_UPLOAD_ROWS:,} แถว (คอลัมน์: บริษัท, ประเภททรัพย์, ราคา, ละติจูด, ลองจิจูด, จังหวัด ฯลฯ)"
+            help=(
+                f"รองรับไฟล์ไม่เกิน {MAX_UPLOAD_BYTES // (1024 * 1024)} MB / {MAX_UPLOAD_ROWS:,} แถว "
+                f"(คอลัมน์สำคัญ: บริษัท, รหัสทรัพย์, ประเภททรัพย์, ราคา, เนื้อที่ (ตร.ว.) หรือ เนื้อที่ (ไร่-งาน-ตร.ว.) "
+                f"หรือแยก ไร่ / งาน / ตร.ว., ละติจูด, ลองจิจูด, จังหวัด)"
+            ),
         )
         if uploaded_file is not None:
             try:
@@ -392,8 +561,11 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                     st.session_state[parse_cache_key] = {"uid": upload_uid, "df": u_df}
 
                 if u_df is not None and not u_df.empty:
+                    # Inspect columns & split Rai/Ngan/Wah before mutating u_work_df
+                    col_audit = _inspect_uploaded_columns(u_df)
+
                     # Clean and inspect companies
-                    has_company_col = 'บริษัท' in u_df.columns
+                    has_company_col = col_audit["has_company"]
                     u_work_df = u_df.copy()
 
                     if not has_company_col:
@@ -412,6 +584,38 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                     total_detected_cos = len(co_counts)
 
                     st.success(f"อ่านไฟล์สำเร็จ ({len(u_work_df):,} รายการ จาก {total_detected_cos:,} บริษัท)")
+
+                    # 0a. Inform when separate Rai / Ngan / Wah columns are detected
+                    split_info = col_audit["split_info"]
+                    if split_info["source_cols"]:
+                        src_cols_md = " + ".join(f"`{c}`" for c in split_info["source_cols"])
+                        if split_info["combined"]:
+                            split_msg = (
+                                f"**ตรวจพบคอลัมน์แยกเนื้อที่ดิน:** {src_cols_md}\n\n"
+                                f"_พบคอลัมน์รวม `{split_info['combined']}` อยู่แล้วด้วย — ระบบจะยึดค่าจากคอลัมน์รวมเป็นหลัก "
+                                f"และนำค่าจากคอลัมน์แยกมาคำนวณรวม (ทดหน่วยมาตรฐาน) เติมให้เฉพาะแถวที่ว่าง "
+                                f"พร้อมลบคอลัมน์แยกออกหลังรวมเสร็จ_"
+                            )
+                        else:
+                            split_msg = (
+                                f"**ตรวจพบคอลัมน์แยกเนื้อที่ดิน:** {src_cols_md}\n\n"
+                                f"_ระบบจะรวมและทดหน่วยมาตรฐานเป็นช่องเดียว (`เนื้อที่ (ตร.ว.)` รูปแบบ ไร่-งาน-ตร.ว. "
+                                f"และ `พื้นที่_ตารางวา`) พร้อมลบคอลัมน์แยกออกให้อัตโนมัติ_"
+                            )
+                        st.info(split_msg, icon=":material/straighten:")
+
+                    # 0b. Non-blocking warning if any essential columns are missing
+                    missing_ess = col_audit["missing_essential"]
+                    if missing_ess:
+                        present_ess = col_audit["present_essential"]
+                        present_txt = ", ".join(f"`{c}`" for c in present_ess) if present_ess else "ไม่มี"
+                        missing_lines = "\n".join(f"- `{c}` — {desc}" for c, desc in missing_ess)
+                        st.warning(
+                            f"**ไม่พบคอลัมน์สำคัญบางรายการในไฟล์นี้** *(ตรวจพบแล้ว: {present_txt})*\n\n"
+                            f"{missing_lines}\n\n"
+                            f"_คุณยังสามารถกดปุ่ม \"รวมเข้ากับฐานข้อมูลหลัก\" ได้ตามปกติ หากข้อมูลบางส่วนไม่จำเป็นต้องใช้_",
+                            icon=":material/warning:",
+                        )
 
                     # Separate known vs new companies
                     known_keys_upper = {k.upper(): k for k in COMPANY_COLORS.keys()}
@@ -468,7 +672,7 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                             init_col = _safe_hex_color(saved_conf.get("color", default_col), default=default_col)
 
                             with st.expander(f"{co_name} ({cnt:,} รายการ)", expanded=(len(new_cos) <= 3 or idx == 0), icon=":material/business:"):
-                                c_sym_col, c_color_col = st.columns([1, 1])
+                                c_sym_col, c_color_col, c_prev_col = st.columns([1.05, 0.55, 1.4])
                                 with c_sym_col:
                                     sym_val = st.text_input(
                                         "ตัวย่อบนหมุด",
@@ -483,6 +687,11 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                                         value=init_col,
                                         key=f"custom_color_picker_{key_suffix}_{uploader_gen}_{idx}_{co_name}",
                                         help="สีนี้จะใช้แสดงเป็นขอบหมุดและจุดสีใน Legend"
+                                    )
+                                with c_prev_col:
+                                    st.markdown(
+                                        _build_map_pin_preview_html(sym_val, color_val, co_name, cnt),
+                                        unsafe_allow_html=True,
                                     )
                                 configured_new_cos[co_name] = {"symbol": sym_val, "color": _safe_hex_color(color_val)}
                                 entered_symbols[co_name] = sym_val
@@ -576,6 +785,9 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                             st.session_state["imported_custom_companies"][co_name] = conf
 
                         _sync_legacy_custom_keys()
+
+                        # Combine separate Rai / Ngan / Wah columns (if present) before deriving full schema
+                        u_clean, _ = combine_split_land_area_columns(u_clean, drop_source_cols=True)
 
                         # Enrich derived cols (read-only cache mode prevents polluting shared disk cache)
                         u_clean_derived = ensure_derived_cols(u_clean, persist_cache=False)

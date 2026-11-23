@@ -761,6 +761,250 @@ def format_to_rai_ngan_wah(val):
     wah_str = str(int(wah)) if wah == int(wah) else f"{wah:.1f}"
     return f"{rai}-{ngan}-{wah_str}"
 
+
+_LAND_SPLIT_EXCLUDE_RE = re.compile(
+    r'ราคา|price|บาท|baht|ใช้สอย|ตร\.?\s*ม\.?|ตารางเมตร|sqm|sq\.?\s*m|m2|โรงงาน|สำนักงาน|พนักงาน',
+    re.I,
+)
+_LAND_COMBINED_COL_NAMES = frozenset({
+    'เนื้อที่ (ไร่-งาน-ตร.ว.)',
+    'เนื้อที่(ไร่-งาน-ตร.ว.)',
+    'เนื้อที่ (ไร่-งาน-วา)',
+    'เนื้อที่(ไร่-งาน-วา)',
+    'พื้นที่ (ไร่-งาน-วา)',
+    'พื้นที่(ไร่-งาน-วา)',
+    'พื้นที่ (ไร่-งาน-ตร.ว.)',
+    'พื้นที่(ไร่-งาน-ตร.ว.)',
+    'เนื้อที่',
+    'พื้นที่ดิน',
+})
+_LAND_TOTAL_SQW_COL_NAMES = frozenset({
+    'พื้นที่_ตารางวา',
+    'เนื้อที่_ตารางวา',
+})
+_LAND_RAI_COL_RE = re.compile(
+    r'^(?:(?:เนื้อที่|พื้นที่|พื้นที่ดิน|ขนาดที่ดิน|ขนาด|ที่ดิน|จำนวน)[\s_\-]*\(?\s*ไร่\s*\)?'
+    r'|ไร่(?:\s*\([^)]*\))?'
+    r'|(?:land|area)?[\s_\-]*\(?\s*rai\s*\)?)$',
+    re.I,
+)
+_LAND_NGAN_COL_RE = re.compile(
+    r'^(?:(?:เนื้อที่|พื้นที่|พื้นที่ดิน|ขนาดที่ดิน|ขนาด|ที่ดิน|จำนวน)[\s_\-]*\(?\s*งาน\s*\)?'
+    r'|งาน(?:\s*\([^)]*\))?'
+    r'|(?:land|area)?[\s_\-]*\(?\s*ngan\s*\)?)$',
+    re.I,
+)
+_LAND_WAH_COL_RE = re.compile(
+    r'^(?:(?:เนื้อที่|พื้นที่|พื้นที่ดิน|ขนาดที่ดิน|ขนาด|ที่ดิน|จำนวน)[\s_\-]*\(?\s*(?:ตร\.?\s*ว\.?|ตร\.?\s*วา\.?|ตารางวา|วา)\s*\)?'
+    r'|(?:ตร\.?\s*ว\.?|ตร\.?\s*วา\.?|ตารางวา|วา)(?:\s*\([^)]*\))?'
+    r'|(?:land|area)?[\s_\-]*\(?\s*(?:sq\.?\s*wah|sq\.?\s*w\.?|sqwah|sqw|wah|wa)\s*\)?)$',
+    re.I,
+)
+_COMBINED_RNW_VALUE_RE = re.compile(r'(?:^\s*(?:="|\')?\d+\s*-\s*\d+\s*-\s*\d+|ไร่|งาน)')
+_UNIT_STRIP_RE = re.compile(r'(?:ไร่|งาน|ตารางวา|ตร\.?\s*วา\.?|ตร\.?\s*ว\.?|วา|sq\.?\s*wah|sq\.?\s*w\.?|sqwah|sqw|rai|ngan|wah|wa|,|\s)', re.I)
+
+
+def _series_has_combined_rnw_values(series):
+    """Returns True if any non-null value in `series` uses Rai-Ngan-Wah notation (e.g. '1-2-30' or '2 ไร่ 1 งาน')."""
+    if series is None or len(series) == 0 or pd.api.types.is_numeric_dtype(series):
+        return False
+    s_non_null = series.dropna()
+    if s_non_null.empty:
+        return False
+    sample_vals = pd.Series(s_non_null.unique(), dtype=object).astype(str)
+    return bool(sample_vals.str.contains(_COMBINED_RNW_VALUE_RE, na=False).any())
+
+
+def detect_split_land_area_columns(columns, df=None):
+    """Detects separate Rai / Ngan / Wah land-area columns and any existing combined land-area column.
+
+    Returns a dict with keys: `rai`, `ngan`, `wah`, `combined`, `source_cols`.
+    Carefully handles `'เนื้อที่ (ตร.ว.)'` ambiguity: when paired with a separate Rai or Ngan column
+    (and its values are not already `'X-Y-Z'` strings), it is treated as the Wah component.
+    """
+    rai_col = None
+    ngan_col = None
+    wah_col = None
+    combined_col = None
+    ambiguous_std_col = None
+
+    for raw_c in columns:
+        c = str(raw_c)
+        c_norm = re.sub(r'\s+', ' ', c.strip())
+        c_low = c_norm.lower()
+        if not c_low or c_low in _LAND_TOTAL_SQW_COL_NAMES:
+            continue
+        if _LAND_SPLIT_EXCLUDE_RE.search(c_norm):
+            continue
+        if c_norm in _LAND_COMBINED_COL_NAMES:
+            if combined_col is None:
+                combined_col = raw_c
+            continue
+        if c_norm == 'เนื้อที่ (ตร.ว.)':
+            ambiguous_std_col = raw_c
+            continue
+        if rai_col is None and _LAND_RAI_COL_RE.match(c_norm):
+            rai_col = raw_c
+            continue
+        if ngan_col is None and _LAND_NGAN_COL_RE.match(c_norm):
+            ngan_col = raw_c
+            continue
+        if wah_col is None and _LAND_WAH_COL_RE.match(c_norm):
+            wah_col = raw_c
+            continue
+
+    if ambiguous_std_col is not None:
+        has_rai_or_ngan = (rai_col is not None) or (ngan_col is not None)
+        if has_rai_or_ngan and wah_col is None:
+            is_already_combined = (
+                _series_has_combined_rnw_values(df[ambiguous_std_col])
+                if (df is not None and ambiguous_std_col in df.columns)
+                else False
+            )
+            if is_already_combined:
+                if combined_col is None:
+                    combined_col = ambiguous_std_col
+            else:
+                wah_col = ambiguous_std_col
+        else:
+            if combined_col is None:
+                combined_col = ambiguous_std_col
+
+    source_cols = [c for c in (rai_col, ngan_col, wah_col) if c is not None]
+    return {
+        "rai": rai_col,
+        "ngan": ngan_col,
+        "wah": wah_col,
+        "combined": combined_col,
+        "source_cols": source_cols,
+    }
+
+
+def _parse_single_land_unit_series(series):
+    """Parses a single Rai, Ngan, or Wah column into non-negative float64 (invalid/negative -> NaN)."""
+    if pd.api.types.is_numeric_dtype(series):
+        nums = pd.to_numeric(series, errors='coerce').astype('float64')
+    else:
+        s_clean = (
+            series.astype(object)
+            .where(series.notna(), np.nan)
+            .astype(str)
+            .str.strip()
+            .str.replace(r'^="(.*)"$', r'\1', regex=True)
+            .str.replace(_UNIT_STRIP_RE, '', regex=True)
+        )
+        nums = pd.to_numeric(s_clean, errors='coerce').astype('float64')
+    return nums.where(np.isfinite(nums) & (nums >= 0), np.nan)
+
+
+def combine_split_land_area_columns(df, drop_source_cols=True):
+    """Combines separate Rai / Ngan / Wah columns into `'เนื้อที่ (ตร.ว.)'` ('X-Y-Z' normalized)
+    and `'พื้นที่_ตารางวา'` (float64 total sq.wah).
+
+    - Normalizes overflows automatically (e.g., 0 rai 0 ngan 150 wah -> '0-1-50', 150.0 sq.wah).
+    - If an existing combined land column is present, keeps valid values from the combined column
+      and fills missing/blank rows from the split columns.
+    - Drops the raw split source columns (except `'เนื้อที่ (ตร.ว.)'` itself) when `drop_source_cols=True`.
+    """
+    if df is None or df.empty:
+        return df, {"detected": False, "source_cols": [], "filled_rows": 0, "dropped_cols": []}
+
+    det = detect_split_land_area_columns(df.columns, df=df)
+    source_cols = det["source_cols"]
+    if not source_cols:
+        return df, {
+            "detected": False,
+            "rai_col": None,
+            "ngan_col": None,
+            "wah_col": None,
+            "combined_col": det["combined"],
+            "source_cols": [],
+            "filled_rows": 0,
+            "dropped_cols": [],
+        }
+
+    out = df.copy()
+    idx = out.index
+    rai_s = _parse_single_land_unit_series(out[det["rai"]]) if det["rai"] is not None else pd.Series(np.nan, index=idx, dtype='float64')
+    ngan_s = _parse_single_land_unit_series(out[det["ngan"]]) if det["ngan"] is not None else pd.Series(np.nan, index=idx, dtype='float64')
+    wah_s = _parse_single_land_unit_series(out[det["wah"]]) if det["wah"] is not None else pd.Series(np.nan, index=idx, dtype='float64')
+
+    has_any_split = rai_s.notna() | ngan_s.notna() | wah_s.notna()
+    split_sqw = (rai_s.fillna(0.0) * 400.0) + (ngan_s.fillna(0.0) * 100.0) + wah_s.fillna(0.0)
+    split_sqw = split_sqw.where(has_any_split & np.isfinite(split_sqw) & (split_sqw > 0), np.nan).astype('float64')
+
+    valid_split_mask = split_sqw.notna()
+    split_rnw = pd.Series(None, index=idx, dtype=object)
+    if valid_split_mask.any():
+        u_sqw = split_sqw.loc[valid_split_mask].unique()
+        rnw_lut = {v: format_to_rai_ngan_wah(v) for v in u_sqw}
+        mapped_rnw = split_sqw.loc[valid_split_mask].map(rnw_lut)
+        split_rnw.loc[valid_split_mask] = mapped_rnw.replace({'-': None, '': None})
+
+    combined_col = det["combined"]
+    if combined_col is not None and combined_col in out.columns:
+        raw_comb = (
+            out[combined_col]
+            .astype(object)
+            .where(out[combined_col].notna(), None)
+        )
+        comb_clean = (
+            raw_comb.astype(str)
+            .str.strip()
+            .str.replace(r'^="(.*)"$', r'\1', regex=True)
+            .replace({'nan': None, 'None': None, '<NA>': None, 'NaN': None, '': None, '-': None, '0': None, '0-0-0': None, '0-0-0.0': None})
+        )
+        u_comb = comb_clean.dropna().unique()
+        comb_sqw_lut = {v: parse_area_to_sqwah(v) for v in u_comb}
+        existing_sqw = comb_clean.map(comb_sqw_lut).astype('float64')
+        existing_valid = existing_sqw.notna() & np.isfinite(existing_sqw) & (existing_sqw > 0)
+
+        fill_mask = (~existing_valid) & valid_split_mask
+        filled_rows = int(fill_mask.sum())
+
+        final_rnw = comb_clean.where(existing_valid, None)
+        if fill_mask.any():
+            final_rnw.loc[fill_mask] = split_rnw.loc[fill_mask]
+        out['เนื้อที่ (ตร.ว.)'] = final_rnw
+
+        final_sqw = existing_sqw.where(existing_valid, np.nan)
+        if fill_mask.any():
+            final_sqw.loc[fill_mask] = split_sqw.loc[fill_mask]
+
+        if 'พื้นที่_ตารางวา' in out.columns:
+            cur_sqw = pd.to_numeric(out['พื้นที่_ตารางวา'], errors='coerce').astype('float64')
+            cur_valid = cur_sqw.notna() & np.isfinite(cur_sqw) & (cur_sqw > 0)
+            out['พื้นที่_ตารางวา'] = cur_sqw.where(cur_valid, final_sqw).astype('float64')
+        else:
+            out['พื้นที่_ตารางวา'] = final_sqw.astype('float64')
+    else:
+        filled_rows = int(valid_split_mask.sum())
+        out['เนื้อที่ (ตร.ว.)'] = split_rnw
+        if 'พื้นที่_ตารางวา' in out.columns:
+            cur_sqw = pd.to_numeric(out['พื้นที่_ตารางวา'], errors='coerce').astype('float64')
+            cur_valid = cur_sqw.notna() & np.isfinite(cur_sqw) & (cur_sqw > 0)
+            out['พื้นที่_ตารางวา'] = cur_sqw.where(cur_valid, split_sqw).astype('float64')
+        else:
+            out['พื้นที่_ตารางวา'] = split_sqw.astype('float64')
+
+    dropped_cols = []
+    if drop_source_cols:
+        to_drop = [c for c in source_cols if c != 'เนื้อที่ (ตร.ว.)' and c in out.columns]
+        if to_drop:
+            out = out.drop(columns=to_drop)
+            dropped_cols = to_drop
+
+    return out, {
+        "detected": True,
+        "rai_col": det["rai"],
+        "ngan_col": det["ngan"],
+        "wah_col": det["wah"],
+        "combined_col": combined_col,
+        "source_cols": source_cols,
+        "filled_rows": filled_rows,
+        "dropped_cols": dropped_cols,
+    }
+
 def _parse_announcement_date(s):
     """Parse Thai/CE date strings (full date preferred over year-only); returns (datetime.date | None, year_only_diff | None)."""
     # 1. Full d/m/yyyy (with optional HH:MM[:SS]) - handles BE years >= 2400 and m/d/yyyy fallback
@@ -1487,6 +1731,8 @@ def ensure_derived_cols(df, persist_cache=False):
     else:
         df['ราคา'] = np.nan
 
+    df, _ = combine_split_land_area_columns(df, drop_source_cols=True)
+
     for _area_c in ('เนื้อที่ (ตร.ว.)', 'เนื้อที่ (ไร่-งาน-ตร.ว.)', 'พื้นที่ (ไร่-งาน-วา)'):
         if _area_c in df.columns:
             df[_area_c] = (
@@ -1496,8 +1742,11 @@ def ensure_derived_cols(df, persist_cache=False):
                 .str.replace(r'^="(.*)"$', r'\1', regex=True)
                 .replace({'nan': None, 'None': None, '<NA>': None, '': None})
             )
-    if 'เนื้อที่ (ตร.ว.)' not in df.columns and 'เนื้อที่ (ไร่-งาน-ตร.ว.)' in df.columns:
-        df['เนื้อที่ (ตร.ว.)'] = df['เนื้อที่ (ไร่-งาน-ตร.ว.)']
+    if 'เนื้อที่ (ตร.ว.)' not in df.columns:
+        if 'เนื้อที่ (ไร่-งาน-ตร.ว.)' in df.columns:
+            df['เนื้อที่ (ตร.ว.)'] = df['เนื้อที่ (ไร่-งาน-ตร.ว.)']
+        elif 'พื้นที่ (ไร่-งาน-วา)' in df.columns:
+            df['เนื้อที่ (ตร.ว.)'] = df['พื้นที่ (ไร่-งาน-วา)']
 
     if 'พื้นที่_ตารางวา' not in df.columns:
         if 'เนื้อที่_ตารางวา' in df.columns:
