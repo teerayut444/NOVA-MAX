@@ -7,7 +7,6 @@ import pandas as pd
 import streamlit as st
 
 from modules.services.batch_reference_service import (
-    STAT_SUMMARY_COLUMNS,
     build_batch_grouped_export_df,
     build_map_batch_refs_payload,
     compute_batch_ref_fingerprint,
@@ -95,7 +94,6 @@ def _render_batch_column_guide():
 | `ประเภททรัพย์` | **จำเป็น** | ใช้จับคู่กับทรัพย์ประเภทเดียวกันในฐานข้อมูล (Normalize ชื่ออัตโนมัติ เช่น `คอนโด` → `ห้องชุดพักอาศัย`, `ทาวน์โฮม` → `ทาวน์เฮ้าส์`) |
 | `รหัสทรัพย์` | แนะนำ | ใช้อ้างอิงชื่อกลุ่มและแสดงใน Popup บนแผนที่ (หากไม่มี ระบบสร้าง `REF-001`, `REF-002` ให้อัตโนมัติ) |
 | `ราคา`, `เนื้อที่ (ตร.ว.)` / `ไร่-งาน-ตร.ว.`, `พื้นที่ใช้สอย (ตร.ม.)` | แนะนำ | ใช้แสดงในแถวทรัพย์อ้างอิงและคำนวณราคาต่อหน่วย |
-| คอลัมน์พิเศษอื่นๆ (เช่น `เลขสัญญา`, `ชื่อพอร์ต`, `หมายเหตุ`) | อัตโนมัติ | ระบบเก็บรักษาต่อท้ายไว้ในแถวทรัพย์อ้างอิงของไฟล์ Export ให้ครบ |
 """
         )
 
@@ -342,61 +340,24 @@ def render_tab2_batch_reference_panel(df_db, is_dark_mode=False):
     rad_tag = f"{batch_radius:.2f}".rstrip("0").rstrip(".").replace(".", "p")
     fname_stem = f"{base_name}_grouped_{rad_tag}km_{date_tag}"
 
-    def _get_cached_bytes(fmt_key, builder_fn):
-        cache_dict = st.session_state.get("_tab2_batch_file_bytes_cache")
-        if not isinstance(cache_dict, dict) or cache_dict.get("fp") != batch_fp:
-            cache_dict = {"fp": batch_fp}
-            st.session_state["_tab2_batch_file_bytes_cache"] = cache_dict
-        if fmt_key not in cache_dict:
-            cache_dict[fmt_key] = builder_fn(grouped_df)
-        return cache_dict[fmt_key]
+    # Prepare cache dict on the main Streamlit thread so the download callable never touches st.session_state on asyncio_0
+    bytes_cache = st.session_state.get("_tab2_batch_file_bytes_cache")
+    if not isinstance(bytes_cache, dict) or bytes_cache.get("fp") != batch_fp:
+        bytes_cache = {"fp": batch_fp}
+        st.session_state["_tab2_batch_file_bytes_cache"] = bytes_cache
+
+    def _get_cached_xlsx(_cache=bytes_cache, _df=grouped_df):
+        if "xlsx" not in _cache:
+            _cache["xlsx"] = convert_grouped_df_to_excel(_df)
+        return _cache["xlsx"]
 
     st.download_button(
         "ดาวน์โหลด Excel แบบจัดกลุ่มพับเก็บ [+] (.xlsx)",
         icon=":material/table_view:",
-        data=lambda: _get_cached_bytes("xlsx", convert_grouped_df_to_excel),
+        data=_get_cached_xlsx,
         file_name=f"{fname_stem}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
         width="stretch",
         key=f"btn_dl_batch_xlsx_{batch_fp}",
     )
-
-    # Collapsible interactive preview of grouped results
-    if grouped_df is not None and not grouped_df.empty:
-        visible_cols = [c for c in grouped_df.columns if not str(c).startswith("_")]
-        with st.expander(f"ดูตัวอย่างผลลัพธ์แบบจัดกลุ่ม ({len(grouped_df):,} แถว)", icon=":material/preview:", expanded=False):
-            group_labels = ["แสดงทุกกลุ่ม (สูงสุด 300 แถวแรก)"]
-            if "_batch_group_no" in grouped_df.columns and "_batch_is_ref" in grouped_df.columns:
-                ref_rows = grouped_df[grouped_df["_batch_is_ref"].astype(bool)]
-                for r in ref_rows.itertuples(index=False):
-                    g_no = getattr(r, "_batch_group_no", "")
-                    g_code = getattr(r, "รหัสทรัพย์", "")
-                    g_cnt = getattr(r, "_batch_nearby_count", 0)
-                    group_labels.append(f"กลุ่ม #{g_no} • {g_code} ({g_cnt} รายการ)")
-
-            sel_grp_lbl = st.selectbox(
-                "เลือกดูเฉพาะกลุ่ม",
-                options=group_labels,
-                index=0,
-                key="tab2_batch_preview_group_sel",
-            )
-            if sel_grp_lbl == group_labels[0]:
-                prev_df = grouped_df[visible_cols].head(300)
-            else:
-                try:
-                    grp_idx = int(sel_grp_lbl.split("#", 1)[1].split(" ", 1)[0])
-                    prev_df = grouped_df.loc[grouped_df["_batch_group_no"] == grp_idx, visible_cols]
-                except Exception:
-                    prev_df = grouped_df[visible_cols].head(300)
-
-            col_cfg = {
-                "ราคา (บาท)": st.column_config.NumberColumn("ราคา (บาท)", format="฿%,.0f"),
-                "ราคาต่อตร.ว. (บาท)": st.column_config.NumberColumn("ราคาต่อตร.ว. (บาท)", format="฿%,.0f"),
-                "ราคาต่อตร.ม. (บาท)": st.column_config.NumberColumn("ราคาต่อตร.ม. (บาท)", format="฿%,.0f"),
-                "ระยะทาง (กม.)": st.column_config.NumberColumn("ระยะทาง (กม.)", format="%.2f กม."),
-            }
-            for sc in STAT_SUMMARY_COLUMNS:
-                col_cfg[sc] = st.column_config.NumberColumn(sc, format="฿%,.0f")
-
-            st.dataframe(prev_df, width="stretch", height=360, hide_index=True, column_config=col_cfg)
