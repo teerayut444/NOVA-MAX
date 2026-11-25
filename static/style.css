@@ -1594,6 +1594,61 @@ section[data-testid="stSidebar"] div[data-testid="stToggle"] label p {
     transform: translateY(-1px);
 }
 
+/* Tab 2 Active Map Filters Banner Chips (Active vs Inactive Muted State) */
+#map-active-filters-banner .map-filter-chip {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 5px 11px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+}
+#map-active-filters-banner .map-filter-chip > i {
+    font-size: 0.86rem;
+    flex-shrink: 0;
+    transition: color 0.18s ease, opacity 0.18s ease;
+}
+#map-active-filters-banner .map-filter-chip .map-filter-chip-label {
+    font-size: 0.81rem;
+    font-weight: 700;
+    color: #1e293b;
+    white-space: nowrap;
+    transition: color 0.18s ease;
+}
+#map-active-filters-banner .map-filter-chip.is-inactive {
+    background: rgba(241, 245, 249, 0.65);
+    border-color: rgba(203, 213, 225, 0.6);
+}
+#map-active-filters-banner .map-filter-chip.is-inactive > i {
+    color: #94a3b8 !important;
+}
+#map-active-filters-banner .map-filter-chip.is-inactive .map-filter-chip-label {
+    color: #8696ab !important;
+    font-weight: 500 !important;
+}
+#map-active-filters-banner[data-theme="dark"] .map-filter-chip {
+    background: rgba(2, 44, 34, 0.7);
+    border-color: rgba(52, 211, 153, 0.25);
+}
+#map-active-filters-banner[data-theme="dark"] .map-filter-chip .map-filter-chip-label {
+    color: #f1f5f9;
+}
+#map-active-filters-banner[data-theme="dark"] .map-filter-chip.is-inactive {
+    background: rgba(2, 44, 34, 0.28);
+    border-color: rgba(52, 211, 153, 0.12);
+}
+#map-active-filters-banner[data-theme="dark"] .map-filter-chip.is-inactive > i {
+    color: rgba(148, 163, 184, 0.52) !important;
+}
+#map-active-filters-banner[data-theme="dark"] .map-filter-chip.is-inactive .map-filter-chip-label {
+    color: rgba(148, 163, 184, 0.68) !important;
+    font-weight: 500 !important;
+}
+
 /* iPad / Touch Tablet: large comfortable map (~80% viewport) while keeping page scrolling effortless */
 @media (pointer: coarse) and (max-width: 1366px) {
     .st-key-tab_map iframe,

@@ -222,9 +222,23 @@ function updateParentFilterStatusBanner(sharedActiveData) {
 
     const hasRef = !!referencePoint;
     const isRadiusMode = (mapPinMode === 'radius');
-    const hasProv = !!(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
-    const hasProjFilter = inMapFilterState && ((inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) || (inMapFilterState.samProject && inMapFilterState.samProject !== ''));
+    const prov = (currentSelectedProv && currentSelectedProv !== '__ALL__') ? currentSelectedProv.trim() : '';
+    const dist = (currentSelectedDist && currentSelectedDist !== '__ALL__') ? currentSelectedDist.trim() : '';
+    const subdist = (currentSelectedSubdist && currentSelectedSubdist !== '__ALL__') ? currentSelectedSubdist.trim() : '';
+    const hasLocSelection = !!(prov || dist || subdist);
+    const hasProjFilter = !!(inMapFilterState && ((inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) || (inMapFilterState.samProject && inMapFilterState.samProject !== '')));
+    const cosArr = (inMapFilterState && inMapFilterState.companies) ? Array.from(inMapFilterState.companies) : [];
+    const onlyProj = !!(inMapFilterState && inMapFilterState.onlyWithProject);
+    const isRadiusEffective = !!(hasRef && !hasProjFilter && (isRadiusMode || !hasLocSelection));
     const activeData = Array.isArray(sharedActiveData) ? sharedActiveData : _getSharedActiveParentData();
+
+    const setChipActive = (valEl, isActive) => {
+      if (!valEl) return;
+      const chip = valEl.closest ? valEl.closest('.map-filter-chip') : valEl.parentElement;
+      if (!chip) return;
+      chip.classList.toggle('is-inactive', !isActive);
+      chip.setAttribute('data-active', isActive ? 'true' : 'false');
+    };
 
     const matchedCount = activeData.length;
 
@@ -245,11 +259,9 @@ function updateParentFilterStatusBanner(sharedActiveData) {
     const locEl = pdoc.getElementById('active-filter-loc-val');
     if (locEl) {
       let locStr = "ทุกทำเล (ทั่วประเทศ)";
-      const prov = (currentSelectedProv && currentSelectedProv !== '__ALL__') ? currentSelectedProv.trim() : '';
-      const dist = (currentSelectedDist && currentSelectedDist !== '__ALL__') ? currentSelectedDist.trim() : '';
-      const subdist = (currentSelectedSubdist && currentSelectedSubdist !== '__ALL__') ? currentSelectedSubdist.trim() : '';
+      const isSharedProjNationwide = !hasProjFilter && !isRadiusEffective && !hasLocSelection && onlyProj && cosArr.length >= 2;
 
-      if (isRadiusMode && hasRef) {
+      if (isRadiusEffective) {
         if (subdist) {
           const cleanS = subdist.split(' (')[0].trim();
           const cleanD = dist ? dist.split(' (')[0].trim() : '-';
@@ -271,6 +283,8 @@ function updateParentFilterStatusBanner(sharedActiveData) {
         locStr = `จ.${prov || '-'} > อ.${cleanD}`;
       } else if (prov) {
         locStr = `จ.${prov}`;
+      } else if (isSharedProjNationwide) {
+        locStr = `โครงการร่วมกัน (${cosArr.join(' + ')}) ทั่วประเทศ`;
       }
 
       if (hasProjFilter) {
@@ -282,6 +296,7 @@ function updateParentFilterStatusBanner(sharedActiveData) {
       } else {
         locEl.innerText = locStr;
       }
+      setChipActive(locEl, hasProjFilter || isRadiusEffective || hasLocSelection || isSharedProjNationwide);
     }
 
     // 4. Radius (รัศมีตรวจ)
@@ -300,43 +315,69 @@ function updateParentFilterStatusBanner(sharedActiveData) {
         radStr = `รัศมี ${rVal} กม. (ยังไม่ได้ปักหมุด)`;
       }
       radEl.innerText = radStr;
+      setChipActive(radEl, isRadiusEffective);
     }
 
     // 5. Company (บริษัท)
     const coEl = pdoc.getElementById('active-filter-co-val');
     if (coEl) {
-      if (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) {
-        const cosArr = Array.from(inMapFilterState.companies);
+      if (onlyProj && cosArr.length >= 2) {
+        coEl.innerText = `${cosArr.join(', ')} (โครงการร่วมกัน)`;
+      } else if (onlyProj) {
+        coEl.innerText = cosArr.length > 0 ? `${cosArr.join(', ')} (เฉพาะมีโครงการ)` : "ทุกบริษัท (เฉพาะมีโครงการ)";
+      } else if (cosArr.length > 0) {
         coEl.innerText = `${cosArr.join(', ')} (${cosArr.length} บริษัท)`;
       } else {
         coEl.innerText = "ทุกบริษัท";
       }
+      setChipActive(coEl, cosArr.length > 0 || onlyProj);
     }
 
     // 6. Property Type (ประเภททรัพย์)
     const typeEl = pdoc.getElementById('active-filter-type-val');
     if (typeEl) {
-      if (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) {
+      const hasTypes = !!(inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0);
+      if (hasTypes) {
         typeEl.innerText = Array.from(inMapFilterState.types).join(', ');
       } else {
         typeEl.innerText = "ทุกประเภททรัพย์";
       }
+      setChipActive(typeEl, hasTypes);
     }
 
     // 7. Price (ราคา)
     const priceEl = pdoc.getElementById('active-filter-price-val');
     if (priceEl) {
-      const minP = inMapFilterState ? inMapFilterState.minPrice : null;
-      const maxP = inMapFilterState ? inMapFilterState.maxPrice : null;
+      const minP = (inMapFilterState && inMapFilterState.minPrice > 0) ? inMapFilterState.minPrice : null;
+      const maxP = (inMapFilterState && inMapFilterState.maxPrice > 0) ? inMapFilterState.maxPrice : null;
+      const minPuw = (inMapFilterState && inMapFilterState.minPuw > 0) ? inMapFilterState.minPuw : null;
+      const maxPuw = (inMapFilterState && inMapFilterState.maxPuw > 0) ? inMapFilterState.maxPuw : null;
+      const minPum = (inMapFilterState && inMapFilterState.minPum > 0) ? inMapFilterState.minPum : null;
+      const maxPum = (inMapFilterState && inMapFilterState.maxPum > 0) ? inMapFilterState.maxPum : null;
+      let priceParts = [];
       if (minP && maxP) {
-        priceEl.innerText = `${formatKpiPrice(minP)} - ${formatKpiPrice(maxP)}`;
+        priceParts.push(`${formatKpiPrice(minP)} - ${formatKpiPrice(maxP)}`);
       } else if (minP) {
-        priceEl.innerText = `>= ${formatKpiPrice(minP)}`;
+        priceParts.push(`>= ${formatKpiPrice(minP)}`);
       } else if (maxP) {
-        priceEl.innerText = `<= ${formatKpiPrice(maxP)}`;
-      } else {
-        priceEl.innerText = "ทุกช่วงราคา";
+        priceParts.push(`<= ${formatKpiPrice(maxP)}`);
       }
+      if (minPuw && maxPuw) {
+        priceParts.push(`${formatKpiPrice(minPuw)}-${formatKpiPrice(maxPuw)}/ตร.ว.`);
+      } else if (minPuw) {
+        priceParts.push(`>= ${formatKpiPrice(minPuw)}/ตร.ว.`);
+      } else if (maxPuw) {
+        priceParts.push(`<= ${formatKpiPrice(maxPuw)}/ตร.ว.`);
+      }
+      if (minPum && maxPum) {
+        priceParts.push(`${formatKpiPrice(minPum)}-${formatKpiPrice(maxPum)}/ตร.ม.`);
+      } else if (minPum) {
+        priceParts.push(`>= ${formatKpiPrice(minPum)}/ตร.ม.`);
+      } else if (maxPum) {
+        priceParts.push(`<= ${formatKpiPrice(maxPum)}/ตร.ม.`);
+      }
+      priceEl.innerText = priceParts.length > 0 ? priceParts.join(' · ') : "ทุกช่วงราคา";
+      setChipActive(priceEl, priceParts.length > 0);
     }
 
     // 8. Area (ขนาด/Plan)
@@ -354,6 +395,7 @@ function updateParentFilterStatusBanner(sharedActiveData) {
         areaParts.push(maxSqm ? `${(minSqm || 0).toLocaleString()}-${maxSqm.toLocaleString()} ตร.ม.` : `>= ${(minSqm || 0).toLocaleString()} ตร.ม.`);
       }
       areaEl.innerText = areaParts.length > 0 ? areaParts.join(' / ') : "ทุกขนาด (ทุก Plan)";
+      setChipActive(areaEl, areaParts.length > 0);
     }
 
     // 9. Floor (ชั้น)
@@ -374,6 +416,7 @@ function updateParentFilterStatusBanner(sharedActiveData) {
         floorParts.push(`<= ชั้น ${maxFl}`);
       }
       floorEl.innerText = floorParts.length > 0 ? floorParts.join(' / ') : "ทุกชั้น";
+      setChipActive(floorEl, floorParts.length > 0);
     }
 
     // 10. Spec (ห้อง/ที่จอด)
@@ -393,17 +436,20 @@ function updateParentFilterStatusBanner(sharedActiveData) {
         specParts.push(Array.from(inMapFilterState.parkings).map(p => pkMap[p] || p).join(', '));
       }
       specEl.innerText = specParts.length > 0 ? specParts.join(' · ') : "ทุกสเปกห้อง/ที่จอด";
+      setChipActive(specEl, specParts.length > 0);
     }
 
     // 11. Age (อายุประกาศ)
     const ageEl = pdoc.getElementById('active-filter-age-val');
     if (ageEl) {
       const effMax = (inMapFilterState && inMapFilterState.maxAge !== null && inMapFilterState.maxAge > 0) ? inMapFilterState.maxAge : (inMapFilterState && inMapFilterState.agePreset ? parseFloat(inMapFilterState.agePreset) : null);
-      if (effMax !== null && !isNaN(effMax) && effMax > 0) {
+      const hasAge = effMax !== null && !isNaN(effMax) && effMax > 0;
+      if (hasAge) {
         ageEl.innerText = effMax >= 365 ? `<= ${(effMax/365).toFixed(1).replace('.0', '')} ปี` : `<= ${Math.round(effMax)} วัน`;
       } else {
         ageEl.innerText = "ทุกระยะเวลา";
       }
+      setChipActive(ageEl, hasAge);
     }
   } catch (e) {
     console.warn("Failed to update parent filter status banner:", e);

@@ -503,13 +503,29 @@ def render_tab2_reference_analytics_fragment(
     types_str = f"{', '.join(map_types)}" if map_types else "ทุกประเภททรัพย์"
 
     if map_min_p > 0 and map_max_p > 0:
-        price_str = f"฿{format_price_kpi(map_min_p)} - ฿{format_price_kpi(map_max_p)}"
+        price_parts = [f"{format_price_kpi(map_min_p)} - {format_price_kpi(map_max_p)}"]
     elif map_min_p > 0:
-        price_str = f">= ฿{format_price_kpi(map_min_p)}"
+        price_parts = [f">= {format_price_kpi(map_min_p)}"]
     elif map_max_p > 0:
-        price_str = f"<= ฿{format_price_kpi(map_max_p)}"
+        price_parts = [f"<= {format_price_kpi(map_max_p)}"]
     else:
-        price_str = "ทุกช่วงราคา"
+        price_parts = []
+
+    if map_min_puw > 0 and map_max_puw > 0:
+        price_parts.append(f"{format_price_kpi(map_min_puw)}-{format_price_kpi(map_max_puw)}/ตร.ว.")
+    elif map_min_puw > 0:
+        price_parts.append(f">= {format_price_kpi(map_min_puw)}/ตร.ว.")
+    elif map_max_puw > 0:
+        price_parts.append(f"<= {format_price_kpi(map_max_puw)}/ตร.ว.")
+
+    if map_min_pum > 0 and map_max_pum > 0:
+        price_parts.append(f"{format_price_kpi(map_min_pum)}-{format_price_kpi(map_max_pum)}/ตร.ม.")
+    elif map_min_pum > 0:
+        price_parts.append(f">= {format_price_kpi(map_min_pum)}/ตร.ม.")
+    elif map_max_pum > 0:
+        price_parts.append(f"<= {format_price_kpi(map_max_pum)}/ตร.ม.")
+
+    price_str = " · ".join(price_parts) if price_parts else "ทุกช่วงราคา"
 
     area_parts = []
     if map_min_sqw > 0 or map_max_sqw > 0:
@@ -550,18 +566,39 @@ def render_tab2_reference_analytics_fragment(
     else:
         age_str = "ทุกระยะเวลา"
 
+    is_loc_active = bool(
+        active_proj
+        or (has_ref_point and (pin_mode == 'radius' or not has_loc_filter))
+        or active_subdist
+        or active_dist
+        or active_prov
+        or (q_only_proj and map_cos and len(map_cos) >= 2)
+    )
+    is_rad_active = bool(has_ref_point and not active_proj and (pin_mode == 'radius' or not has_loc_filter))
+    is_co_active = bool(map_cos or q_only_proj)
+    is_type_active = bool(map_types)
+    is_price_active = bool(price_parts)
+    is_area_active = bool(area_parts)
+    is_floor_active = bool(floor_parts)
+    is_spec_active = bool(spec_parts)
+    is_age_active = bool(map_max_age > 0)
+
+    def _chip_attrs(is_active):
+        cls = "map-filter-chip" if is_active else "map-filter-chip is-inactive"
+        flag = "true" if is_active else "false"
+        return f'class="{cls}" data-active="{flag}"'
+
     mode_badge_lbl = "ตามรัศมี (Radius)" if (has_ref_point and pin_mode == 'radius') else "ตามทำเล (Location)"
 
+    banner_theme = "dark" if is_dark_mode else "light"
     card_bg = "rgba(2, 44, 34, 0.45)" if is_dark_mode else "#f8fafc"
     card_border = "rgba(52, 211, 153, 0.35)" if is_dark_mode else "#e2e8f0"
-    chip_bg = "rgba(2, 44, 34, 0.7)" if is_dark_mode else "#ffffff"
     chip_border = "rgba(52, 211, 153, 0.25)" if is_dark_mode else "#e2e8f0"
-    text_c = "#f1f5f9" if is_dark_mode else "#1e293b"
 
     # --- RENDER FILTER STATUS BANNER ---
     st.markdown(f"""
     <div id='ref-analytics-section' style='height: 0px; margin: 0px; padding: 0px; scroll-margin-top: 80px;'></div>
-    <div id="map-active-filters-banner" style="background: {card_bg}; border: 1.5px solid {card_border}; border-radius: 14px; padding: 12px 16px; margin-top: -18px; margin-bottom: 12px; position: relative; z-index: 10; box-shadow: 0 4px 14px rgba(0,0,0,0.04);">
+    <div id="map-active-filters-banner" data-theme="{banner_theme}" style="background: {card_bg}; border: 1.5px solid {card_border}; border-radius: 14px; padding: 12px 16px; margin-top: -18px; margin-bottom: 12px; position: relative; z-index: 10; box-shadow: 0 4px 14px rgba(0,0,0,0.04);">
         <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid {chip_border};">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="background: linear-gradient(135deg, #059669, #10b981); color: #ffffff; padding: 3px 10px; border-radius: 6px; font-size: 0.78rem; font-weight: 800; display: inline-flex; align-items: center; gap: 5px;">
@@ -576,57 +613,57 @@ def render_tab2_reference_analytics_fragment(
             </div>
         </div>
         <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
-            <div style="background: {chip_bg}; border: 1px solid {chip_border}; border-radius: 8px; padding: 5px 11px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; max-width: 100%; box-sizing: border-box;" title="ทำเล (Location)">
-                <i class="fa-solid fa-location-dot" style="color: #10b981; font-size: 0.86rem; flex-shrink: 0;"></i>
-                <span id="active-filter-loc-val" style="font-size: 0.81rem; font-weight: 700; color: {text_c}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px;">
+            <div {_chip_attrs(is_loc_active)} style="max-width: 100%;" title="ทำเล (Location)">
+                <i class="fa-solid fa-location-dot" style="color: #10b981;"></i>
+                <span id="active-filter-loc-val" class="map-filter-chip-label" style="overflow: hidden; text-overflow: ellipsis; max-width: 320px;">
                     {html.escape(str(loc_str))}
                 </span>
             </div>
-            <div style="background: {chip_bg}; border: 1px solid {chip_border}; border-radius: 8px; padding: 5px 11px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; box-sizing: border-box;" title="รัศมีตรวจ (Radius)">
-                <i class="fa-solid fa-bullseye" style="color: #06b6d4; font-size: 0.86rem; flex-shrink: 0;"></i>
-                <span id="active-filter-rad-val" style="font-size: 0.81rem; font-weight: 700; color: {text_c}; white-space: nowrap;">
+            <div {_chip_attrs(is_rad_active)} title="รัศมีตรวจ (Radius)">
+                <i class="fa-solid fa-bullseye" style="color: #06b6d4;"></i>
+                <span id="active-filter-rad-val" class="map-filter-chip-label">
                     {html.escape(str(rad_str))}
                 </span>
             </div>
-            <div style="background: {chip_bg}; border: 1px solid {chip_border}; border-radius: 8px; padding: 5px 11px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; box-sizing: border-box;" title="บริษัท (Company)">
-                <i class="fa-solid fa-building" style="color: #3b82f6; font-size: 0.86rem; flex-shrink: 0;"></i>
-                <span id="active-filter-co-val" style="font-size: 0.81rem; font-weight: 700; color: {text_c}; white-space: nowrap;">
+            <div {_chip_attrs(is_co_active)} title="บริษัท (Company)">
+                <i class="fa-solid fa-building" style="color: #3b82f6;"></i>
+                <span id="active-filter-co-val" class="map-filter-chip-label">
                     {html.escape(str(cos_str))}
                 </span>
             </div>
-            <div style="background: {chip_bg}; border: 1px solid {chip_border}; border-radius: 8px; padding: 5px 11px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; box-sizing: border-box;" title="ประเภททรัพย์ (Type)">
-                <i class="fa-solid fa-house" style="color: #f59e0b; font-size: 0.86rem; flex-shrink: 0;"></i>
-                <span id="active-filter-type-val" style="font-size: 0.81rem; font-weight: 700; color: {text_c}; white-space: nowrap;">
+            <div {_chip_attrs(is_type_active)} title="ประเภททรัพย์ (Type)">
+                <i class="fa-solid fa-house" style="color: #f59e0b;"></i>
+                <span id="active-filter-type-val" class="map-filter-chip-label">
                     {html.escape(str(types_str))}
                 </span>
             </div>
-            <div style="background: {chip_bg}; border: 1px solid {chip_border}; border-radius: 8px; padding: 5px 11px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; box-sizing: border-box;" title="ราคา (Price)">
-                <i class="fa-solid fa-tag" style="color: #10b981; font-size: 0.86rem; flex-shrink: 0;"></i>
-                <span id="active-filter-price-val" style="font-size: 0.81rem; font-weight: 700; color: {text_c}; white-space: nowrap;">
+            <div {_chip_attrs(is_price_active)} title="ราคา (Price)">
+                <i class="fa-solid fa-tag" style="color: #10b981;"></i>
+                <span id="active-filter-price-val" class="map-filter-chip-label">
                     {html.escape(str(price_str))}
                 </span>
             </div>
-            <div style="background: {chip_bg}; border: 1px solid {chip_border}; border-radius: 8px; padding: 5px 11px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; box-sizing: border-box;" title="ขนาด/Plan (Area)">
-                <i class="fa-solid fa-ruler-combined" style="color: #8b5cf6; font-size: 0.86rem; flex-shrink: 0;"></i>
-                <span id="active-filter-area-val" style="font-size: 0.81rem; font-weight: 700; color: {text_c}; white-space: nowrap;">
+            <div {_chip_attrs(is_area_active)} title="ขนาด/Plan (Area)">
+                <i class="fa-solid fa-ruler-combined" style="color: #8b5cf6;"></i>
+                <span id="active-filter-area-val" class="map-filter-chip-label">
                     {html.escape(str(area_str))}
                 </span>
             </div>
-            <div style="background: {chip_bg}; border: 1px solid {chip_border}; border-radius: 8px; padding: 5px 11px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; box-sizing: border-box;" title="ชั้น (Floor)">
-                <i class="fa-solid fa-stairs" style="color: #6366f1; font-size: 0.86rem; flex-shrink: 0;"></i>
-                <span id="active-filter-floor-val" style="font-size: 0.81rem; font-weight: 700; color: {text_c}; white-space: nowrap;">
+            <div {_chip_attrs(is_floor_active)} title="ชั้น (Floor)">
+                <i class="fa-solid fa-stairs" style="color: #6366f1;"></i>
+                <span id="active-filter-floor-val" class="map-filter-chip-label">
                     {html.escape(str(floor_str))}
                 </span>
             </div>
-            <div style="background: {chip_bg}; border: 1px solid {chip_border}; border-radius: 8px; padding: 5px 11px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; box-sizing: border-box;" title="ห้อง/ที่จอด (Room/Parking)">
-                <i class="fa-solid fa-bed" style="color: #ec4899; font-size: 0.86rem; flex-shrink: 0;"></i>
-                <span id="active-filter-spec-val" style="font-size: 0.81rem; font-weight: 700; color: {text_c}; white-space: nowrap;">
+            <div {_chip_attrs(is_spec_active)} title="ห้อง/ที่จอด (Room/Parking)">
+                <i class="fa-solid fa-bed" style="color: #ec4899;"></i>
+                <span id="active-filter-spec-val" class="map-filter-chip-label">
                     {html.escape(str(spec_str))}
                 </span>
             </div>
-            <div style="background: {chip_bg}; border: 1px solid {chip_border}; border-radius: 8px; padding: 5px 11px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; box-sizing: border-box;" title="อายุประกาศ (Age)">
-                <i class="fa-solid fa-calendar-days" style="color: #0284c7; font-size: 0.86rem; flex-shrink: 0;"></i>
-                <span id="active-filter-age-val" style="font-size: 0.81rem; font-weight: 700; color: {text_c}; white-space: nowrap;">
+            <div {_chip_attrs(is_age_active)} title="อายุประกาศ (Age)">
+                <i class="fa-solid fa-calendar-days" style="color: #0284c7;"></i>
+                <span id="active-filter-age-val" class="map-filter-chip-label">
                     {html.escape(str(age_str))}
                 </span>
             </div>
