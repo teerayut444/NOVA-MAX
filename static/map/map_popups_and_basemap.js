@@ -1253,6 +1253,283 @@ function clearPriceCenter() {
 }
 window.clearPriceCenter = clearPriceCenter;
 
+// =========================================================================
+// BOTTOM-CENTER BATCH REFERENCE SELECTOR POPUP (TAB 2)
+// =========================================================================
+let batchReferenceItems = [];
+let batchRefCurrentIdx = -1;
+let batchRefLockType = true;
+let batchRefPopupOpen = false;
+let batchRefSearchQuery = "";
+
+function _syncTypeFilterChipsDom() {
+  try {
+    document.querySelectorAll('.filter-chip[data-group="type"][data-val]').forEach(chipEl => {
+      const val = chipEl.dataset.val;
+      const isAct = !!(inMapFilterState && inMapFilterState.types && inMapFilterState.types.has(val));
+      chipEl.classList.toggle('active', isAct);
+    });
+  } catch (_e) {}
+}
+
+function _formatBatchRefPriceShort(val) {
+  const n = Number(val);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n >= 1e6) return '฿' + (n / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M';
+  if (n >= 1e3) return '฿' + Math.round(n / 1e3).toLocaleString('en-US') + 'K';
+  return '฿' + Math.round(n).toLocaleString('en-US');
+}
+
+function updateBatchRefBarUi() {
+  const nav = document.getElementById('batch-ref-navigator');
+  if (!nav) return;
+  if (!Array.isArray(batchReferenceItems) || batchReferenceItems.length === 0) {
+    nav.style.display = 'none';
+    closeBatchRefPopup();
+    return;
+  }
+  nav.style.display = 'flex';
+  const total = batchReferenceItems.length;
+  const totalBadge = document.getElementById('batch-ref-popup-total');
+  if (totalBadge) totalBadge.innerText = `${total} รายการ`;
+
+  const idxPill = document.getElementById('batch-ref-idx-pill');
+  const codeEl = document.getElementById('batch-ref-active-code');
+  const subEl = document.getElementById('batch-ref-active-sub');
+
+  if (batchRefCurrentIdx >= 0 && batchRefCurrentIdx < total) {
+    const it = batchReferenceItems[batchRefCurrentIdx];
+    if (idxPill) idxPill.innerText = `${batchRefCurrentIdx + 1} / ${total}`;
+    if (codeEl) codeEl.innerText = it.code || `REF-${batchRefCurrentIdx + 1}`;
+    const subParts = [it.prop_type || 'อื่นๆ'];
+    if (it.price > 0) subParts.push(_formatBatchRefPriceShort(it.price));
+    if (it.prov) subParts.push(it.prov);
+    if (subEl) subEl.innerText = subParts.join(' • ');
+  } else {
+    if (idxPill) idxPill.innerText = `ชุดอ้างอิง (${total})`;
+    if (codeEl) codeEl.innerText = 'เลือกดูทรัพย์อ้างอิงทีละชิ้น';
+    if (subEl) subEl.innerText = 'คลิกเปิดรายการ หรือกด ◀ / ▶';
+  }
+
+  const lockBtn = document.getElementById('batch-ref-lock-type-btn');
+  const lockIcon = document.getElementById('batch-ref-lock-icon');
+  if (lockBtn) lockBtn.classList.toggle('active', !!batchRefLockType);
+  if (lockIcon) lockIcon.className = batchRefLockType ? 'fa-solid fa-lock' : 'fa-solid fa-lock-open';
+}
+
+function renderBatchRefList() {
+  const listEl = document.getElementById('batch-ref-list');
+  if (!listEl) return;
+  const q = (batchRefSearchQuery || '').trim().toLowerCase();
+  const matched = [];
+  for (let i = 0; i < batchReferenceItems.length; i++) {
+    const it = batchReferenceItems[i];
+    if (q) {
+      const hay = `${it.idx} ${it.code || ''} ${it.prop_type || ''} ${it.project || ''} ${it.prov || ''} ${it.dist || ''} ${it.company || ''}`.toLowerCase();
+      if (!hay.includes(q)) continue;
+    }
+    matched.push({ i, it });
+  }
+  if (matched.length === 0) {
+    listEl.innerHTML = '<div style="padding:14px; text-align:center; font-size:12px; color:#94a3b8;">ไม่พบทรัพย์อ้างอิงที่ตรงกับคำค้นหา</div>';
+    return;
+  }
+  const cap = matched.slice(0, 300);
+  listEl.innerHTML = cap.map(({ i, it }) => {
+    const isAct = i === batchRefCurrentIdx ? ' active' : '';
+    const isInv = !it.valid ? ' invalid' : '';
+    const safeCode = escapeHtml(it.code || `REF-${i + 1}`);
+    const safeType = escapeHtml(it.prop_type || 'อื่นๆ');
+    const metaParts = [safeType];
+    if (it.project) metaParts.push(escapeHtml(it.project));
+    if (it.prov) metaParts.push(escapeHtml(it.prov));
+    const rightHtml = it.valid
+      ? `<div>${escapeHtml(_formatBatchRefPriceShort(it.price) || '-')}</div>`
+      : '<span class="batch-ref-item-invalid-badge">ไม่มีพิกัด</span>';
+    return (
+      `<div class="batch-ref-item${isAct}${isInv}" data-batch-idx="${i}" onclick="selectBatchReference(Number(this.dataset.batchIdx))">` +
+      `  <div class="batch-ref-item-main">` +
+      `    <div class="batch-ref-item-top"><span class="batch-ref-item-num">#${it.idx}</span><span>${safeCode}</span></div>` +
+      `    <div class="batch-ref-item-meta">${metaParts.join(' • ')}</div>` +
+      `  </div>` +
+      `  <div class="batch-ref-item-right">${rightHtml}</div>` +
+      `</div>`
+    );
+  }).join('');
+}
+
+function toggleBatchRefPopup() {
+  const panel = document.getElementById('batch-ref-popup-panel');
+  const nav = document.getElementById('batch-ref-navigator');
+  if (!panel || !nav) return;
+  batchRefPopupOpen = !batchRefPopupOpen;
+  panel.style.display = batchRefPopupOpen ? 'flex' : 'none';
+  nav.classList.toggle('popup-open', batchRefPopupOpen);
+  if (batchRefPopupOpen) {
+    renderBatchRefList();
+    const inp = document.getElementById('batch-ref-search-input');
+    if (inp) setTimeout(() => { try { inp.focus(); } catch (_e) {} }, 40);
+  }
+}
+
+function closeBatchRefPopup() {
+  const panel = document.getElementById('batch-ref-popup-panel');
+  const nav = document.getElementById('batch-ref-navigator');
+  batchRefPopupOpen = false;
+  if (panel) panel.style.display = 'none';
+  if (nav) nav.classList.remove('popup-open');
+}
+
+function filterBatchRefList(val) {
+  batchRefSearchQuery = String(val || '');
+  renderBatchRefList();
+}
+
+function selectBatchReference(idx) {
+  if (!Array.isArray(batchReferenceItems) || idx < 0 || idx >= batchReferenceItems.length) return;
+  const item = batchReferenceItems[idx];
+  if (!item || !item.valid || !Number.isFinite(Number(item.lat)) || !Number.isFinite(Number(item.lon))) {
+    showToast('<i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b; margin-right:5px;"></i>รายการนี้ไม่มีพิกัดที่ถูกต้องบนแผนที่');
+    return;
+  }
+
+  batchRefCurrentIdx = idx;
+  closeBatchRefPopup();
+  updateBatchRefBarUi();
+
+  // Clear conflicting location/project/search states so radius + type focus cleanly on this reference asset
+  currentSelectedProv = '';
+  currentSelectedDist = '';
+  currentSelectedSubdist = '';
+  if (inMapFilterState) {
+    if (inMapFilterState.samProjects) inMapFilterState.samProjects.clear();
+    if (inMapFilterState.samProjectsNorm) inMapFilterState.samProjectsNorm.clear();
+    inMapFilterState.samProject = '';
+    if (batchRefLockType && item.prop_type) {
+      inMapFilterState.types = new Set([item.prop_type]);
+    }
+  }
+  _syncTypeFilterChipsDom();
+  try { syncComboboxInputs(); } catch (_e) {}
+
+  const propInp = document.getElementById('inmap-prop-search-input');
+  const propClr = document.getElementById('inmap-clear-search-btn');
+  if (propInp) propInp.value = '';
+  if (propClr) propClr.style.display = 'none';
+  closePropertyCard();
+
+  currentRefId = '';
+  currentPriceCenterId = '';
+  currentRefProp = {
+    _id: item.code || `REF-${idx + 1}`,
+    _company: item.company || 'ทรัพย์อ้างอิง',
+    _type: item.prop_type || 'อื่นๆ',
+    _project: item.project || '',
+    _price: item.price || 0,
+  };
+
+  setReferencePoint(Number(item.lon), Number(item.lat), true, false);
+  applyInMapFilters(true);
+
+  const typesArr = (inMapFilterState && inMapFilterState.types) ? Array.from(inMapFilterState.types) : [];
+  triggerStreamlitSync({
+    prov: '',
+    dist: '',
+    subdist: '',
+    proj: '',
+    proj_list: [],
+    id: '',
+    price_center_id: '',
+    lat: Number(item.lat),
+    lon: Number(item.lon),
+    radius: currentRadiusKm || 5.0,
+    mode: 'radius',
+    types: typesArr,
+    batch_ref: {
+      code: item.code,
+      company: item.company,
+      prop_type: item.prop_type,
+      project: item.project,
+      price: item.price,
+      lat: Number(item.lat),
+      lon: Number(item.lon),
+    },
+    compare_active: true,
+  }, 0);
+
+  const typeMsg = (batchRefLockType && item.prop_type) ? ` • กรองประเภท: <b>${escapeHtml(item.prop_type)}</b>` : '';
+  showToast(`<i class="fa-solid fa-crosshairs" style="color:#10b981; margin-right:5px;"></i>ทรัพย์อ้างอิง #${item.idx}: <b>${escapeHtml(item.code)}</b>${typeMsg}`);
+}
+
+function navigateBatchReference(delta) {
+  const n = batchReferenceItems.length;
+  if (n === 0) return;
+  const step = delta >= 0 ? 1 : -1;
+  let pos = batchRefCurrentIdx;
+  for (let tries = 0; tries < n; tries++) {
+    if (pos < 0) {
+      pos = step > 0 ? 0 : n - 1;
+    } else {
+      pos = (pos + step + n) % n;
+    }
+    if (batchReferenceItems[pos] && batchReferenceItems[pos].valid) {
+      selectBatchReference(pos);
+      return;
+    }
+  }
+  showToast('<i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b; margin-right:5px;"></i>ไม่พบรายการที่มีพิกัดถูกต้องในไฟล์นำเข้า');
+}
+
+function toggleBatchRefTypeLock() {
+  batchRefLockType = !batchRefLockType;
+  updateBatchRefBarUi();
+  if (batchRefCurrentIdx >= 0 && batchRefCurrentIdx < batchReferenceItems.length) {
+    const item = batchReferenceItems[batchRefCurrentIdx];
+    if (inMapFilterState) {
+      if (batchRefLockType && item && item.prop_type) {
+        inMapFilterState.types = new Set([item.prop_type]);
+      } else {
+        inMapFilterState.types.clear();
+      }
+    }
+    _syncTypeFilterChipsDom();
+    applyInMapFilters(false);
+    showToast(
+      batchRefLockType
+        ? `<i class="fa-solid fa-lock" style="color:#10b981; margin-right:5px;"></i>ล็อกประเภททรัพย์: <b>${escapeHtml(item.prop_type || '-')}</b>`
+        : '<i class="fa-solid fa-lock-open" style="color:#64748b; margin-right:5px;"></i>ปลดล็อกประเภททรัพย์ (แสดงทุกประเภทในรัศมี)'
+    );
+  }
+}
+
+function setBatchReferenceItems(items, radiusKm) {
+  batchReferenceItems = Array.isArray(items) ? items : [];
+  if (batchRefCurrentIdx >= batchReferenceItems.length) {
+    batchRefCurrentIdx = -1;
+  }
+  batchRefSearchQuery = '';
+  const inp = document.getElementById('batch-ref-search-input');
+  if (inp) inp.value = '';
+  updateBatchRefBarUi();
+  if (batchRefPopupOpen) renderBatchRefList();
+}
+
+window.setBatchReferenceItems = setBatchReferenceItems;
+window.toggleBatchRefPopup = toggleBatchRefPopup;
+window.closeBatchRefPopup = closeBatchRefPopup;
+window.filterBatchRefList = filterBatchRefList;
+window.selectBatchReference = selectBatchReference;
+window.navigateBatchReference = navigateBatchReference;
+window.toggleBatchRefTypeLock = toggleBatchRefTypeLock;
+
+document.addEventListener('click', function(ev) {
+  if (!batchRefPopupOpen) return;
+  const nav = document.getElementById('batch-ref-navigator');
+  if (nav && !nav.contains(ev.target)) {
+    closeBatchRefPopup();
+  }
+});
+
 window.addEventListener('message', function(ev) {
   const expectedOrigin = (window.NovaMapCache && typeof window.NovaMapCache.getEffectiveSelfOrigin === 'function')
     ? window.NovaMapCache.getEffectiveSelfOrigin()
@@ -1262,6 +1539,8 @@ window.addEventListener('message', function(ev) {
   if (!ev || !expectedOrigin || ev.origin !== expectedOrigin || ev.source !== window.parent) return;
   if (ev.data && ev.data.action === 'clear_price_center') {
     clearPriceCenter();
+  } else if (ev.data && ev.data.action === 'set_batch_refs') {
+    setBatchReferenceItems(ev.data.items || [], ev.data.radius_km);
   }
 });
 

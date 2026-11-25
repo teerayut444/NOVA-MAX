@@ -701,6 +701,49 @@
       </div>
     </div>
 
+    <!-- Bottom-Center Batch Reference Selector Popup (Shown when Batch Reference file is imported) -->
+    <div id="batch-ref-navigator" class="batch-ref-navigator" style="display:none;">
+      <div id="batch-ref-popup-panel" class="batch-ref-popup-panel" style="display:none;">
+        <div class="batch-ref-popup-header">
+          <div class="batch-ref-popup-title">
+            <i class="fa-solid fa-layer-group" style="color:#10b981;"></i>
+            <span>เลือกดูทรัพย์อ้างอิงจากไฟล์นำเข้า</span>
+            <span id="batch-ref-popup-total" class="batch-ref-count-pill">0</span>
+          </div>
+          <button type="button" class="batch-ref-popup-close" onclick="closeBatchRefPopup()" title="ปิดรายการ">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="batch-ref-search-wrap">
+          <i class="fa-solid fa-magnifying-glass"></i>
+          <input type="text" id="batch-ref-search-input" class="batch-ref-search-input" placeholder="ค้นหารหัสทรัพย์ / ประเภท / โครงการ / จังหวัด..." autocomplete="off" oninput="filterBatchRefList(this.value)" onkeydown="if(event.key==='Escape') closeBatchRefPopup();" />
+        </div>
+        <div id="batch-ref-list" class="batch-ref-list"></div>
+      </div>
+
+      <div id="batch-ref-bar" class="batch-ref-bar">
+        <button type="button" id="batch-ref-prev-btn" class="batch-ref-nav-btn" onclick="navigateBatchReference(-1)" title="ทรัพย์อ้างอิงก่อนหน้า">
+          <i class="fa-solid fa-chevron-left"></i>
+        </button>
+        <button type="button" id="batch-ref-selector-btn" class="batch-ref-selector-btn" onclick="toggleBatchRefPopup()" title="คลิกเพื่อเปิดรายการเลือกทรัพย์อ้างอิงทั้งหมด">
+          <span class="batch-ref-idx-pill" id="batch-ref-idx-pill">0 / 0</span>
+          <span class="batch-ref-label-wrap">
+            <span class="batch-ref-active-code" id="batch-ref-active-code">เลือกดูทรัพย์อ้างอิง</span>
+            <span class="batch-ref-active-sub" id="batch-ref-active-sub">คลิกเพื่อเลือกจากไฟล์นำเข้า</span>
+          </span>
+          <i class="fa-solid fa-chevron-up batch-ref-chevron" id="batch-ref-chevron"></i>
+        </button>
+        <button type="button" id="batch-ref-next-btn" class="batch-ref-nav-btn" onclick="navigateBatchReference(1)" title="ทรัพย์อ้างอิงถัดไป">
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+        <div class="batch-ref-sep"></div>
+        <button type="button" id="batch-ref-lock-type-btn" class="batch-ref-lock-btn active" onclick="toggleBatchRefTypeLock()" title="ล็อกตัวกรองเฉพาะประเภททรัพย์เดียวกันของทรัพย์อ้างอิง">
+          <i class="fa-solid fa-lock" id="batch-ref-lock-icon"></i>
+          <span>ล็อกประเภท</span>
+        </button>
+      </div>
+    </div>
+
     <!-- Legend Overlay inside the Map -->
     <div id="map-legend">
       <div class="map-legend-header">

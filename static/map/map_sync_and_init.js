@@ -1226,6 +1226,10 @@ function clearReferencePoint() {
   }
 
   closePropertyCard();
+  if (typeof batchRefCurrentIdx !== 'undefined') {
+    batchRefCurrentIdx = -1;
+    if (typeof updateBatchRefBarUi === 'function') updateBatchRefBarUi();
+  }
   applyInMapFilters(true);
   scheduleParentKpiUpdate();
 
@@ -1244,6 +1248,7 @@ function clearReferencePoint() {
     subdist: (currentSelectedSubdist && currentSelectedSubdist !== '__ALL__') ? currentSelectedSubdist.trim() : '',
     id: '',
     price_center_id: '',
+    batch_ref: null,
     lat: 0,
     lon: 0,
     radius: currentRadiusKm || 5.0,
@@ -1877,6 +1882,15 @@ async function initMap() {
     }
 
     renderSavedCoordinatesPills();
+
+    // Hydrate Bottom-Center Batch Reference Selector Popup if user already uploaded a batch file
+    try {
+      if (window.parent && window.parent.__NOVA_BATCH_REFS__ && Array.isArray(window.parent.__NOVA_BATCH_REFS__.items)) {
+        if (typeof setBatchReferenceItems === 'function') {
+          setBatchReferenceItems(window.parent.__NOVA_BATCH_REFS__.items, window.parent.__NOVA_BATCH_REFS__.radius_km);
+        }
+      }
+    } catch (_e) {}
 
     if (!isNaN(initLatNum) && !isNaN(initLonNum) && initLatNum > 0 && initLonNum > 0) {
       setTimeout(() => {

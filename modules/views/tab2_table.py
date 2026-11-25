@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from modules.services.batch_reference_service import append_summary_stat_columns
 from modules.services.export_service import render_import_export_section
 from modules.services.data_cleaner import (
     format_to_rai_ngan_wah,
@@ -63,7 +64,7 @@ def _materialize_export_df(show_df, export_proj_full=None, price_ref_id=""):
             id_col = df_to_export['รหัสทรัพย์'].copy()
             id_col.iat[0] = first_val[len('[อ้างอิง] '):]
             df_to_export['รหัสทรัพย์'] = id_col
-    return df_to_export
+    return append_summary_stat_columns(df_to_export)
 
 
 def _build_tab2_show_df_compact(

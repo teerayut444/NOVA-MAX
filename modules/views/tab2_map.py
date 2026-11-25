@@ -30,6 +30,7 @@ from modules.services.data_loader import (
     get_valid_coord_properties_data,
     precompute_full_map_html,
 )
+from modules.views.tab2_batch_reference import render_tab2_batch_reference_panel
 from modules.views.tab2_fragment import render_tab2_reference_analytics_fragment
 
 
@@ -757,3 +758,6 @@ def render_tab2_map_view(df_raw, df_filtered, is_dark_mode):
             active_ref_radius=active_ref_radius,
             tab2_types=[],
         )
+
+        # Always-visible Batch Reference Import & Grouped Export panel at the bottom of Tab 2 (outside map)
+        render_tab2_batch_reference_panel(df_map_valid, is_dark_mode=is_dark_mode)

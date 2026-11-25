@@ -164,6 +164,23 @@ def resolve_tab2_sync_and_filter_state(
                 elif isinstance(raw_cids, str):
                     st.session_state["tab2_compare_ids"] = [x.strip() for x in raw_cids.split(",") if x.strip()][:200]
 
+            if "batch_ref" in payload_obj:
+                b_ref = payload_obj.get("batch_ref")
+                if isinstance(b_ref, dict) and str(b_ref.get("code") or "").strip():
+                    st.session_state["tab2_batch_active_ref"] = {
+                        "บริษัท": str(b_ref.get("company") or "ทรัพย์อ้างอิง").strip(),
+                        "รหัสทรัพย์": str(b_ref.get("code") or "").strip(),
+                        "ประเภททรัพย์": str(b_ref.get("prop_type") or "-").strip(),
+                        "ชื่อโครงการ": str(b_ref.get("project") or "").strip(),
+                        "ราคา": _safe_float(b_ref.get("price"), 0.0),
+                        "ละติจูด": _safe_float(b_ref.get("lat"), 0.0),
+                        "ลองจิจูด": _safe_float(b_ref.get("lon"), 0.0),
+                    }
+                    active_ref_prop = st.session_state["tab2_batch_active_ref"]
+                    st.session_state["tab2_ref_prop"] = active_ref_prop
+                else:
+                    st.session_state.pop("tab2_batch_active_ref", None)
+
             if "id" in payload_obj:
                 p_id = str(payload_obj.get("id", "")).strip()
                 if p_id:
@@ -390,9 +407,19 @@ def resolve_tab2_sync_and_filter_state(
                 st.session_state["tab2_ref_prop"] = active_ref_prop
                 st.session_state["tab2_search_prop_id"] = clean_id
     elif not q_id:
-        active_ref_prop = None
         st.session_state["tab2_search_prop_id"] = ""
-        st.session_state.pop("tab2_ref_prop", None)
+        batch_ref_state = st.session_state.get("tab2_batch_active_ref")
+        if (
+            isinstance(batch_ref_state, dict)
+            and active_ref_lat is not None
+            and active_ref_lon is not None
+        ):
+            active_ref_prop = batch_ref_state
+            st.session_state["tab2_ref_prop"] = active_ref_prop
+        else:
+            active_ref_prop = None
+            st.session_state.pop("tab2_ref_prop", None)
+            st.session_state.pop("tab2_batch_active_ref", None)
 
     # Auto-resolve active_price_ref_prop
     if st.session_state.get("tab2_just_reset_price_center"):
