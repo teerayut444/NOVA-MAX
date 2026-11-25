@@ -195,17 +195,58 @@ function updateHtmlMarkerPositions() {
   // No-op: GPU handles projection on every frame with 0 lag
 }
 
+const PIN_BADGE_ZOOM_THRESHOLD = 12.0;
+const PIN_MIN_SCALE_ZOOM = 8.5;
+const PIN_MIN_SIZE_SCALE = 0.55;
+const PIN_BADGE_SMALL_COUNT_EXEMPT = 150;
+let _lastAppliedPinLodKey = '';
+
+function getPinLodForZoom(zoom, multiPinsCount) {
+  if ((Number(multiPinsCount) || 0) <= PIN_BADGE_SMALL_COUNT_EXEMPT) {
+    return { sizeScale: 1.0, showBadges: true };
+  }
+  const z = Number.isFinite(Number(zoom)) ? Number(zoom) : PIN_MIN_SCALE_ZOOM;
+  const showBadges = z >= PIN_BADGE_ZOOM_THRESHOLD;
+  if (showBadges) {
+    return { sizeScale: 1.0, showBadges: true };
+  }
+  const t = Math.max(0, Math.min(1, (z - PIN_MIN_SCALE_ZOOM) / (PIN_BADGE_ZOOM_THRESHOLD - PIN_MIN_SCALE_ZOOM)));
+  const rawScale = PIN_MIN_SIZE_SCALE + t * (1.0 - PIN_MIN_SIZE_SCALE);
+  const sizeScale = Math.round(rawScale * 20) / 20;
+  return { sizeScale, showBadges: false };
+}
+
+function syncPinLodOnZoomChange(zoom) {
+  if (!deckglInstance || !shouldRenderMapPins()) return;
+  const { multiPins } = getUniqueCoordMarkers(currentNearbyData);
+  const lod = getPinLodForZoom(zoom, multiPins ? multiPins.length : 0);
+  const nextKey = `${lod.sizeScale}|${lod.showBadges ? 1 : 0}`;
+  if (nextKey !== _lastAppliedPinLodKey) {
+    updateDeckLayers();
+  }
+}
+
 function createPointLayers(data) {
   if (!data || data.length === 0 || !atlasBase64 || !iconMapping) {
+    _lastAppliedPinLodKey = '';
     return [];
   }
 
   const { pins, multiPins } = getUniqueCoordMarkers(data);
-  if (!pins || pins.length === 0) return [];
+  if (!pins || pins.length === 0) {
+    _lastAppliedPinLodKey = '';
+    return [];
+  }
+
+  const curZoom = (typeof currentViewState !== 'undefined' && currentViewState && Number.isFinite(Number(currentViewState.zoom)))
+    ? Number(currentViewState.zoom)
+    : PIN_MIN_SCALE_ZOOM;
+  const { sizeScale, showBadges } = getPinLodForZoom(curZoom, multiPins ? multiPins.length : 0);
+  _lastAppliedPinLodKey = `${sizeScale}|${showBadges ? 1 : 0}`;
 
   const layers = [];
 
-  // 1. Hardware-Accelerated WebGL IconLayer (128px Retina Atlas, 0 Lag, Anchored to map)
+  // 1. Hardware-Accelerated WebGL IconLayer (128px Retina Atlas, 0 Lag, GPU sizeScale LOD)
   layers.push(new deck.IconLayer({
     id: 'point-icons',
     data: pins,
@@ -239,7 +280,7 @@ function createPointLayers(data) {
     },
     getPosition: d => [d.lon, d.lat],
     getSize: d => (d.count > 1 ? 40 : 34),
-    sizeScale: 1,
+    sizeScale: sizeScale,
     pickable: true,
     billboard: true,
     useDevicePixels: (window.NovaMapCache && typeof window.NovaMapCache.isIOSOrIPadOS === 'function' && window.NovaMapCache.isIOSOrIPadOS()) ? 1 : true,
@@ -247,8 +288,8 @@ function createPointLayers(data) {
     highlightColor: [255, 255, 255, 60]
   }));
 
-  // 2. Hardware-Accelerated WebGL TextLayer (Duplicate counts and centroid badges)
-  if (multiPins && multiPins.length > 0) {
+  // 2. Hardware-Accelerated WebGL TextLayer (Duplicate counts and centroid badges; hidden at far zoom when dense)
+  if (showBadges && multiPins && multiPins.length > 0) {
     layers.push(new deck.TextLayer({
       id: 'point-badges',
       data: multiPins,
@@ -1184,6 +1225,8 @@ function updateDeckLayers() {
     if (ptLayers && ptLayers.length > 0) {
       layers.push(...ptLayers);
     }
+  } else {
+    _lastAppliedPinLodKey = '';
   }
 
   // User GPS Blue Dot (persists even if referencePoint moves to another property)
@@ -2674,6 +2717,7 @@ function smoothFlyTo(targetLon, targetLat, targetZoom, duration, onComplete) {
       try { updateConfirmBubblePosition(); } catch(e) {}
       try { updateSvgBoundaries(); } catch(e) {}
       try { updatePropertyCardPosition(); } catch(e) {}
+      try { syncPinLodOnZoomChange(curZoom); } catch(e) {}
     }
 
     if (progress < 1.0) {
@@ -2683,6 +2727,7 @@ function smoothFlyTo(targetLon, targetLat, targetZoom, duration, onComplete) {
       try { updateConfirmBubblePosition(); } catch(e) {}
       try { updateSvgBoundaries(); } catch(e) {}
       try { updatePropertyCardPosition(); } catch(e) {}
+      try { syncPinLodOnZoomChange(curZoom); } catch(e) {}
       if (onComplete) onComplete();
     }
   }

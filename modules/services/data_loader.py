@@ -1515,6 +1515,17 @@ def _build_full_map_html_v2(data_mtime, tmpl_mtime, cache_builder_ver="1", th_da
     """
     day_str = str(th_date or _today_th_str())
     legend_content, map_data_full_len, static_meta, csv_inject, lut_inject = _ensure_static_map_bundle_cached(data_mtime, day_str)
+    if (
+        static_meta is not None
+        and (
+            not os.path.exists(static_meta["path"])
+            or not os.path.exists(static_meta["sidecar_path"])
+            or not os.path.isdir(static_meta["details_dir_path"])
+        )
+    ):
+        legend_content, map_data_full_len, static_meta, csv_inject, lut_inject = _ensure_static_map_bundle_cached.__wrapped__(
+            data_mtime, day_str
+        )
     if map_data_full_len == 0:
         return None, 0, None
 

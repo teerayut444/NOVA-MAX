@@ -9,9 +9,12 @@ import user_logger
 from modules.services.auth_service import (
     MAX_FAILED_ATTEMPTS,
     authenticate_user,
+    build_clear_auth_cookie_js,
+    build_set_auth_cookie_js,
     check_lockout,
     check_server_lockout,
     is_admin_username,
+    issue_daily_auth_token,
     load_users,
     record_failed_attempt,
     record_server_failed_attempt,
@@ -470,7 +473,23 @@ def _render_welcome_login_card():
                 st.session_state["auth_display_name"] = auth_res["display_name"]
                 st.session_state["user_name"] = auth_res["logger_user_name"]
                 st.session_state["_login_attempts"] = reset_attempts()
+                st.session_state["_auth_via_token"] = False
+                st.session_state["_auth_cookie_checked"] = True
                 st.session_state.pop("welcome_login_password", None)
+                try:
+                    token_info = issue_daily_auth_token(
+                        auth_res["username"],
+                        ip=client_ip,
+                        user_agent=user_logger.get_user_agent(),
+                    )
+                    if token_info:
+                        st.session_state["_auth_token_hash"] = token_info["token_hash"]
+                        st.session_state["_pending_auth_cookie_set"] = (
+                            token_info["token"],
+                            token_info["max_age"],
+                        )
+                except Exception:
+                    pass
                 if is_admin_username(auth_res["username"]):
                     st.session_state["_log_auth"] = True
                     st.session_state["_admin_manual_lock"] = False
@@ -835,6 +854,7 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
 
     if not is_authenticated:
         if st.session_state.pop("_nova_just_logged_out", False):
+            st.session_state.pop("_pending_auth_cookie_clear", None)
             st.html(
                 """
                 <script>
@@ -858,9 +878,11 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
                     } catch (_e) {}
                 })();
                 </script>
-                """,
+                """ + build_clear_auth_cookie_js(),
                 unsafe_allow_javascript=True,
             )
+        elif st.session_state.pop("_pending_auth_cookie_clear", False):
+            st.html(build_clear_auth_cookie_js(), unsafe_allow_javascript=True)
         _render_welcome_login_card()
         return
 
@@ -935,6 +957,12 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
     if not pts_label and cached_map_len > 0:
         pts_label = f" {cached_map_len:,} จุด"
     if cached_map_len > 0 and payload_meta and os.path.exists(payload_meta["path"]):
+        _pending_cookie = st.session_state.pop("_pending_auth_cookie_set", None)
+        if isinstance(_pending_cookie, (tuple, list)) and len(_pending_cookie) == 2:
+            st.html(
+                build_set_auth_cookie_js(_pending_cookie[0], _pending_cookie[1]),
+                unsafe_allow_javascript=True,
+            )
         status_90 = (
             "กำลังรีเซ็ตหน้าแผนที่และตัวกรองทั้งหมด..."
             if is_from_reset

@@ -209,6 +209,23 @@ def _ensure_db():
             conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_time ON auth_logs (event_time)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_type ON auth_logs (event_type)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_user ON auth_logs (username)")
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS auth_tokens (
+                    token_hash TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    pw_fingerprint TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL,
+                    expires_at TIMESTAMP NOT NULL,
+                    expires_ts REAL NOT NULL,
+                    revoked INTEGER DEFAULT 0,
+                    last_used_at TIMESTAMP NOT NULL,
+                    ip TEXT DEFAULT '',
+                    user_agent TEXT DEFAULT ''
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens (username)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_exp ON auth_tokens (expires_ts)")
             conn.execute("COMMIT")
             _DB_INITIALIZED = True
         except Exception:
@@ -962,6 +979,10 @@ def clear_old_logs(days=90):
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM access_logs WHERE last_seen < ?", (cutoff,))
         conn.execute("DELETE FROM auth_logs WHERE event_time < ?", (cutoff,))
+        conn.execute(
+            "DELETE FROM auth_tokens WHERE expires_ts < ? OR (revoked = 1 AND last_used_at < ?)",
+            (time.time(), cutoff),
+        )
         conn.execute("COMMIT")
     except Exception:
         try:
@@ -1086,3 +1107,151 @@ def export_auth_logs_csv():
 
 # Alias for aggregated visitor logs
 get_aggregated_visitor_logs = get_all_logs
+
+
+def store_auth_token(
+    token_hash,
+    username,
+    pw_fingerprint,
+    expires_at,
+    expires_ts,
+    ip=None,
+    user_agent=None,
+    now_dt=None,
+):
+    """Persist a hashed daily auth token in SQLite and prune stale expired rows."""
+    _ensure_db()
+    if ip is None:
+        ip = get_client_ip()
+    if user_agent is None:
+        user_agent = get_user_agent()
+    cur_dt = now_dt if now_dt is not None else datetime.now(TH_TZ)
+    now_str = cur_dt.strftime(_TS_FORMAT)
+    prune_before_ts = cur_dt.timestamp() - 86400
+
+    conn = _get_db_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO auth_tokens
+                (token_hash, username, pw_fingerprint, created_at, expires_at, expires_ts, revoked, last_used_at, ip, user_agent)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+            """,
+            (
+                str(token_hash),
+                _sanitize_username(username),
+                str(pw_fingerprint),
+                now_str,
+                str(expires_at),
+                float(expires_ts),
+                now_str,
+                str(ip or ""),
+                str(user_agent or ""),
+            ),
+        )
+        conn.execute("DELETE FROM auth_tokens WHERE expires_ts < ?", (prune_before_ts,))
+        conn.execute("COMMIT")
+        return True
+    except Exception as e:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        logger.warning("Failed storing auth token: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+def get_auth_token(token_hash):
+    """Fetch a stored auth token record by its SHA-256 hash."""
+    if not token_hash:
+        return None
+    _ensure_db()
+    conn = _get_db_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            """
+            SELECT token_hash, username, pw_fingerprint, created_at, expires_at, expires_ts, revoked, last_used_at, ip, user_agent
+            FROM auth_tokens
+            WHERE token_hash = ?
+            """,
+            (str(token_hash),),
+        ).fetchone()
+        return dict(row) if row is not None else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def touch_auth_token(token_hash, now_dt=None):
+    """Update last_used_at for an active auth token."""
+    if not token_hash:
+        return False
+    _ensure_db()
+    cur_dt = now_dt if now_dt is not None else datetime.now(TH_TZ)
+    now_str = cur_dt.strftime(_TS_FORMAT)
+    conn = _get_db_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "UPDATE auth_tokens SET last_used_at = ? WHERE token_hash = ?",
+            (now_str, str(token_hash)),
+        )
+        conn.execute("COMMIT")
+        return True
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def revoke_auth_token(token_hash):
+    """Immediately revoke a single auth token by its SHA-256 hash."""
+    if not token_hash:
+        return False
+    _ensure_db()
+    conn = _get_db_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.execute(
+            "UPDATE auth_tokens SET revoked = 1 WHERE token_hash = ?",
+            (str(token_hash),),
+        )
+        conn.execute("COMMIT")
+        return cur.rowcount > 0
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def prune_expired_auth_tokens(now_ts=None):
+    """Delete expired auth tokens from SQLite."""
+    _ensure_db()
+    cutoff_ts = time.time() if now_ts is None else float(now_ts)
+    conn = _get_db_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.execute("DELETE FROM auth_tokens WHERE expires_ts <= ?", (cutoff_ts,))
+        conn.execute("COMMIT")
+        return cur.rowcount
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        return 0
+    finally:
+        conn.close()

@@ -17,6 +17,13 @@ if _BASE_DIR not in sys.path:
 from modules.config.theme import inject_global_theme_css
 
 # Services
+import user_logger
+from modules.services.auth_service import (
+    build_set_auth_cookie_js,
+    is_admin_username,
+    read_auth_cookie_from_context,
+    validate_daily_auth_token,
+)
 from modules.services.data_cleaner import ensure_derived_cols
 from modules.services.data_loader import load_properties_data, get_data_mtime, get_latest_parquet_path
 
@@ -107,7 +114,55 @@ st.html(
     """
 )
 
+def _try_restore_auth_from_cookie() -> bool:
+    """Restore an authenticated session from a valid same-day browser cookie without prompting for password."""
+    if st.session_state.get("authenticated", False):
+        return True
+    if st.session_state.get("_nova_just_logged_out", False):
+        st.session_state["_auth_cookie_checked"] = True
+        return False
+    if st.session_state.get("_auth_cookie_checked", False):
+        return False
+
+    st.session_state["_auth_cookie_checked"] = True
+    raw_token = read_auth_cookie_from_context()
+    if not raw_token:
+        return False
+
+    tok_res = validate_daily_auth_token(raw_token)
+    if not tok_res.get("ok"):
+        st.session_state["_pending_auth_cookie_clear"] = True
+        return False
+
+    st.session_state["authenticated"] = True
+    st.session_state["auth_username"] = tok_res["username"]
+    st.session_state["auth_display_name"] = tok_res["display_name"]
+    st.session_state["user_name"] = tok_res["logger_user_name"]
+    st.session_state["_auth_token_hash"] = tok_res["token_hash"]
+    st.session_state["_auth_via_token"] = True
+
+    # Auto-unlock the Admin panel when resuming via daily token (consistent with normal admin login)
+    if is_admin_username(tok_res["username"]):
+        st.session_state["_log_auth"] = True
+        st.session_state["_admin_manual_lock"] = False
+
+    try:
+        user_logger.log_auth_event(
+            "token_login",
+            username=tok_res["username"],
+            user_name=tok_res["logger_user_name"],
+            details=f"Auto-login via daily token (expires {tok_res.get('expires_at', '')})",
+        )
+        user_logger.log_visit(user_name=tok_res["logger_user_name"])
+        st.session_state["_visitor_logged"] = True
+    except Exception:
+        pass
+    return True
+
+
 # ----------------- PORTAL GATEWAY ENTRY CHECK -----------------
+_try_restore_auth_from_cookie()
+
 if "portal_entered" not in st.session_state:
     if st.query_params.get("portal") == "skip" and st.session_state.get("authenticated", False):
         st.session_state["portal_entered"] = True
@@ -115,6 +170,13 @@ if "portal_entered" not in st.session_state:
 if not st.session_state.get("authenticated", False) or not st.session_state.get("portal_entered", False):
     render_welcome_screen()
     st.stop()
+
+_pending_cookie = st.session_state.pop("_pending_auth_cookie_set", None)
+if isinstance(_pending_cookie, (tuple, list)) and len(_pending_cookie) == 2:
+    st.html(
+        build_set_auth_cookie_js(_pending_cookie[0], _pending_cookie[1]),
+        unsafe_allow_javascript=True,
+    )
 
 # ----------------- DATA LOADING & CACHING -----------------
 data_mtime = get_data_mtime()

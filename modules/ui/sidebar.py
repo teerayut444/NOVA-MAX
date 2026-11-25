@@ -9,8 +9,10 @@ from modules.services.auth_service import (
     MAX_FAILED_ATTEMPTS,
     check_server_lockout,
     is_admin_username,
+    read_auth_cookie_from_context,
     record_server_failed_attempt,
     reset_server_attempts,
+    revoke_daily_auth_token,
     verify_admin_password,
 )
 from modules.services.data_cleaner import get_dataset_month_year
@@ -177,6 +179,7 @@ def _render_admin_logs_body(is_dark_mode):
                 [
                     "ทั้งหมด",
                     "login_success",
+                    "token_login",
                     "login_failed",
                     "login_locked",
                     "logout",
@@ -201,6 +204,7 @@ def _render_admin_logs_body(is_dark_mode):
 
         evt_meta = {
             "login_success": ("#10b981", "rgba(16, 185, 129, 0.15)", "เข้าสู่ระบบสำเร็จ"),
+            "token_login": ("#14b8a6", "rgba(20, 184, 166, 0.15)", "เข้าซ้ำด้วย Token"),
             "login_failed": ("#ef4444", "rgba(239, 68, 68, 0.15)", "รหัสผ่านผิด"),
             "login_locked": ("#f59e0b", "rgba(245, 158, 11, 0.15)", "ถูกล็อคชั่วคราว"),
             "logout": ("#60a5fa", "rgba(59, 130, 246, 0.15)", "ออกจากระบบ"),
@@ -688,6 +692,9 @@ _RESET_PRESERVED_AUTH_KEYS = frozenset({
     "auth_username",
     "auth_display_name",
     "user_name",
+    "_auth_token_hash",
+    "_auth_via_token",
+    "_auth_cookie_checked",
     "_log_auth",
     "_admin_manual_lock",
     "_login_attempts",
@@ -744,9 +751,8 @@ def render_sidebar(df_raw):
                         }
                     } catch (_e) {}
                     try {
-                        win.__NOVA_MAP_CACHE__ = null;
-                        win.__NOVA_MAP_CACHE_PROMISE__ = null;
-                        win.__NOVA_MAP_CACHE_PROMISE_KEY__ = '';
+                        // Do NOT clear __NOVA_MAP_CACHE__ here: this script runs AFTER Welcome Screen
+                        // has already wiped the old cache and prewarmed the fresh cache for Tab 2.
                         win.__NOVA_TAB5_CACHE__ = null;
                         win.__NOVA_TAB2_TOKEN_EXPIRED__ = null;
                         win.__NOVA_TAB2_ALIVE_TS__ = 0;
@@ -835,6 +841,13 @@ def render_sidebar(df_raw):
             with col_user_logout:
                 if st.button("ออก", icon=":material/logout:", key="btn_user_logout", width="stretch", help="ออกจากระบบ (Logout)"):
                     try:
+                        revoke_daily_auth_token(
+                            raw_token=read_auth_cookie_from_context(),
+                            token_hash=st.session_state.get("_auth_token_hash"),
+                        )
+                    except Exception:
+                        pass
+                    try:
                         user_logger.log_auth_event(
                             "logout",
                             username=st.session_state.get("auth_username", ""),
@@ -850,6 +863,7 @@ def render_sidebar(df_raw):
                     # Full session wipe ensures imported_custom_df, export buffers, and admin state never leak across users
                     st.session_state.clear()
                     st.session_state["_nova_just_logged_out"] = True
+                    st.session_state["_auth_cookie_checked"] = True
                     st.rerun()
 
         if df_raw is not None and not df_raw.empty:

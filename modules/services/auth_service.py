@@ -9,9 +9,12 @@ session/client lockout helpers against brute-force login attempts.
 from __future__ import annotations
 
 from collections import OrderedDict
+from datetime import datetime, timedelta
 import hashlib
 import hmac
+import json
 import os
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -21,6 +24,7 @@ import user_logger
 
 _ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_USERS_FILE = _ROOT_DIR / "users.txt"
+AUTH_COOKIE_NAME = "nova_auth_token"
 
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_SECONDS = 30
@@ -429,3 +433,218 @@ def verify_admin_password(
     if not configured_any:
         return {"ok": False, "reason": "unconfigured", "source": ""}
     return {"ok": False, "reason": "invalid_credentials", "source": ""}
+
+
+def compute_password_fingerprint(stored_secret: str) -> str:
+    """Compute a stable fingerprint of a user's stored secret so password changes invalidate old tokens."""
+    return hashlib.sha256(f"nova-pw-fp:{stored_secret}".encode("utf-8")).hexdigest()[:32]
+
+
+def hash_auth_token(raw_token: str) -> str:
+    """Hash an opaque client token using SHA-256 before storing or querying in SQLite."""
+    return hashlib.sha256(str(raw_token).encode("utf-8")).hexdigest()
+
+
+def get_end_of_day_expiry(now_dt: datetime | None = None) -> tuple[datetime, float, int]:
+    """
+    Compute the upcoming midnight (00:00:00 TH_TZ / GMT+7) expiry timestamp and Max-Age seconds.
+    Returns `(expires_dt_th, expires_unix_ts, max_age_seconds)`.
+    """
+    if now_dt is None:
+        cur_th = datetime.now(user_logger.TH_TZ)
+    elif now_dt.tzinfo is None:
+        cur_th = now_dt.replace(tzinfo=user_logger.TH_TZ)
+    else:
+        cur_th = now_dt.astimezone(user_logger.TH_TZ)
+
+    next_midnight = (cur_th + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    max_age = max(1, int((next_midnight - cur_th).total_seconds()))
+    return next_midnight, next_midnight.timestamp(), max_age
+
+
+def issue_daily_auth_token(
+    username: str,
+    *,
+    users_file: str | os.PathLike[str] | None = None,
+    now_dt: datetime | None = None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Issue a new random opaque token valid until midnight TH_TZ (GMT+7) and store its SHA-256 hash in SQLite.
+    Supports multiple simultaneous devices/browsers per user.
+    """
+    clean_u = str(username or "").strip()
+    if not clean_u:
+        return None
+    users, err_code = load_users(users_file=users_file)
+    if err_code:
+        return None
+    record = users.get(clean_u.lower())
+    if not record or not record.get("password"):
+        return None
+
+    canonical_user = user_logger._sanitize_username(record["username"])
+    pw_fp = compute_password_fingerprint(record["password"])
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hash_auth_token(raw_token)
+    expires_dt, expires_ts, max_age = get_end_of_day_expiry(now_dt=now_dt)
+    expires_at_str = expires_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    stored = user_logger.store_auth_token(
+        token_hash=token_hash,
+        username=canonical_user,
+        pw_fingerprint=pw_fp,
+        expires_at=expires_at_str,
+        expires_ts=expires_ts,
+        ip=ip,
+        user_agent=user_agent,
+        now_dt=now_dt,
+    )
+    if not stored:
+        return None
+
+    return {
+        "token": raw_token,
+        "token_hash": token_hash,
+        "username": canonical_user,
+        "expires_at": expires_at_str,
+        "expires_ts": expires_ts,
+        "max_age": max_age,
+    }
+
+
+def validate_daily_auth_token(
+    raw_token: str | None,
+    *,
+    users_file: str | os.PathLike[str] | None = None,
+    now_ts: float | None = None,
+) -> dict[str, Any]:
+    """
+    Validate an opaque client token against SQLite (`auth_tokens`) and current `users.txt`.
+    Not IP-bound so users switching LAN/Wi-Fi/VPN remain logged in until midnight TH_TZ.
+    Immediately rejects revoked, expired, deleted-user, or password-changed tokens.
+    """
+    if not isinstance(raw_token, str):
+        return {"ok": False, "reason": "missing_token"}
+    clean_tok = raw_token.strip()
+    if len(clean_tok) < 16 or len(clean_tok) > 256:
+        return {"ok": False, "reason": "invalid_token"}
+
+    token_hash = hash_auth_token(clean_tok)
+    rec = user_logger.get_auth_token(token_hash)
+    if not rec:
+        return {"ok": False, "reason": "not_found"}
+
+    if int(rec.get("revoked", 0) or 0) != 0:
+        return {"ok": False, "reason": "revoked"}
+
+    cur_ts = time.time() if now_ts is None else float(now_ts)
+    if float(rec.get("expires_ts", 0.0) or 0.0) <= cur_ts:
+        return {"ok": False, "reason": "expired"}
+
+    users, err_code = load_users(users_file=users_file)
+    if err_code:
+        return {"ok": False, "reason": err_code}
+
+    stored_username = str(rec.get("username", "") or "").strip()
+    user_rec = users.get(stored_username.lower())
+    if not user_rec or not user_rec.get("password"):
+        user_logger.revoke_auth_token(token_hash)
+        return {"ok": False, "reason": "user_removed"}
+
+    expected_fp = compute_password_fingerprint(user_rec["password"])
+    if not hmac.compare_digest(str(rec.get("pw_fingerprint", "")), expected_fp):
+        user_logger.revoke_auth_token(token_hash)
+        return {"ok": False, "reason": "password_changed"}
+
+    user_logger.touch_auth_token(token_hash)
+    canonical_user = user_logger._sanitize_username(user_rec["username"])
+    display_name = user_logger._sanitize_username(user_rec["display_name"])
+    return {
+        "ok": True,
+        "reason": "ok",
+        "username": canonical_user,
+        "display_name": display_name,
+        "logger_user_name": format_logger_user_name(canonical_user, display_name),
+        "token_hash": token_hash,
+        "expires_at": str(rec.get("expires_at", "")),
+    }
+
+
+def revoke_daily_auth_token(
+    raw_token: str | None = None,
+    *,
+    token_hash: str | None = None,
+) -> bool:
+    """Revoke a single browser's auth token in SQLite by raw token or precomputed hash."""
+    effective_hash = str(token_hash or "").strip()
+    if not effective_hash and isinstance(raw_token, str) and raw_token.strip():
+        effective_hash = hash_auth_token(raw_token.strip())
+    if not effective_hash:
+        return False
+    return user_logger.revoke_auth_token(effective_hash)
+
+
+def get_auth_cookie_path() -> str:
+    """Return cookie Path aligned with NOVA_BASE_URL_PATH / server.baseUrlPath (e.g. '/nova' or '/')."""
+    try:
+        from modules.config.constants import get_base_url_prefix
+        prefix = get_base_url_prefix()
+        return prefix if prefix else "/"
+    except Exception:
+        return "/"
+
+
+def read_auth_cookie_from_context() -> str:
+    """Read the daily auth cookie from Streamlit's st.context.cookies safely."""
+    try:
+        import streamlit as st
+        ctx = getattr(st, "context", None)
+        cookies = getattr(ctx, "cookies", None) if ctx is not None else None
+        if cookies is not None:
+            val = cookies.get(AUTH_COOKIE_NAME)
+            if val:
+                return str(val).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def build_set_auth_cookie_js(raw_token: str, max_age: int, cookie_path: str | None = None) -> str:
+    """Return an inline <script> for st.html(..., unsafe_allow_javascript=True) that sets the daily auth cookie."""
+    path_val = cookie_path or get_auth_cookie_path()
+    safe_max_age = max(1, int(max_age))
+    return (
+        "<script>(function(){"
+        "try{"
+        f"var name={json.dumps(AUTH_COOKIE_NAME)};"
+        f"var val=encodeURIComponent({json.dumps(str(raw_token))});"
+        f"var path={json.dumps(path_val)};"
+        f"var maxAge={safe_max_age};"
+        "var sec=(window.location&&window.location.protocol==='https:')?'; Secure':'';"
+        "document.cookie=name+'='+val+'; Path='+path+'; Max-Age='+maxAge+'; SameSite=Lax'+sec;"
+        "}catch(_e){}"
+        "})();</script>"
+    )
+
+
+def build_clear_auth_cookie_js(cookie_path: str | None = None) -> str:
+    """Return an inline <script> for st.html(..., unsafe_allow_javascript=True) that clears the auth cookie."""
+    path_val = cookie_path or get_auth_cookie_path()
+    paths = [path_val]
+    if path_val != "/":
+        paths.append("/")
+    return (
+        "<script>(function(){"
+        "try{"
+        f"var name={json.dumps(AUTH_COOKIE_NAME)};"
+        f"var paths={json.dumps(paths)};"
+        "var sec=(window.location&&window.location.protocol==='https:')?'; Secure':'';"
+        "for(var i=0;i<paths.length;i++){"
+        "document.cookie=name+'=; Path='+paths[i]+'; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax'+sec;"
+        "document.cookie=name+'=; Path='+paths[i]+'; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';"
+        "}"
+        "}catch(_e){}"
+        "})();</script>"
+    )

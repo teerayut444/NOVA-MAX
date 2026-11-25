@@ -1718,6 +1718,7 @@ async function initMap() {
         try { updateConfirmBubblePosition(); } catch(e) {}
         try { updateSvgBoundaries(); } catch(e) {}
         try { updatePropertyCardPosition(); } catch(e) {}
+        try { if (typeof syncPinLodOnZoomChange === 'function') syncPinLodOnZoomChange(viewState.zoom); } catch(e) {}
         return viewState;
       },
       layers: initialLayers
