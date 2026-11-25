@@ -8,6 +8,7 @@ Designed for Streamlit-based NOVA NPA Dashboard.
 
 import os
 import re
+import logging
 import time
 import uuid
 import socket
@@ -21,6 +22,7 @@ from datetime import datetime, timezone, timedelta
 
 # Thailand timezone (GMT+7)
 TH_TZ = timezone(timedelta(hours=7))
+logger = logging.getLogger(__name__)
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 # Maximum gap between heartbeats/interactions counted as active time (excludes sleep/hibernation gaps)
 HEARTBEAT_MAX_GAP_SECONDS = 180
@@ -98,7 +100,7 @@ def _get_db_connection(timeout=15, init_wal=False):
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.execute("PRAGMA synchronous=NORMAL;")
     except Exception:
-        pass
+        logger.warning("Failed setting SQLite PRAGMA options on %s", DB_PATH, exc_info=True)
     return conn
 
 
@@ -169,7 +171,7 @@ def _ensure_db():
                     (local_user,)
                 )
             except Exception:
-                pass
+                logger.warning("Failed backfilling local domain user in access_logs", exc_info=True)
 
             # Deduplicate any historical duplicate session_id rows before adding unique index
             try:
@@ -180,13 +182,13 @@ def _ensure_db():
                     )
                 """)
             except Exception:
-                pass
+                logger.warning("Failed deduplicating session_id rows in access_logs", exc_info=True)
 
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session ON access_logs (session_id)")
             try:
                 conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_session_unique ON access_logs (session_id)")
             except Exception:
-                pass
+                logger.warning("Failed creating unique idx_session_unique on access_logs", exc_info=True)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ip ON access_logs (ip)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_user ON access_logs (user_name)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_machine_user ON access_logs (machine_user)")
@@ -446,6 +448,12 @@ def get_client_ip():
                                 return f"{valid_ip} (Proxy)"
                             except ValueError:
                                 continue
+            if norm_direct:
+                try:
+                    if not ipaddress.ip_address(norm_direct).is_loopback:
+                        return f"{norm_direct} (Proxy)"
+                except ValueError:
+                    pass
 
         return "127.0.0.1 (Local)"
     except Exception:

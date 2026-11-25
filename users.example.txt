@@ -1,0 +1,14 @@
+# NOVA NPA Dashboard - Example User Credentials Template
+# Copy this file to `users.txt` (ignored by Git & Docker) and set real passwords.
+#
+# Supported formats (UTF-8):
+#   username:password
+#   username:password:Display Name
+#
+# Password schemes:
+#   1) PBKDF2-SHA256 hash (recommended for admin & internet-facing accounts):
+#      python -c "from modules.services.auth_service import hash_password; print(hash_password('YourStrongPass!'))"
+#   2) Plain-text (convenient for internal corporate accounts)
+#
+admin:pbkdf2_sha256$260000$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000:Administrator
+staff01:changeme123:ผู้ใช้งานตัวอย่าง 01

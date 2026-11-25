@@ -325,7 +325,12 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
     # Aggregate company stats in one fast categorical pass (avoids unpacking 461k object strings in RAM)
     def _norm_co_key(k):
         s = str(k).strip()
-        return 'LED Legal' if s in ('LED_SOLD', 'LED_Legal', 'LED Legal') else s
+        sl = s.lower()
+        if s in ('LED_SOLD', 'LED_Legal', 'LED Legal') or sl == 'led legal':
+            return 'LED Legal'
+        if sl in ('chayo', 'chayo npa', 'chayo555', 'chayo555 npa'):
+            return 'Chayo555'
+        return s
 
     comp_stats = {}
     if df_filtered is not None and not df_filtered.empty and 'บริษัท' in df_filtered.columns:
@@ -921,7 +926,7 @@ def generate_3d_glossy_bubble_chart_html(df_filtered, bubble_metric="สัด�
         svg {{
             width: 100%;
             height: auto;
-            max-height: 820px;
+            max-height: 760px;
             display: block;
             overflow: visible;
         }}

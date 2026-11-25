@@ -166,7 +166,7 @@ function getUniqueCoordMarkers(data) {
     const isCentroid = String(topItem._centroid) === '1';
 
     const pinObj = {
-      ...topItem,
+      item: topItem,
       lon: topItem.lon,
       lat: topItem.lat,
       count: count,
@@ -216,16 +216,20 @@ function createPointLayers(data) {
     },
     getIcon: d => {
       if (!iconMapping) return null;
+      const src = d.item || d;
+      const _hasOwn = Object.prototype.hasOwnProperty;
       if (markerDisplayMode === 'logo') {
-        const co = (d._company || '').trim();
-        if (iconMapping[co]) return co;
-        if (iconMapping[co.toUpperCase()]) return co.toUpperCase();
-        if (iconMapping[co.toLowerCase()]) return co.toLowerCase();
-        if (iconMapping['ไฟล์นำเข้า']) return 'ไฟล์นำเข้า';
+        const co = (src._company || '').trim();
+        if (_hasOwn.call(iconMapping, co)) return co;
+        const coUp = co.toUpperCase();
+        if (_hasOwn.call(iconMapping, coUp)) return coUp;
+        const coLow = co.toLowerCase();
+        if (_hasOwn.call(iconMapping, coLow)) return coLow;
+        if (_hasOwn.call(iconMapping, 'ไฟล์นำเข้า')) return 'ไฟล์นำเข้า';
         return 'SAM';
       } else {
-        const tp = (d._type || '').trim();
-        if (iconMapping[tp]) return tp;
+        const tp = (src._type || '').trim();
+        if (_hasOwn.call(iconMapping, tp)) return tp;
         for (let kIdx = 0; kIdx < sortedIconMappingKeys.length; kIdx++) {
           const key = sortedIconMappingKeys[kIdx];
           if (tp.includes(key)) return key;
@@ -412,7 +416,7 @@ function updateLegendContent() {
     } else if (mapPinMode === 'location') {
       emptyMsg = (currentSelectedProv && currentSelectedProv !== '__ALL__')
         ? 'ไม่พบทรัพย์สินตามเงื่อนไขที่เลือก'
-        : 'กรุณาเลือกจังหวัด และอำเภอ/ตำบล ในแถบด้านบน';
+        : 'กรุณาเลือกจังหวัดในแถบด้านบน';
     } else {
       emptyMsg = referencePoint ? 'ไม่พบทรัพย์สินในรัศมีที่กำหนด' : 'คลิกบนแผนที่เพื่อปักหมุดรัศมี';
     }
@@ -432,9 +436,9 @@ function updateLegendContent() {
   }
 
   if (effectiveMode === 'logo') {
-    // Group by Company
-    const coCounts = {};
-    const coCentroids = {};
+    // Group by Company (null-prototype maps prevent Object.prototype collisions on 'constructor'/'toString')
+    const coCounts = Object.create(null);
+    const coCentroids = Object.create(null);
     for (let i = 0; i < poolForLegend.length; i++) {
       const d = poolForLegend[i];
       const co = (d._company || 'อื่นๆ').trim();
@@ -455,12 +459,13 @@ function updateLegendContent() {
       return idxA - idxB;
     });
 
+    const _hasOwn = Object.prototype.hasOwnProperty;
     let html = '';
     for (const co of sortedCompanies) {
       const cnt = coCounts[co];
       const cCentroid = coCentroids[co] || 0;
       const logoUri = getCompanyLogoUri(co);
-      const dotColor = (companyColors && companyColors[co]) || '#94a3b8';
+      const dotColor = (companyColors && _hasOwn.call(companyColors, co) && companyColors[co]) || '#94a3b8';
       const isFiltered = inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.has(co);
       const activeCls = isFiltered ? ' active-filtered' : '';
 
@@ -493,7 +498,7 @@ function updateLegendContent() {
     box.innerHTML = html;
   } else {
     // Group by Property Type
-    const typeCounts = {};
+    const typeCounts = Object.create(null);
     for (let i = 0; i < poolForLegend.length; i++) {
       const d = poolForLegend[i];
       const t = (d._type || 'อื่นๆ').trim();
@@ -504,12 +509,13 @@ function updateLegendContent() {
       return (typeCounts[b] || 0) - (typeCounts[a] || 0);
     });
 
+    const _hasOwn = Object.prototype.hasOwnProperty;
     let html = '';
     for (const t of sortedTypes) {
       const cnt = typeCounts[t];
-      const rgb = (typeof PROP_TYPE_COLORS !== 'undefined' && PROP_TYPE_COLORS[t]) || [148, 163, 184];
+      const rgb = (typeof PROP_TYPE_COLORS !== 'undefined' && _hasOwn.call(PROP_TYPE_COLORS, t) && PROP_TYPE_COLORS[t]) || [148, 163, 184];
       const colorRgbStr = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-      const iconHtml = (typeof propTypeIcons !== 'undefined' && propTypeIcons[t]) || '<i class="fa-solid fa-house"></i>';
+      const iconHtml = (typeof propTypeIcons !== 'undefined' && _hasOwn.call(propTypeIcons, t) && propTypeIcons[t]) || '<i class="fa-solid fa-house"></i>';
       const isFiltered = inMapFilterState && inMapFilterState.types && inMapFilterState.types.has(t);
       const activeCls = isFiltered ? ' active-filtered' : '';
       const safeT = escapeHtml(t);
@@ -1096,16 +1102,26 @@ function shouldRenderMapPins() {
   if (mapPinMode === 'radius') return Boolean(referencePoint);
 
   const hasProvSelected = Boolean(currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__');
-  const hasDistSelected = Boolean(currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__');
-  const hasSubdistSelected = Boolean(currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__');
   if (hasProvSelected) {
-    // Do not render pins when only a province is selected; show pins once district or subdistrict is chosen (or an explicit searched property)
-    return hasDistSelected || hasSubdistSelected || Boolean(currentRefProp);
+    // Render pins immediately when a province (or district/subdistrict) is selected
+    return true;
   }
 
   const hasOnlyProjFilter = Boolean(inMapFilterState && inMapFilterState.onlyWithProject);
   const hasCompaniesFilter = Boolean(inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0);
   return hasOnlyProjFilter || (hasCompaniesFilter && inMapFilterState.companies.size <= 2);
+}
+
+let _lastStaticDeckLayers = [];
+
+function updatePreviewCursorOnly() {
+  if (!deckglInstance || mapPinMode !== 'radius' || referencePoint || !mousePreviewCoord) return;
+  const layers = _lastStaticDeckLayers ? _lastStaticDeckLayers.slice() : [];
+  const prevCircle = createPreviewCursorLayer();
+  if (prevCircle) layers.push(prevCircle);
+  const prevDot = createPreviewDotLayer();
+  if (prevDot) layers.push(prevDot);
+  deckglInstance.setProps({ layers });
 }
 
 function updateDeckLayers() {
@@ -1162,7 +1178,7 @@ function updateDeckLayers() {
     if (prevDot) layers.push(prevDot);
   }
 
-  // Render Property Points (in location mode: only when district/subdistrict is selected; in radius/project mode: matching pins)
+  // Render Property Points (in location mode: when province/district/subdistrict is selected; in radius/project mode: matching pins)
   if (shouldRenderMapPins()) {
     const ptLayers = createPointLayers(currentNearbyData);
     if (ptLayers && ptLayers.length > 0) {
@@ -1186,6 +1202,10 @@ function updateDeckLayers() {
   const compBadge = createComparisonPinsBadgeLayer();
   if (compBadge) layers.push(compBadge);
 
+  _lastStaticDeckLayers = layers.filter(
+    l => l && l.id !== 'preview-cursor-circle' && l.id !== 'preview-cursor-dot'
+  );
+
   deckglInstance.setProps({ layers });
   updateSvgBoundaries();
   renderHtmlMarkers();
@@ -1199,6 +1219,7 @@ let inMapFilterState = {
   samProjects: new Set(),
   samProject: null,
   onlyWithProject: false,
+  includeCentroids: false,
   minPrice: null,
   maxPrice: null,
   minSqw: null,
@@ -1437,6 +1458,21 @@ function initInMapFilterChips(lut, data, precomputedTypeCounts) {
   updateHasProjectButtonUI();
 }
 
+function toggleIncludeCentroidsFilter() {
+  inMapFilterState.includeCentroids = !inMapFilterState.includeCentroids;
+  updateIncludeCentroidsButtonUI();
+  applyInMapFilters();
+  notifyParentFilterChange();
+}
+
+function updateIncludeCentroidsButtonUI() {
+  const chip = document.getElementById('filter-chip-include-centroids');
+  const isAct = !!(inMapFilterState && inMapFilterState.includeCentroids);
+  if (chip) {
+    chip.classList.toggle('active', isAct);
+  }
+}
+
 function toggleOnlyWithProjectFilter() {
   inMapFilterState.onlyWithProject = !inMapFilterState.onlyWithProject;
   updateHasProjectButtonUI();
@@ -1515,6 +1551,7 @@ function resetGeneralFilters() {
   inMapFilterState.types.clear();
   inMapFilterState.sales.clear();
   inMapFilterState.onlyWithProject = false;
+  inMapFilterState.includeCentroids = false;
   inMapFilterState.agePreset = null;
   inMapFilterState.maxAge = null;
 
@@ -1526,6 +1563,7 @@ function resetGeneralFilters() {
   if (ageInp) ageInp.value = '';
 
   updateHasProjectButtonUI();
+  updateIncludeCentroidsButtonUI();
   cachedScopedProjectsKey = '';
   syncComboboxInputs();
   applyInMapFilters();
@@ -1571,6 +1609,7 @@ function resetAllInMapFilters() {
   inMapFilterState.samProject = null;
   inMapFilterState.samProjectsNorm = new Set();
   inMapFilterState.onlyWithProject = false;
+  inMapFilterState.includeCentroids = false;
   inMapFilterState.minPrice = null;
   inMapFilterState.maxPrice = null;
   inMapFilterState.minSqw = null;
@@ -1593,6 +1632,7 @@ function resetAllInMapFilters() {
   cachedScopedProjectsKey = '';
   document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
   updateHasProjectButtonUI();
+  updateIncludeCentroidsButtonUI();
   syncComboboxInputs();
 
   ['filter-min-price', 'filter-max-price', 'filter-min-sqw', 'filter-max-sqw', 'filter-min-sqm', 'filter-max-sqm', 'filter-min-puw', 'filter-max-puw', 'filter-min-pum', 'filter-max-pum', 'filter-min-floor', 'filter-max-floor', 'filter-max-age'].forEach(id => {
@@ -1641,6 +1681,11 @@ function filterItemPasses(d, excludeAxis) {
       const targetNk = inMapFilterState.samProjectsNorm ? Array.from(inMapFilterState.samProjectsNorm)[0] : normalizeProjectKeyword(inMapFilterState.samProject);
       if (!nk || !targetNk || nk !== targetNk) return false;
     }
+  }
+
+  const _isCentroidItem = (String(d._centroid) === '1' || d._centroid === true || d._centroid === 'true');
+  if (_isCentroidItem && !(inMapFilterState && inMapFilterState.includeCentroids)) {
+    return false;
   }
 
   if (inMapFilterState.onlyWithProject) {
@@ -1822,6 +1867,7 @@ function applyInMapFilters(skipParentNotify = false) {
   // General Filters Count:
   let generalCount = inMapFilterState.companies.size + inMapFilterState.types.size + inMapFilterState.sales.size;
   if (inMapFilterState.onlyWithProject) generalCount++;
+  if (inMapFilterState.includeCentroids) generalCount++;
   if (inMapFilterState.agePreset !== null || (inMapFilterState.maxAge !== null && inMapFilterState.maxAge > 0)) generalCount++;
 
   // Spec & Pricing Filters Count:
@@ -1936,7 +1982,7 @@ function applyInMapFilters(skipParentNotify = false) {
 
     const statusEl = document.getElementById('radius-status-text');
     if (statusEl) {
-      statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-building-flag" style="margin-right:4px;"></i> โครงการ: ${projDesc}${locDesc}</span> พบ <b>${currentNearbyData.length.toLocaleString()}</b> รายการ`;
+      statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-building-flag" style="margin-right:4px;"></i> โครงการ: ${escapeHtml(projDesc)}${escapeHtml(locDesc)}</span> พบ <b>${currentNearbyData.length.toLocaleString()}</b> รายการ`;
     }
     const countEl = document.getElementById('points-count');
     if (countEl) {
@@ -1958,33 +2004,14 @@ function applyInMapFilters(skipParentNotify = false) {
 
       const statusEl = document.getElementById('radius-status-text');
       if (statusEl) {
-        statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-map-location-dot" style="margin-right:4px;"></i> ทุกจังหวัด:</span> กรุณาเลือกจังหวัด และอำเภอ/ตำบล เพื่อแสดงหมุดตามทำเล`;
+        statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-map-location-dot" style="margin-right:4px;"></i> ทุกจังหวัด:</span> กรุณาเลือกจังหวัด เพื่อแสดงหมุดตามทำเล`;
       }
       const countEl = document.getElementById('points-count');
       if (countEl) {
-        countEl.innerText = `ทุกจังหวัด: กรุณาเลือกจังหวัด และอำเภอ/ตำบล เพื่อแสดงหมุด`;
-      }
-    } else if (hasProvSelected && !hasDistSelected && !hasSubdistSelected && !currentRefProp) {
-      // Province-only selection: keep province stats for KPI/Median/Legend/Table, but hide map pins until district or subdistrict is selected
-      currentScopePool = (cachedData || []).filter(isItemInCurrentLocation);
-      currentNearbyData = currentScopePool.filter(filterItemPasses);
-      currentCoordMap = new Map();
-
-      const overlapText = document.getElementById('legend-overlap-text');
-      if (overlapText) {
-        overlapText.innerHTML = `เลือกอำเภอ/เขต หรือตำบล/แขวง เพื่อแสดงหมุดบนแผนที่`;
-      }
-
-      const statusEl = document.getElementById('radius-status-text');
-      if (statusEl) {
-        statusEl.innerHTML = `<span style="color:#059669; font-weight:800;"><i class="fa-solid fa-map-location-dot" style="margin-right:4px;"></i> จ.${escapeHtml(currentSelectedProv)}:</span> พบ <b>${currentNearbyData.length.toLocaleString()}</b> รายการ — กรุณาเลือกอำเภอ/เขต หรือตำบล/แขวง เพื่อแสดงหมุด`;
-      }
-      const countEl = document.getElementById('points-count');
-      if (countEl) {
-        countEl.innerText = `จ.${currentSelectedProv}: พบ ${currentNearbyData.length.toLocaleString()} รายการ (เลือกอำเภอ/ตำบลเพื่อแสดงหมุด)`;
+        countEl.innerText = `ทุกจังหวัด: กรุณาเลือกจังหวัด เพื่อแสดงหมุด`;
       }
     } else {
-      // Location mode with district/subdistrict selected (or nationwide with specific filters e.g. onlyWithProject)
+      // Location mode with province/district/subdistrict selected (or nationwide with specific filters e.g. onlyWithProject)
       currentScopePool = hasProvSelected ? (cachedData || []).filter(isItemInCurrentLocation) : (cachedData || []);
       currentNearbyData = currentScopePool.filter(filterItemPasses);
       currentCoordMap = buildCoordMap(currentNearbyData);
@@ -2015,7 +2042,7 @@ function applyInMapFilters(skipParentNotify = false) {
 
       const statusEl = document.getElementById('radius-status-text');
       if (statusEl) {
-        statusEl.innerHTML = `<span style="color:#10b981; font-weight:800;"><i class="fa-solid ${titleIcon}"></i> ${titlePrefix} (${locDesc}):</span> พบ <b>${currentNearbyData.length.toLocaleString()}</b> รายการ`;
+        statusEl.innerHTML = `<span style="color:#10b981; font-weight:800;"><i class="fa-solid ${escapeHtml(titleIcon)}"></i> ${escapeHtml(titlePrefix)} (${escapeHtml(locDesc)}):</span> พบ <b>${currentNearbyData.length.toLocaleString()}</b> รายการ`;
       }
       const countEl = document.getElementById('points-count');
       if (countEl) {
@@ -2064,6 +2091,26 @@ function applyInMapFilters(skipParentNotify = false) {
   }
 }
 
+function serializeMultiFilterParam(iter) {
+  const arr = Array.from(iter || []).map(x => String(x || '').trim()).filter(Boolean);
+  if (!arr.length) return '';
+  return arr.some(item => item.includes(',')) ? JSON.stringify(arr) : arr.join(',');
+}
+
+function parseMultiFilterParam(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return [];
+  if (s.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) {
+        return parsed.map(x => String(x || '').trim()).filter(Boolean);
+      }
+    } catch (_e) {}
+  }
+  return s.split(',').map(x => x.trim()).filter(Boolean);
+}
+
 let syncFilterDebounceTimer = null;
 function notifyParentFilterChange() {
   clearTimeout(syncFilterDebounceTimer);
@@ -2095,9 +2142,9 @@ function notifyParentFilterChange() {
 
       // Project parameter
       if (inMapFilterState && inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) {
-        u.searchParams.set('map_proj', Array.from(inMapFilterState.samProjects).join(','));
+        u.searchParams.set('map_proj', serializeMultiFilterParam(inMapFilterState.samProjects));
       } else if (inMapFilterState && inMapFilterState.samProject) {
-        u.searchParams.set('map_proj', inMapFilterState.samProject);
+        u.searchParams.set('map_proj', serializeMultiFilterParam([inMapFilterState.samProject]));
       } else {
         u.searchParams.delete('map_proj');
       }
@@ -2116,12 +2163,12 @@ function notifyParentFilterChange() {
       }
 
       if (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) {
-        u.searchParams.set('map_filter_cos', Array.from(inMapFilterState.companies).join(','));
+        u.searchParams.set('map_filter_cos', serializeMultiFilterParam(inMapFilterState.companies));
       } else {
         u.searchParams.delete('map_filter_cos');
       }
       if (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) {
-        u.searchParams.set('map_filter_types', Array.from(inMapFilterState.types).join(','));
+        u.searchParams.set('map_filter_types', serializeMultiFilterParam(inMapFilterState.types));
       } else {
         u.searchParams.delete('map_filter_types');
       }
@@ -2156,7 +2203,7 @@ function notifyParentFilterChange() {
         u.searchParams.delete('map_filter_max_sqm');
       }
       if (inMapFilterState && inMapFilterState.sales && inMapFilterState.sales.size > 0) {
-        u.searchParams.set('map_filter_sales', Array.from(inMapFilterState.sales).join(','));
+        u.searchParams.set('map_filter_sales', serializeMultiFilterParam(inMapFilterState.sales));
       } else {
         u.searchParams.delete('map_filter_sales');
       }
@@ -2185,10 +2232,51 @@ function notifyParentFilterChange() {
       } else {
         u.searchParams.delete('map_filter_only_proj');
       }
-      window.parent.history.replaceState({}, '', u.toString());
-      if (!isProvinceOnlyLocationState() || hasActiveParentAnalyticsFragment()) {
-        triggerStreamlitSync(null, 80);
+      if (inMapFilterState && inMapFilterState.includeCentroids) {
+        u.searchParams.set('map_include_centroids', '1');
+      } else {
+        u.searchParams.delete('map_include_centroids');
       }
+      if (inMapFilterState && inMapFilterState.floors && inMapFilterState.floors.size > 0) {
+        u.searchParams.set('map_filter_floors', serializeMultiFilterParam(inMapFilterState.floors));
+      } else {
+        u.searchParams.delete('map_filter_floors');
+      }
+      if (inMapFilterState && inMapFilterState.minFloor) {
+        u.searchParams.set('map_filter_min_fl', inMapFilterState.minFloor);
+      } else {
+        u.searchParams.delete('map_filter_min_fl');
+      }
+      if (inMapFilterState && inMapFilterState.maxFloor) {
+        u.searchParams.set('map_filter_max_fl', inMapFilterState.maxFloor);
+      } else {
+        u.searchParams.delete('map_filter_max_fl');
+      }
+      if (inMapFilterState && inMapFilterState.bedrooms && inMapFilterState.bedrooms.size > 0) {
+        u.searchParams.set('map_filter_beds', serializeMultiFilterParam(inMapFilterState.bedrooms));
+      } else {
+        u.searchParams.delete('map_filter_beds');
+      }
+      if (inMapFilterState && inMapFilterState.bathrooms && inMapFilterState.bathrooms.size > 0) {
+        u.searchParams.set('map_filter_baths', serializeMultiFilterParam(inMapFilterState.bathrooms));
+      } else {
+        u.searchParams.delete('map_filter_baths');
+      }
+      if (inMapFilterState && inMapFilterState.parkings && inMapFilterState.parkings.size > 0) {
+        u.searchParams.set('map_filter_pkgs', serializeMultiFilterParam(inMapFilterState.parkings));
+      } else {
+        u.searchParams.delete('map_filter_pkgs');
+      }
+      const effAgeUrl = (inMapFilterState && inMapFilterState.maxAge !== null && inMapFilterState.maxAge > 0)
+        ? String(inMapFilterState.maxAge)
+        : (inMapFilterState && inMapFilterState.agePreset ? String(inMapFilterState.agePreset) : '');
+      if (effAgeUrl) {
+        u.searchParams.set('map_filter_max_age', effAgeUrl);
+      } else {
+        u.searchParams.delete('map_filter_max_age');
+      }
+      window.parent.history.replaceState({}, '', u.toString());
+      triggerStreamlitSync(null, 80);
     } catch(e) {
       console.warn('notifyParentFilterChange error:', e);
     }
@@ -2202,12 +2290,13 @@ function getMapSyncPayload() {
   var id = currentRefProp ? (currentRefProp._id || '') : (currentRefId || '');
   var lat = referencePoint ? (referencePoint.lat !== undefined ? referencePoint.lat : (referencePoint[1] || 0)) : (currentRefProp && currentRefProp.lat ? parseFloat(currentRefProp.lat) : 0);
   var lon = referencePoint ? (referencePoint.lon !== undefined ? referencePoint.lon : (referencePoint[0] || 0)) : (currentRefProp && currentRefProp.lon ? parseFloat(currentRefProp.lon) : 0);
-  var projStr = '';
+  var projArr = [];
   if (inMapFilterState && inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) {
-    projStr = Array.from(inMapFilterState.samProjects).join(',');
+    projArr = Array.from(inMapFilterState.samProjects);
   } else if (inMapFilterState && inMapFilterState.samProject) {
-    projStr = inMapFilterState.samProject;
+    projArr = [inMapFilterState.samProject];
   }
+  var projStr = serializeMultiFilterParam(projArr);
   var cosList = (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) ? Array.from(inMapFilterState.companies) : [];
   var typesList = (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) ? Array.from(inMapFilterState.types) : [];
   var salesList = (inMapFilterState && inMapFilterState.sales && inMapFilterState.sales.size > 0) ? Array.from(inMapFilterState.sales) : [];
@@ -2233,6 +2322,7 @@ function getMapSyncPayload() {
     dist: d,
     subdist: s,
     proj: projStr,
+    proj_list: projArr,
     id: id,
     price_center_id: currentPriceCenterId || '',
     lat: lat,
@@ -2260,6 +2350,7 @@ function getMapSyncPayload() {
     pkgs: pkgChips,
     max_age: effMaxAge,
     only_with_proj: (inMapFilterState && !!inMapFilterState.onlyWithProject),
+    include_centroids: (inMapFilterState && !!inMapFilterState.includeCentroids),
     compare_active: true,
     compare_ids: (selectedComparisonProps ? Array.from(selectedComparisonProps.keys()) : [])
   };
@@ -2270,10 +2361,7 @@ function restoreInMapFiltersFromParentUrl() {
     if (window.__NOVA_FORCE_FRESH_RESET__) return;
     if (!window.parent || !window.parent.location) return;
     const sp = new URL(window.parent.location.href).searchParams;
-    const parseSet = (k) => {
-      const raw = (sp.get(k) || '').trim();
-      return raw ? raw.split(',').map(x => x.trim()).filter(Boolean) : [];
-    };
+    const parseSet = (k) => parseMultiFilterParam(sp.get(k));
     const parsePosNum = (k) => {
       const raw = (sp.get(k) || '').trim();
       if (!raw) return null;
@@ -2290,6 +2378,14 @@ function restoreInMapFiltersFromParentUrl() {
     if (types.length) inMapFilterState.types = new Set(types);
     const sales = parseSet('map_filter_sales');
     if (sales.length) inMapFilterState.sales = new Set(sales);
+    const floors = parseSet('map_filter_floors');
+    if (floors.length && inMapFilterState.floors) inMapFilterState.floors = new Set(floors);
+    const beds = parseSet('map_filter_beds');
+    if (beds.length && inMapFilterState.bedrooms) inMapFilterState.bedrooms = new Set(beds);
+    const baths = parseSet('map_filter_baths');
+    if (baths.length && inMapFilterState.bathrooms) inMapFilterState.bathrooms = new Set(baths);
+    const pkgs = parseSet('map_filter_pkgs');
+    if (pkgs.length && inMapFilterState.parkings) inMapFilterState.parkings = new Set(pkgs);
     const projs = parseSet('map_proj');
     if (projs.length) {
       inMapFilterState.samProjects = new Set(projs);
@@ -2306,7 +2402,9 @@ function restoreInMapFiltersFromParentUrl() {
       ['map_filter_min_puw', 'minPuw', 'filter-min-puw'],
       ['map_filter_max_puw', 'maxPuw', 'filter-max-puw'],
       ['map_filter_min_pum', 'minPum', 'filter-min-pum'],
-      ['map_filter_max_pum', 'maxPum', 'filter-max-pum']
+      ['map_filter_max_pum', 'maxPum', 'filter-max-pum'],
+      ['map_filter_min_fl', 'minFloor', 'filter-min-floor'],
+      ['map_filter_max_fl', 'maxFloor', 'filter-max-floor']
     ];
     numFields.forEach(([paramKey, stateKey, inputId]) => {
       const v = parsePosNum(paramKey);
@@ -2316,9 +2414,45 @@ function restoreInMapFiltersFromParentUrl() {
         if (inp) inp.value = String(v);
       }
     });
+    const maxAgeVal = parsePosNum('map_filter_max_age');
+    if (maxAgeVal !== null) {
+      const agePresetKey = String(Math.round(maxAgeVal));
+      if (['30', '60', '90', '180', '365'].includes(agePresetKey) && Math.abs(maxAgeVal - Number(agePresetKey)) < 1e-6) {
+        inMapFilterState.agePreset = agePresetKey;
+        inMapFilterState.maxAge = null;
+      } else {
+        inMapFilterState.maxAge = maxAgeVal;
+        const ageInp = document.getElementById('filter-max-age');
+        if (ageInp) ageInp.value = String(maxAgeVal);
+      }
+    }
     if (sp.get('map_filter_only_proj') === '1') {
       inMapFilterState.onlyWithProject = true;
     }
+    if (sp.get('map_include_centroids') === '1') {
+      inMapFilterState.includeCentroids = true;
+    }
+    // Sync .filter-chip active classes in case chips were rendered before URL restore
+    const groupStateMap = {
+      company: inMapFilterState.companies,
+      type: inMapFilterState.types,
+      sale: inMapFilterState.sales,
+      floor: inMapFilterState.floors,
+      bedroom: inMapFilterState.bedrooms,
+      bathroom: inMapFilterState.bathrooms,
+      parking: inMapFilterState.parkings
+    };
+    document.querySelectorAll('.filter-chip[data-group][data-val]').forEach(chipEl => {
+      const g = chipEl.dataset.group;
+      const v = chipEl.dataset.val;
+      if (g === 'age') {
+        chipEl.classList.toggle('active', Boolean(inMapFilterState.agePreset && inMapFilterState.agePreset === v));
+      } else if (groupStateMap[g]) {
+        chipEl.classList.toggle('active', groupStateMap[g].has(v));
+      }
+    });
+    updateHasProjectButtonUI();
+    updateIncludeCentroidsButtonUI();
   } catch (e) {
     console.warn('restoreInMapFiltersFromParentUrl warning:', e);
   }

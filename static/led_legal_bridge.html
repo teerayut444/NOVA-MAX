@@ -4,10 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action https://asset.led.go.th;">
     <title>นำทางไปยังข้อมูลการขายทอดตลาด กรมบังคับคดี (LED Legal)...</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -175,6 +173,7 @@
                 suitNo = parts[0].trim().slice(0, 64);
                 suitYear = (parts[1] || '').trim().slice(0, 32);
             }
+            suitYear = /^\d{1,4}$/.test(suitYear) ? suitYear : '';
 
             return { suitNo, suitYear };
         }

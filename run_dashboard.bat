@@ -5,8 +5,8 @@ title NOVA Dashboard Launcher
 cd /d "%~dp0"
 
 echo ======================================================================
-echo   NOVA NPA Intelligence Dashboard (14 Sources)
-echo   LED / SAM / BAM / Chayo555 / GHB / KBANK / KTB / SCB / GSB /
+echo   NOVA NPA Intelligence Dashboard (15 Sources)
+echo   LED / LED Legal / SAM / BAM / Chayo555 / GHB / KBANK / KTB / SCB / GSB /
 echo   DDproperty / Livinginsider / NaYoo / ZmyHome / Baania
 echo ======================================================================
 echo.

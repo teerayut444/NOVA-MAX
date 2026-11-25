@@ -443,6 +443,8 @@ function getPlaceCategoryIcon(item) {
   return 'fa-location-dot';
 }
 
+let _lastNominatimFetchTs = 0;
+
 async function executePlaceSearch(query, autoSelectIfSingle = false) {
   if (!query) return;
   const spinner = document.getElementById('place-search-spinner');
@@ -456,18 +458,40 @@ async function executePlaceSearch(query, autoSelectIfSingle = false) {
     placeSearchAbortCtrl.abort();
   }
   placeSearchAbortCtrl = new AbortController();
+  const activeSignal = placeSearchAbortCtrl.signal;
 
   try {
     const cacheKey = query.trim().toLowerCase();
     let data = placeSearchCache.get(cacheKey);
     if (!data) {
+      const waitMs = 1050 - (Date.now() - _lastNominatimFetchTs);
+      if (waitMs > 0) {
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, waitMs);
+          if (activeSignal) {
+            activeSignal.addEventListener('abort', () => {
+              clearTimeout(t);
+              reject(new DOMException('Aborted', 'AbortError'));
+            }, { once: true });
+          }
+        });
+      }
+      _lastNominatimFetchTs = Date.now();
       const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=th&accept-language=th&addressdetails=1&limit=6`;
       const resp = await fetch(url, {
-        signal: placeSearchAbortCtrl.signal,
+        signal: activeSignal,
+        referrerPolicy: 'no-referrer',
         headers: {
           'Accept': 'application/json'
         }
       });
+      if (resp.status === 429) {
+        if (resultsEl) {
+          resultsEl.innerHTML = `<div class="place-results-empty"><i class="fa-solid fa-clock" style="margin-right:4px;"></i>ค้นหาสถานที่ถี่เกินไป กรุณารอสักครู่แล้วลองใหม่</div>`;
+          resultsEl.style.display = 'flex';
+        }
+        return;
+      }
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       data = await resp.json();
       if (Array.isArray(data)) {
@@ -626,21 +650,47 @@ function syncComboboxInputs() {
 
 function initProvinceDropdown() { syncComboboxInputs(); }
 function initDistrictDropdown() { syncComboboxInputs(); }
-function initSubdistrictDropdown() { syncComboboxInputs(); }
+
+let _locHierarchyCache = { dataRef: null, provDists: new Map(), provDistSubs: new Map() };
+
+function _getLocationHierarchy() {
+  if (_locHierarchyCache.dataRef === cachedData && cachedData) {
+    return _locHierarchyCache;
+  }
+  const provDists = new Map();
+  const provDistSubs = new Map();
+  if (cachedData && cachedData.length > 0) {
+    for (let i = 0; i < cachedData.length; i++) {
+      const d = cachedData[i];
+      const p = d._prov;
+      if (!p || p === '-' || p === 'ไม่มีข้อมูล') continue;
+      const dist = d._district;
+      if (dist && dist !== '-' && dist !== 'ไม่มีข้อมูล') {
+        let dSet = provDists.get(p);
+        if (!dSet) { dSet = new Set(); provDists.set(p, dSet); }
+        dSet.add(dist);
+        const sub = d._subdistrict;
+        if (sub && sub !== '-' && sub !== 'ไม่มีข้อมูล') {
+          const pdKey = p + '|' + dist;
+          let sSet = provDistSubs.get(pdKey);
+          if (!sSet) { sSet = new Set(); provDistSubs.set(pdKey, sSet); }
+          sSet.add(sub);
+        }
+      }
+    }
+  }
+  _locHierarchyCache = { dataRef: cachedData, provDists, provDistSubs };
+  return _locHierarchyCache;
+}
 
 function getComboboxItems(type) {
   if (type === 'prov') {
     return (allProvincesList || []).filter(p => p && p !== '-' && p !== 'ไม่มีข้อมูล');
   } else if (type === 'dist') {
     if (!currentSelectedProv) return [];
-    const distSet = new Set();
-    if (cachedData && cachedData.length > 0) {
-      cachedData.forEach(d => {
-        if (d._prov === currentSelectedProv && d._district && d._district !== '-' && d._district !== 'ไม่มีข้อมูล') {
-          distSet.add(d._district);
-        }
-      });
-    }
+    const hier = _getLocationHierarchy();
+    const cachedDists = hier.provDists.get(currentSelectedProv);
+    const distSet = new Set(cachedDists ? cachedDists : []);
     const boundariesDict = window.ALL_PROVINCES_BOUNDARIES || {};
     if (boundariesDict[currentSelectedProv] && boundariesDict[currentSelectedProv].district_labels) {
       boundariesDict[currentSelectedProv].district_labels.forEach(l => {
@@ -652,14 +702,9 @@ function getComboboxItems(type) {
     return Array.from(distSet).sort((a, b) => a.localeCompare(b, 'th'));
   } else if (type === 'subdist') {
     if (!currentSelectedDist) return [];
-    const subdistSet = new Set();
-    if (cachedData && cachedData.length > 0) {
-      cachedData.forEach(d => {
-        if (d._prov === currentSelectedProv && d._district === currentSelectedDist && d._subdistrict && d._subdistrict !== '-' && d._subdistrict !== 'ไม่มีข้อมูล') {
-          subdistSet.add(d._subdistrict);
-        }
-      });
-    }
+    const hier = _getLocationHierarchy();
+    const cachedSubs = hier.provDistSubs.get(currentSelectedProv + '|' + currentSelectedDist);
+    const subdistSet = new Set(cachedSubs ? cachedSubs : []);
     const subdistObj = getSubdistrictBoundaryForDistrict(currentSelectedProv, currentSelectedDist);
     if (subdistObj && subdistObj.district_labels) {
       subdistObj.district_labels.forEach(l => {
@@ -1144,12 +1189,8 @@ function setMapPinMode(mode) {
     updateDeckLayers();
     updateSvgBoundaries();
     const hasProvSelected = currentSelectedProv && currentSelectedProv.trim() !== '' && currentSelectedProv !== '__ALL__';
-    const hasDistOrSubdist = (currentSelectedDist && currentSelectedDist.trim() !== '' && currentSelectedDist !== '__ALL__')
-      || (currentSelectedSubdist && currentSelectedSubdist.trim() !== '' && currentSelectedSubdist !== '__ALL__');
     if (!hasProvSelected) {
-      showToast('<i class="fa-solid fa-hand-pointer" style="color:#059669; margin-right:6px;"></i>กรุณาเลือกจังหวัด และอำเภอ/ตำบลทางซ้ายบน เพื่อแสดงหมุดตามทำเล');
-    } else if (!hasDistOrSubdist && !currentRefProp) {
-      showToast('<i class="fa-solid fa-hand-pointer" style="color:#059669; margin-right:6px;"></i>กรุณาเลือกอำเภอ/เขต หรือตำบล/แขวง เพื่อแสดงหมุดบนแผนที่');
+      showToast('<i class="fa-solid fa-hand-pointer" style="color:#059669; margin-right:6px;"></i>กรุณาเลือกจังหวัดทางซ้ายบน เพื่อแสดงหมุดตามทำเล');
     }
   }
 
@@ -1546,15 +1587,6 @@ function onMapProvinceChange(prov) {
     // 5. Center & Fly to province
     flyToCurrentLocation();
 
-    const hasActiveProj = inMapFilterState && (
-      (inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0) ||
-      (inMapFilterState.samProject && inMapFilterState.samProject !== '') ||
-      inMapFilterState.onlyWithProject
-    );
-    if (selectedProv && !hasActiveProj) {
-      showToast(`<i class="fa-solid fa-map-location-dot" style="color:#059669; margin-right:6px;"></i>จังหวัด${escapeHtml(selectedProv)}: กรุณาเลือกอำเภอ/เขต เพื่อแสดงหมุดทรัพย์สิน`);
-    }
-
     // 6. Update Parent Window URL parameter quietly without page reload
     if (window.parent) {
       const u = new URL(window.parent.location.href);
@@ -1580,30 +1612,24 @@ function onMapProvinceChange(prov) {
   } catch(e) {
     console.warn('onMapProvinceChange error:', e);
   }
-  // 7. Auto-sync to Streamlit only when clearing province, when a project is active,
-  //    or when an existing analytics fragment is currently open and needs to be hidden
+  // 7. Auto-sync to Streamlit immediately on province change (including province-only selection)
   const curProjProv = (inMapFilterState && inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0)
     ? Array.from(inMapFilterState.samProjects).join(',')
     : (inMapFilterState && inMapFilterState.samProject ? inMapFilterState.samProject : '');
-  const shouldSyncProvChange = !selectedProv
-    || Boolean(curProjProv)
-    || (typeof hasActiveParentAnalyticsFragment === 'function' && hasActiveParentAnalyticsFragment());
-  if (shouldSyncProvChange) {
-    triggerStreamlitSync({
-      prov: (selectedProv && selectedProv !== '__ALL__') ? selectedProv.trim() : '__ALL__',
-      dist: '',
-      subdist: '',
-      proj: curProjProv,
-      cos: (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) ? Array.from(inMapFilterState.companies) : [],
-      types: (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) ? Array.from(inMapFilterState.types) : [],
-      id: '',
-      price_center_id: '',
-      lat: 0,
-      lon: 0,
-      mode: 'location',
-      compare_active: true
-    });
-  }
+  triggerStreamlitSync({
+    prov: (selectedProv && selectedProv !== '__ALL__') ? selectedProv.trim() : '__ALL__',
+    dist: '',
+    subdist: '',
+    proj: curProjProv,
+    cos: (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) ? Array.from(inMapFilterState.companies) : [],
+    types: (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) ? Array.from(inMapFilterState.types) : [],
+    id: '',
+    price_center_id: '',
+    lat: 0,
+    lon: 0,
+    mode: 'location',
+    compare_active: true
+  });
 }
 
 function onMapDistrictChange(dist) {
@@ -1831,11 +1857,13 @@ function clearNonProjectMapFilters() {
   if (btnLoc) btnLoc.classList.remove('active');
   if (btnRad) btnRad.classList.add('active');
 
-  // 4. Clear other in-map filters (companies, types, sales, prices, sqw, sqm)
+  // 4. Clear other in-map filters (companies, types, sales, prices, sqw, sqm, spec & general toggles)
   if (inMapFilterState) {
     inMapFilterState.companies.clear();
     inMapFilterState.types.clear();
     inMapFilterState.sales.clear();
+    inMapFilterState.onlyWithProject = false;
+    inMapFilterState.includeCentroids = false;
     inMapFilterState.minPrice = null;
     inMapFilterState.maxPrice = null;
     inMapFilterState.minSqw = null;
@@ -1846,9 +1874,19 @@ function clearNonProjectMapFilters() {
     inMapFilterState.maxPuw = null;
     inMapFilterState.minPum = null;
     inMapFilterState.maxPum = null;
+    if (inMapFilterState.floors) inMapFilterState.floors.clear();
+    inMapFilterState.minFloor = null;
+    inMapFilterState.maxFloor = null;
+    if (inMapFilterState.bedrooms) inMapFilterState.bedrooms.clear();
+    if (inMapFilterState.bathrooms) inMapFilterState.bathrooms.clear();
+    if (inMapFilterState.parkings) inMapFilterState.parkings.clear();
+    inMapFilterState.agePreset = null;
+    inMapFilterState.maxAge = null;
   }
 
   document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  if (typeof updateHasProjectButtonUI === 'function') updateHasProjectButtonUI();
+  if (typeof updateIncludeCentroidsButtonUI === 'function') updateIncludeCentroidsButtonUI();
   ['filter-min-price', 'filter-max-price', 'filter-min-sqw', 'filter-max-sqw', 'filter-min-sqm', 'filter-max-sqm', 'filter-min-puw', 'filter-max-puw', 'filter-min-pum', 'filter-max-pum', 'filter-min-floor', 'filter-max-floor', 'filter-max-age'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
@@ -1862,20 +1900,16 @@ function clearNonProjectMapFilters() {
   try {
     if (window.parent) {
       var u = new URL(window.parent.location.href);
-      u.searchParams.delete('map_prov');
-      u.searchParams.delete('map_dist');
-      u.searchParams.delete('map_subdist');
-      u.searchParams.delete('map_ref_id');
-      u.searchParams.delete('map_ref_lat');
-      u.searchParams.delete('map_ref_lon');
-      u.searchParams.delete('map_filter_cos');
-      u.searchParams.delete('map_filter_types');
-      u.searchParams.delete('map_filter_min_p');
-      u.searchParams.delete('map_filter_max_p');
-      u.searchParams.delete('map_filter_min_sqw');
-      u.searchParams.delete('map_filter_max_sqw');
-      u.searchParams.delete('map_filter_min_sqm');
-      u.searchParams.delete('map_filter_max_sqm');
+      [
+        'map_prov', 'map_dist', 'map_subdist', 'map_ref_id', 'map_ref_lat', 'map_ref_lon',
+        'map_filter_cos', 'map_filter_types', 'map_filter_sales',
+        'map_filter_min_p', 'map_filter_max_p', 'map_filter_min_sqw', 'map_filter_max_sqw',
+        'map_filter_min_sqm', 'map_filter_max_sqm', 'map_filter_min_puw', 'map_filter_max_puw',
+        'map_filter_min_pum', 'map_filter_max_pum',
+        'map_filter_floors', 'map_filter_min_fl', 'map_filter_max_fl',
+        'map_filter_beds', 'map_filter_baths', 'map_filter_pkgs', 'map_filter_max_age',
+        'map_filter_only_proj', 'map_include_centroids'
+      ].forEach(k => u.searchParams.delete(k));
       window.parent.history.replaceState({}, '', u.toString());
     }
   } catch(e) {}
@@ -2195,7 +2229,7 @@ function searchPropertyIdAsReference(idStr) {
 
     const locDetail = [match._subdistrict, match._district, match._prov].filter(x => x && x !== '-' && x !== 'ไม่มีข้อมูล').join(' ');
     const toastTitle = match._title || (match._project && match._project !== '-' ? match._project : match._type) || '';
-    showToast(`<i class="fa-solid fa-location-crosshairs" style="color:#10b981; margin-right:4px;"></i>พบรหัส [${match._company}] ${match._id}: ${toastTitle} (${locDetail})`);
+    showToast(`<i class="fa-solid fa-location-crosshairs" style="color:#10b981; margin-right:4px;"></i>พบรหัส [${escapeHtml(match._company || '')}] ${escapeHtml(match._id || '')}: ${escapeHtml(toastTitle)} (${escapeHtml(locDetail)})`);
 
     try {
       if (window.parent) {
@@ -2237,7 +2271,7 @@ function searchPropertyIdAsReference(idStr) {
       compare_active: true
     });
   } else {
-    showToast(`<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444; margin-right:4px;"></i>ไม่พบรหัสทรัพย์ "${idStr.trim()}" ในฐานข้อมูล`);
+    showToast(`<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444; margin-right:4px;"></i>ไม่พบรหัสทรัพย์ "${escapeHtml(idStr.trim())}" ในฐานข้อมูล`);
   }
 }
 
@@ -2532,12 +2566,29 @@ function locateCurrentPosition() {
 // SAVED REFERENCE COORDINATES (LOCALSTORAGE)
 // ==========================================
 const SAVED_COORDS_LEGACY_KEY = 'nova_saved_reference_coords';
+function _hashSavedUserKey(rawUser) {
+  const s = String(rawUser || '').trim().toLowerCase();
+  if (!s) return '';
+  let h1 = 0x811c9dc5;
+  let h2 = 0x9e3779b9;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    h1 ^= ch;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 ^= (ch + i);
+    h2 = Math.imul(h2, 0x85ebca6b);
+  }
+  const asciiPrefix = s.replace(/[^a-z0-9_.-]/g, '').slice(0, 16);
+  const hexTag = ((h1 >>> 0).toString(16).padStart(8, '0')) + ((h2 >>> 0).toString(16).padStart(8, '0'));
+  return asciiPrefix ? (asciiPrefix + '_' + hexTag) : ('u_' + hexTag);
+}
 function getSavedCoordsStorageKey() {
   try {
     const pdoc = window.parent && window.parent.document;
     const userEl = pdoc && pdoc.querySelector('[data-nova-user]');
-    const uname = userEl ? (userEl.getAttribute('data-nova-user') || '').trim().toLowerCase().replace(/[^a-z0-9_.-]/g, '') : '';
-    if (uname) return SAVED_COORDS_LEGACY_KEY + ':' + uname;
+    const rawUname = userEl ? (userEl.getAttribute('data-nova-user') || '').trim() : '';
+    const hashed = _hashSavedUserKey(rawUname);
+    if (hashed) return SAVED_COORDS_LEGACY_KEY + ':' + hashed;
   } catch (_e) {}
   return SAVED_COORDS_LEGACY_KEY;
 }
@@ -2545,10 +2596,7 @@ const SAVED_COORDS_STORAGE_KEY = getSavedCoordsStorageKey();
 
 function getSavedCoordinates() {
   try {
-    let raw = localStorage.getItem(SAVED_COORDS_STORAGE_KEY);
-    if (!raw && SAVED_COORDS_STORAGE_KEY !== SAVED_COORDS_LEGACY_KEY) {
-      raw = localStorage.getItem(SAVED_COORDS_LEGACY_KEY);
-    }
+    const raw = localStorage.getItem(SAVED_COORDS_STORAGE_KEY);
     if (!raw) return [];
     const list = JSON.parse(raw);
     return Array.isArray(list) ? list.filter(item => item && typeof item === 'object' && Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lon))) : [];
@@ -2863,7 +2911,7 @@ function renderManageCoordinatesList() {
         <div style="flex: 1; display: none; flex-direction: column; gap: 6px;" id="edit-coord-${safeId}">
           <input type="text" id="edit-name-${safeId}" class="save-coord-input" style="padding: 4px 8px; font-size: 12px;" value="${escapeHtml(item.name)}" placeholder="ชื่อพิกัด" />
           <div style="display: flex; gap: 6px;">
-            <input type="number" id="edit-rad-${safeId}" class="save-coord-input" style="padding: 4px 8px; font-size: 11px; width: 85px;" value="${radNum}" min="0.5" max="50" step="0.5" placeholder="รัศมี (กม.)" />
+            <input type="number" id="edit-rad-${safeId}" class="save-coord-input" style="padding: 4px 8px; font-size: 11px; width: 85px;" value="${radNum}" min="0.05" max="50" step="0.05" placeholder="รัศมี (กม.)" />
             <input type="text" id="edit-desc-${safeId}" class="save-coord-input" style="padding: 4px 8px; font-size: 11px; flex: 1;" value="${escapeHtml(item.desc || '')}" placeholder="รายละเอียด (ไม่บังคับ)" />
           </div>
           <div style="display: flex; gap: 4px; margin-top: 2px;">

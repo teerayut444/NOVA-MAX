@@ -3,7 +3,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from modules.services.data_loader import get_data_mtime
-from modules.services.data_cleaner import is_invalid_project_name, find_spatially_scattered_project_keys
+from modules.services.data_cleaner import (
+    is_invalid_project_name,
+    find_spatially_scattered_project_keys,
+    normalize_project_name,
+)
 
 _TH_TZ = timezone(timedelta(hours=7))
 _TH_MONTHS_MAP = {
@@ -129,6 +133,8 @@ def _compute_livinginsider_project_metrics(_df_raw):
     views = views_num.loc[valid_mask]
     clicks = clicks_num.loc[valid_mask]
 
+    li['views_cnt'] = views
+    li['clicks_cnt'] = np.minimum(clicks, views)  # Cap anomalous clicks at views before project-level sum
     li['post_date'] = post_dates
     li['days_active'] = (today - post_dates).dt.days.clip(lower=1)
     li['vd'] = (views / li['days_active']).round(2)
@@ -242,29 +248,47 @@ def _compute_livinginsider_project_metrics(_df_raw):
                 if len(bad_disamb_idx) > 0:
                     proj_resolved.loc[bad_disamb_idx] = ''
 
-    li['proj_clean'] = proj_resolved.where(proj_resolved != '', fallback_name)
+    li['_is_zone_group'] = (proj_resolved == '')
+    # Merge bilingual / spelling variants of named projects in the same province using normalize_project_name
+    u_named_vals = proj_resolved.loc[~li['_is_zone_group']].unique()
+    norm_lut = {v: (normalize_project_name(v) or v.lower()) for v in u_named_vals}
+    proj_norm_keys = proj_resolved.map(norm_lut).fillna('')
+    group_key = np.where(~li['_is_zone_group'], 'p:' + proj_norm_keys, 'z:' + fallback_name)
+
+    # Pick the most frequent clean display name per (group_key, prov_clean)
     li['prov_clean'] = prov_clean
     li['_pt_clean'] = pt_clean
     li['_dist_clean'] = dist_clean
     li['_subdist_clean'] = subdist_clean
+    li['_group_key'] = group_key
+    li['_disp_cand'] = np.where(~li['_is_zone_group'], proj_resolved, fallback_name)
+    name_mode_df = (
+        li.groupby(['_group_key', 'prov_clean', '_disp_cand'], sort=False, observed=True)
+        .size()
+        .reset_index(name='_ncnt')
+        .sort_values(['_ncnt', '_disp_cand'], ascending=[False, True])
+        .drop_duplicates(subset=['_group_key', 'prov_clean'], keep='first')
+    )
+    disp_name_lut = name_mode_df.set_index(['_group_key', 'prov_clean'])['_disp_cand']
 
     # URL scheme allowlist (http:// or https:// only)
     links_raw = _as_clean_str(li['ลิงก์'], '')
     li['_link_clean'] = links_raw.where(links_raw.str.match(r'^https?://', case=False, na=False), '')
 
-    # Vectorized dominant property type (mode) per (proj_clean, prov_clean)
+    # Vectorized dominant property type (mode) per (_group_key, prov_clean)
     pt_counts = (
-        li.groupby(['proj_clean', 'prov_clean', '_pt_clean'], sort=False, observed=True)
+        li.groupby(['_group_key', 'prov_clean', '_pt_clean'], sort=False, observed=True)
         .size()
         .reset_index(name='_pt_cnt')
         .sort_values(['_pt_cnt', '_pt_clean'], ascending=[False, True])
-        .drop_duplicates(subset=['proj_clean', 'prov_clean'], keep='first')
+        .drop_duplicates(subset=['_group_key', 'prov_clean'], keep='first')
     )
-    dominant_pt = pt_counts.set_index(['proj_clean', 'prov_clean'])['_pt_clean']
+    dominant_pt = pt_counts.set_index(['_group_key', 'prov_clean'])['_pt_clean']
 
-    # Aggregate by (project clean name, province) using Median (robust to outliers)
-    grp = li.groupby(['proj_clean', 'prov_clean'], sort=False, dropna=False).agg(
+    # Aggregate by (normalized project key, province) using Median (robust to outliers) + total views/clicks for CTR
+    grp = li.groupby(['_group_key', 'prov_clean'], sort=False, dropna=False).agg(
         units=('lat', 'count'),
+        is_zone_group=('_is_zone_group', 'all'),
         prov=('prov_clean', 'first'),
         dist=('_dist_clean', 'first'),
         subdist=('_subdist_clean', 'first'),
@@ -279,11 +303,14 @@ def _compute_livinginsider_project_metrics(_df_raw):
         cd=('cd', 'median'),
         sum_vd=('vd', 'sum'),
         sum_cd=('cd', 'sum'),
+        total_views=('views_cnt', 'sum'),
+        total_clicks=('clicks_cnt', 'sum'),
         days=('days_active', 'median'),
         start_date=('post_date', 'min'),
         end_date=('post_date', 'max'),
         link=('_link_clean', lambda s: next((x for x in s if x), '')),
     )
+    grp['proj_clean'] = disp_name_lut.reindex(grp.index).fillna('')
     grp['prop_type'] = dominant_pt.reindex(grp.index).fillna('อื่นๆ')
     grp = grp.reset_index()
 
@@ -311,23 +338,26 @@ def _compute_livinginsider_project_metrics(_df_raw):
     norm_cd = (lcd / max_lcd) if max_lcd > 0.0 else pd.Series(0.0, index=grp.index, dtype='float64')
     grp['pop'] = (100.0 * np.sqrt((norm_vd * norm_cd).clip(lower=0.0))).fillna(0.0).clip(0.0, 100.0).round(1)
 
-    # Bayesian-smoothed Click-to-View Ratio (CTR %), capped at 100% to guard against low-view/corrupted spikes
-    cd_eff = np.minimum(cd_pos, vd_pos)
-    pos_v_mask = vd_pos > 0.0
+    # Bayesian-smoothed Click-to-View Ratio (CTR %) computed from TOTAL views & clicks per project
+    tv_pos = grp['total_views'].fillna(0.0).clip(lower=0.0)
+    tc_eff = np.minimum(grp['total_clicks'].fillna(0.0).clip(lower=0.0), tv_pos)
+    pos_v_mask = tv_pos > 0.0
     if pos_v_mask.any():
-        valid_v = vd_pos.loc[pos_v_mask]
+        valid_v = tv_pos.loc[pos_v_mask]
         prior_m = float(valid_v.median())
         if not np.isfinite(prior_m) or prior_m <= 0.0:
             prior_m = 1.0
-        valid_rates = (cd_eff.loc[pos_v_mask] / valid_v).clip(0.0, 1.0)
+        valid_rates = (tc_eff.loc[pos_v_mask] / valid_v).clip(0.0, 1.0)
         prior_c = float(valid_rates.median())
         if not np.isfinite(prior_c) or prior_c < 0.0:
             prior_c = 0.0
-        smoothed_ctr = ((cd_eff + prior_m * prior_c) / (vd_pos + prior_m)) * 100.0
+        smoothed_ctr = ((tc_eff + prior_m * prior_c) / (tv_pos + prior_m)) * 100.0
         grp['ctr'] = np.where(pos_v_mask, smoothed_ctr, 0.0)
     else:
         grp['ctr'] = 0.0
     grp['ctr'] = pd.Series(grp['ctr'], index=grp.index, dtype='float64').fillna(0.0).clip(0.0, 100.0).round(1)
+    grp['is_zone_group'] = grp['is_zone_group'].fillna(False).astype(bool)
+    grp = grp.drop(columns=[c for c in ('_group_key', 'total_views', 'total_clicks') if c in grp.columns])
     grp['price'] = grp['price'].fillna(0.0).round(0)
     grp['min_p'] = grp['min_p'].fillna(0.0).round(0)
     grp['max_p'] = grp['max_p'].fillna(0.0).round(0)

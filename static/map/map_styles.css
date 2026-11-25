@@ -37,11 +37,11 @@ body:not(.dark-theme) #map { background-color: #e2e8f0; }
   animation: spin 0.8s linear infinite;
 }
 
-/* Top-Right Subbar containing Place Search + Basemap Mode Switcher */
+/* Top-Right Subbar containing Place Search + Basemap Mode Switcher (leaves room on right for external Streamlit map reload button) */
 .top-right-subbar {
   position: absolute;
   top: 100px;
-  right: 16px;
+  right: 64px;
   left: auto;
   display: flex;
   align-items: center;
@@ -2585,6 +2585,63 @@ body.dark-theme .saved-coord-card .saved-coord-desc {
   color: #cbd5e1 !important;
   background: rgba(255, 255, 255, 0.06) !important;
 }
+.save-coord-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 10px;
+}
+.save-coord-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  margin-bottom: 4px;
+}
+.save-coord-footer {
+  display: flex;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+.save-coord-cancel-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.save-coord-count-badge {
+  background: rgba(16, 185, 129, 0.15);
+  color: #047857;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 9999px;
+}
+body.dark-theme .save-coord-header,
+body.dark-theme .save-coord-footer {
+  border-color: #334155;
+}
+body.dark-theme .save-coord-label {
+  color: #cbd5e1;
+}
+body.dark-theme .save-coord-cancel-btn {
+  background: #0f172a;
+  border-color: #475569;
+  color: #e2e8f0;
+}
+body.dark-theme .save-coord-count-badge {
+  background: rgba(16, 185, 129, 0.22);
+  color: #6ee7b7;
+}
 .lands-step-box {
   background: #f8fafc;
   border: 1.5px solid #e2e8f0;
@@ -3237,7 +3294,7 @@ body.dark-theme #points-count {
 
   .top-right-subbar {
     top: 82px;
-    right: 12px;
+    right: 58px;
     left: auto;
     flex-direction: column;
     align-items: flex-end;

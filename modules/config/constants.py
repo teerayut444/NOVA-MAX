@@ -165,7 +165,7 @@ def get_price_tier(price):
         return "3 - 5 ล้านบาท"
     elif price < 10_000_000:
         return "5 - 10 ล้านบาท"
-    elif price < 20_000_000:
+    elif price <= 20_000_000:
         return "10 - 20 ล้านบาท"
     else:
         return "> 20 ล้านบาท"

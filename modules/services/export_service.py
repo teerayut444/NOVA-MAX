@@ -749,7 +749,7 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                         )
 
                     # 4. Merge Button
-                    if st.button("รวมเข้ากับฐานข้อมูลหลัก", icon=":material/merge:", key=f"btn_apply_import_{key_suffix}", disabled=not is_valid, use_container_width=True):
+                    if st.button("รวมเข้ากับฐานข้อมูลหลัก", icon=":material/merge:", key=f"btn_apply_import_{key_suffix}", disabled=not is_valid, width="stretch"):
                         from modules.services.data_cleaner import ensure_derived_cols
 
                         # Prepare data
@@ -856,7 +856,7 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
 
             col_del_all, col_del_sel = st.columns([1, 1])
             with col_del_all:
-                if st.button("ล้างข้อมูลนำเข้าทั้งหมด", icon=":material/delete_forever:", key=f"btn_clear_all_{key_suffix}", use_container_width=True):
+                if st.button("ล้างข้อมูลนำเข้าทั้งหมด", icon=":material/delete_forever:", key=f"btn_clear_all_{key_suffix}", width="stretch"):
                     st.session_state.pop("imported_custom_df", None)
                     st.session_state.pop("imported_custom_companies", None)
                     _sync_legacy_custom_keys()
@@ -864,11 +864,11 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                     st.rerun()
 
             with col_del_sel:
-                with st.popover("ลบเฉพาะบางบริษัท", icon=":material/delete_sweep:", use_container_width=True):
+                with st.popover("ลบเฉพาะบางบริษัท", icon=":material/delete_sweep:", width="stretch"):
                     st.markdown("<p style='font-size:12.5px; font-weight:600; color:#334155; margin-bottom:4px;'>เลือกบริษัทที่ต้องการลบออกจากระบบ:</p>", unsafe_allow_html=True)
                     avail_cos = sorted([str(c) for c in co_counts.keys()])
                     cos_to_remove = st.multiselect("บริษัท:", options=avail_cos, key=f"sel_cos_to_remove_{key_suffix}", label_visibility="collapsed")
-                    if st.button("ยืนยันลบบริษัทที่เลือก", type="primary", key=f"btn_confirm_del_sel_{key_suffix}", use_container_width=True):
+                    if st.button("ยืนยันลบบริษัทที่เลือก", type="primary", key=f"btn_confirm_del_sel_{key_suffix}", width="stretch"):
                         if cos_to_remove:
                             remaining_df = imp_df_current[~imp_df_current['บริษัท'].astype(str).isin(cos_to_remove)].copy()
                             if remaining_df.empty:
@@ -916,7 +916,7 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                         file_name=f"{safe_prefix}.csv",
                         mime="text/csv",
                         icon=":material/download:",
-                        use_container_width=True,
+                        width="stretch",
                         key=f"btn_export_csv_{key_suffix}",
                         help="ดาวน์โหลดทันที รองรับภาษาไทย UTF-8"
                     )
@@ -931,7 +931,7 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                             file_name=f"{safe_prefix}.csv",
                             mime="text/csv",
                             icon=":material/download:",
-                            use_container_width=True,
+                            width="stretch",
                             key=f"btn_export_csv_{key_suffix}",
                             help="คลิกเพื่อบันทึกไฟล์ CSV ลงในโฟลเดอร์ Downloads บนคอมพิวเตอร์ของคุณ"
                         )
@@ -941,7 +941,7 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                             st.rerun()
                     else:
                         st.caption(f"ชุดข้อมูลใหญ่ ({n_rows:,} แถว) กดเพื่อเตรียมไฟล์")
-                        if st.button("สร้างไฟล์ CSV (.csv)", icon=":material/description:", key=f"btn_prep_csv_{key_suffix}", use_container_width=True, help="คลิกเพื่อเริ่มแปลงข้อมูลเป็นไฟล์ CSV"):
+                        if st.button("สร้างไฟล์ CSV (.csv)", icon=":material/description:", key=f"btn_prep_csv_{key_suffix}", width="stretch", help="คลิกเพื่อเริ่มแปลงข้อมูลเป็นไฟล์ CSV"):
                             with st.spinner(f"กำลังแปลงข้อมูล {n_rows:,} รายการเป็นไฟล์ CSV..."):
                                 for _old_k in [
                                     k for k in st.session_state.keys()
@@ -975,7 +975,7 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                         file_name=f"{safe_prefix}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         icon=":material/download:",
-                        use_container_width=True,
+                        width="stretch",
                         key=f"btn_export_excel_{key_suffix}"
                     )
                 else:
@@ -989,7 +989,7 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                             file_name=f"{safe_prefix}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             icon=":material/download:",
-                            use_container_width=True,
+                            width="stretch",
                             key=f"btn_export_excel_{key_suffix}",
                             help="คลิกเพื่อบันทึกไฟล์ Excel ลงในโฟลเดอร์ Downloads บนคอมพิวเตอร์ของคุณ"
                         )
@@ -999,7 +999,7 @@ def render_import_export_section(df_to_export, filename_prefix="npa_data", key_s
                             st.rerun()
                     else:
                         st.caption(f"แนะนำ **CSV** สำหรับ {n_rows:,} แถว (เร็วและเบาที่สุด)")
-                        if st.button(f"เตรียมไฟล์ Excel ({n_rows:,} รายการ)", icon=":material/table_view:", key=f"btn_prep_excel_{key_suffix}", use_container_width=True, help="คลิกเพื่อเริ่มแปลงข้อมูลเป็นไฟล์ Excel (.xlsx)"):
+                        if st.button(f"เตรียมไฟล์ Excel ({n_rows:,} รายการ)", icon=":material/table_view:", key=f"btn_prep_excel_{key_suffix}", width="stretch", help="คลิกเพื่อเริ่มแปลงข้อมูลเป็นไฟล์ Excel (.xlsx)"):
                             with st.spinner(f"กำลังแปลงข้อมูล {n_rows:,} รายการเป็น Excel ด้วย xlsxwriter (โปรดรอสักครู่)..."):
                                 for _old_k in [
                                     k for k in st.session_state.keys()

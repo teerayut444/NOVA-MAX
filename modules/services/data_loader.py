@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import html
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -15,6 +16,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+logger = logging.getLogger(__name__)
+
 _ROOT_DIR = Path(__file__).resolve().parents[2]
 _TH_TZ = timezone(timedelta(hours=7))
 _STATIC_DIR = _ROOT_DIR / "static"
@@ -22,16 +25,17 @@ _LEGACY_STATIC_MAP_PAYLOAD_PATH = str(_STATIC_DIR / "map_payload_cache.js")
 _STATIC_PAYLOAD_LOCK = threading.Lock()
 _DEFAULT_PAYLOAD_SECRET = b"NOVA_NPA_STATIC_MAP_BUNDLE_V3_2026"
 _BOOT_RANDOM_PAYLOAD_SECRET = secrets.token_bytes(32)
+_BOOT_RANDOM_ALT_SECRET = secrets.token_bytes(32)
 
 
 def get_payload_secret() -> bytes:
-    """Returns deterministic bundle secret by default (so pre-built .gz + sidecar loads in <20ms on Cloud/LAN),
-    or honors NOVA_PAYLOAD_SECRET ('random' for per-boot ephemeral secret, or any custom secret string)."""
+    """Returns an ephemeral per-boot 256-bit secret by default so static .gz URLs are unguessable,
+    or honors NOVA_PAYLOAD_SECRET ('random' for alternate per-boot secret, or a custom shared secret)."""
     env_val = str(os.environ.get("NOVA_PAYLOAD_SECRET") or "").strip()
     if not env_val:
-        return _DEFAULT_PAYLOAD_SECRET
-    if env_val.lower() == "random":
         return _BOOT_RANDOM_PAYLOAD_SECRET
+    if env_val.lower() == "random":
+        return _BOOT_RANDOM_ALT_SECRET
     return env_val.encode("utf-8")
 
 
@@ -243,9 +247,17 @@ def get_static_map_payload_meta(data_mtime=None, th_date=None):
     }
 
 
-def _cleanup_stale_map_payload_files(keep_filename=None, keep_sidecar=None, keep_details_dir=None):
-    """Deletes legacy predictable map_payload_cache.js and any outdated tokenized map_payload_*.gz / map_meta_*.gz / map_details_* dirs."""
+def _cleanup_stale_map_payload_files(
+    keep_filename=None,
+    keep_sidecar=None,
+    keep_details_dir=None,
+    min_age_sec=86400,
+    tmp_min_age_sec=300,
+):
+    """Deletes legacy predictable map_payload_cache.js and stale tokenized payloads past their TTL grace period."""
     import shutil
+    import time
+    now_ts = time.time()
     try:
         if os.path.exists(_LEGACY_STATIC_MAP_PAYLOAD_PATH):
             os.remove(_LEGACY_STATIC_MAP_PAYLOAD_PATH)
@@ -257,14 +269,21 @@ def _cleanup_stale_map_payload_files(keep_filename=None, keep_sidecar=None, keep
                 name = p.name
                 if name in (keep_filename, keep_sidecar, keep_details_dir):
                     continue
+                is_tmp = ".tmp." in name
                 if p.is_dir() and name.startswith("map_details_"):
                     try:
-                        shutil.rmtree(p, ignore_errors=True)
+                        age = now_ts - p.stat().st_mtime
+                        cutoff = tmp_min_age_sec if is_tmp else min_age_sec
+                        if age >= cutoff:
+                            shutil.rmtree(p, ignore_errors=True)
                     except Exception:
                         pass
-                elif (name.startswith(("map_payload_", "map_meta_")) and (name.endswith(".gz") or name.endswith(".js") or ".tmp." in name)):
+                elif (name.startswith(("map_payload_", "map_meta_")) and (name.endswith(".gz") or name.endswith(".js") or is_tmp)):
                     try:
-                        p.unlink()
+                        age = now_ts - p.stat().st_mtime
+                        cutoff = tmp_min_age_sec if is_tmp else min_age_sec
+                        if age >= cutoff:
+                            p.unlink()
                     except Exception:
                         pass
     except Exception:
@@ -533,6 +552,87 @@ def load_properties_data(data_version=0):
 load_properties_data.clear = _load_properties_data_cached.clear
 
 
+@st.cache_resource(max_entries=1, show_spinner=False)
+def _load_valid_coord_properties_cached(data_version=0):
+    """Single shared valid-Thai-coordinate slice in RAM (avoids 300MB per-session slicing in Tab 2)."""
+    df = _load_properties_data_cached(data_version=data_version)
+    if df is None or df.empty or 'ละติจูด' not in df.columns or 'ลองจิจูด' not in df.columns:
+        return df
+    mask = (
+        df['ละติจูด'].notna()
+        & df['ลองจิจูด'].notna()
+        & df['ละติจูด'].between(5, 21)
+        & df['ลองจิจูด'].between(97, 106)
+    )
+    if bool(mask.all()):
+        return df
+    df_valid = df.loc[mask].copy(deep=False)
+    df_valid.attrs = getattr(df, 'attrs', {}).copy()
+    return df_valid
+
+
+def get_valid_coord_properties_data(data_version=0):
+    """Returns shallow wrapper over the cached valid-coordinate DataFrame (zero full-table copies)."""
+    try:
+        df_v = _load_valid_coord_properties_cached(data_version=data_version)
+        if df_v is not None:
+            out = df_v.copy(deep=False)
+            out.attrs = getattr(df_v, 'attrs', {}).copy()
+            return out
+    except Exception:
+        pass
+    return load_properties_data(data_version=data_version)
+
+
+@st.cache_resource(max_entries=4, show_spinner=False)
+def _get_property_code_index_cached(_df, cache_key=None):
+    """O(1) property code lookup tables: (exact_lower_map, led_prefix_lower_map)."""
+    exact_map = {}
+    prefix_map = {}
+    if _df is None or _df.empty or 'รหัสทรัพย์' not in _df.columns:
+        return exact_map, prefix_map
+    codes = _df['รหัสทรัพย์'].astype(object).fillna('').astype(str)
+    for pos, raw_c in enumerate(codes):
+        c_low = raw_c.strip().lower()
+        if not c_low:
+            continue
+        if c_low not in exact_map:
+            exact_map[c_low] = pos
+        if '_' in c_low:
+            base_c = c_low.split('_', 1)[0]
+            if base_c and base_c not in prefix_map:
+                prefix_map[base_c] = pos
+    return exact_map, prefix_map
+
+
+def find_property_row_by_code(df_obj, prop_code, include_led_prefix=False):
+    """Looks up the first matching row dict by รหัสทรัพย์ in O(1) for full datasets or fast scan on small frames."""
+    clean_code = str(prop_code or "").strip().lower()
+    if not clean_code or df_obj is None or df_obj.empty or 'รหัสทรัพย์' not in df_obj.columns:
+        return None
+    n = len(df_obj)
+    if n >= 5000:
+        custom_fp = None
+        try:
+            custom_fp = df_obj.attrs.get("_custom_import_fp") if hasattr(df_obj, "attrs") else None
+        except Exception:
+            custom_fp = None
+        exact_map, prefix_map = _get_property_code_index_cached(
+            df_obj, cache_key=(n, get_data_mtime(), custom_fp)
+        )
+        pos = exact_map.get(clean_code)
+        if pos is None and include_led_prefix:
+            pos = prefix_map.get(clean_code)
+        if pos is not None and 0 <= pos < n:
+            return df_obj.iloc[pos].to_dict()
+        return None
+    s_codes = df_obj['รหัสทรัพย์'].astype(str).str.strip().str.lower()
+    m = df_obj[s_codes == clean_code]
+    if m.empty and include_led_prefix:
+        m = df_obj[s_codes.str.startswith(clean_code + '_')]
+    return m.iloc[0].to_dict() if not m.empty else None
+
+
 @st.cache_resource(show_spinner=False, max_entries=4)
 def _get_sam_project_options_cached(_df, cache_key=None):
     """Single cached computation returning full 5-tuple project inventory so Welcome Screen and Tab 2 share 1 entry."""
@@ -586,7 +686,7 @@ def _get_sam_project_options_cached(_df, cache_key=None):
             u_raw_p = _df['ชื่อโครงการ'].dropna().unique()
             tmp_norm_map = {p: normalize_project_name(p) for p in u_raw_p if p}
             tmp_nk_df = pd.DataFrame({
-                '_nk': _df['ชื่อโครงการ'].map(tmp_norm_map).fillna(''),
+                '_nk': _df['ชื่อโครงการ'].astype(object).map(tmp_norm_map).fillna(''),
                 'ละติจูด': _df['ละติจูด'],
                 'ลองจิจูด': _df['ลองจิจูด'],
             })
@@ -764,6 +864,7 @@ def _read_raw_base_map_html(mtime=None):
         with open(tmpl_path, "r", encoding="utf-8") as f:
             return f.read()
     except Exception:
+        logger.warning("Failed to read static/map_template.html", exc_info=True)
         return ""
 
 
@@ -840,10 +941,13 @@ def _sanitize_map_links(map_data):
 
     base_prefix = get_base_url_prefix()
     _lnk = _safe_str_series(map_data['ลิงก์'], '')
-    # Normalize relative app/static/led_ -> {base_prefix}/app/static/led_
+    # Normalize relative app/static/led_ or stale prefix -> canonical or active {base_prefix}/app/static/led_
     rel_m = _lnk.str.startswith('app/static/led_')
     if rel_m.any():
-        _lnk = _lnk.where(~rel_m, f'{base_prefix}/' + _lnk)
+        _lnk = _lnk.where(~rel_m, '/' + _lnk)
+    _stale_m = _lnk.str.contains(r'^/[^/]+/app/static/led_(?:legal_)?bridge\.html\?', regex=True, na=False)
+    if _stale_m.any():
+        _lnk = _lnk.where(~_stale_m, _lnk.str.replace(r'^/[^/]+(/app/static/led_(?:legal_)?bridge\.html\?)', r'\1', regex=True))
     if base_prefix:
         root_m = _lnk.str.startswith('/app/static/led_')
         if root_m.any():
@@ -854,7 +958,7 @@ def _sanitize_map_links(map_data):
         if is_legal.any():
             _lnk = _lnk.where(~is_legal, _lnk.str.replace('led_bridge.html', 'led_legal_bridge.html', regex=False))
 
-    safe_mask = _lnk.str.match(r'^(?:https?://|(?:/[A-Za-z0-9_/-]+)?/app/static/led(?:_legal)?_bridge\.html\?)', case=False, na=False)
+    safe_mask = _lnk.str.match(r'^(?:https?://|(?:/[A-Za-z0-9_~+/-]+)?/app/static/led(?:_legal)?_bridge\.html\?)', case=False, na=False)
     return _lnk.where(safe_mask, '').tolist()
 
 
@@ -1127,7 +1231,8 @@ def _build_map_payload_raw_from_df(
 
     # Sold price & Sold date (for LED Legal)
     if 'ราคาขายได้' in map_data.columns:
-        sold_p_raw = pd.to_numeric(map_data['ราคาขายได้'], errors='coerce').fillna(0.0).to_numpy(dtype='float64')
+        from modules.services.data_cleaner import _coerce_numeric_price_series
+        sold_p_raw = _coerce_numeric_price_series(map_data['ราคาขายได้']).fillna(0.0).to_numpy(dtype='float64')
         sold_p_num = np.clip(np.nan_to_num(sold_p_raw, nan=0.0, posinf=0.0, neginf=0.0).round(0), 0, 10**15).astype('int64')
     else:
         sold_p_num = np.zeros(map_data_full_len, dtype='int64')
@@ -1338,7 +1443,7 @@ def _ensure_static_map_bundle_cached(data_mtime, th_date):
             if leg and cnt > 0 and ver == _MAP_PAYLOAD_BUNDLE_VERSION:
                 return leg, cnt, meta, "", ""
         except Exception:
-            pass
+            logger.warning("Failed to read static map sidecar metadata; rebuilding", exc_info=True)
 
     df = load_properties_data(data_mtime)
     csv_utf8_bytes, lookup_obj, legend_content, map_data_full_len, detail_records = _build_map_payload_raw_from_df(
@@ -1442,6 +1547,8 @@ def _build_full_map_html_v2(data_mtime, tmpl_mtime, cache_builder_ver="1", th_da
         {
             "CSV_BASE64_PLACEHOLDER": csv_inject,
             "LOOKUP_BASE64_PLACEHOLDER": lut_inject,
+            "CUSTOM_CSV_BASE64_PLACEHOLDER": "",
+            "CUSTOM_LOOKUP_BASE64_PLACEHOLDER": "",
             "MAP_PAYLOAD_URL_PLACEHOLDER": payload_url_inject,
             "DATA_MTIME_PLACEHOLDER": f"{get_data_mtime_token(data_mtime)}|{day_str}",
             "CACHE_BUILDER_VER_PLACEHOLDER": str(cache_builder_ver),
@@ -1456,7 +1563,7 @@ def _build_full_map_html_v2(data_mtime, tmpl_mtime, cache_builder_ver="1", th_da
     return html_out, map_data_full_len, static_meta
 
 
-def precompute_full_map_html(data_mtime):
+def precompute_full_map_html(data_mtime, force_refresh=False):
     """Pre-assembles the map HTML with all heavy data offloaded to a tokenized static .gz file."""
     _tmpl_path = str(_resolve_root_file("static/map_template.html"))
     _tmpl_mtime = os.path.getmtime(_tmpl_path) if os.path.exists(_tmpl_path) else None
@@ -1464,17 +1571,17 @@ def precompute_full_map_html(data_mtime):
     _day_str = _today_th_str()
     _payload_meta = get_static_map_payload_meta(data_mtime=data_mtime, th_date=_day_str)
 
-    # Self-heal if tokenized static payload, detail chunks dir, or sidecar file is missing
-    if (
+    # Targeted self-heal without evicting caches for other concurrent sessions
+    missing_files = (
         not os.path.exists(_payload_meta["path"])
         or not os.path.exists(_payload_meta["sidecar_path"])
         or not os.path.isdir(_payload_meta["details_dir_path"])
-    ):
-        _ensure_static_map_bundle_cached.clear()
-        _build_full_map_html_v2.clear()
+    )
 
     if (
-        "cached_map_html_base" in st.session_state
+        not force_refresh
+        and not missing_files
+        and "cached_map_html_base" in st.session_state
         and st.session_state.get("cached_map_tmpl_mtime") == _tmpl_mtime
         and st.session_state.get("cached_map_data_mtime") == data_mtime
         and st.session_state.get("cached_map_builder_ver") == _builder_ver
@@ -1483,9 +1590,14 @@ def precompute_full_map_html(data_mtime):
     ):
         return _payload_meta
 
-    html_out, map_data_full_len, static_meta = _build_full_map_html_v2(
-        data_mtime, _tmpl_mtime, _builder_ver, _day_str
-    )
+    if missing_files or force_refresh:
+        html_out, map_data_full_len, static_meta = _build_full_map_html_v2.__wrapped__(
+            data_mtime, _tmpl_mtime, _builder_ver, _day_str
+        )
+    else:
+        html_out, map_data_full_len, static_meta = _build_full_map_html_v2(
+            data_mtime, _tmpl_mtime, _builder_ver, _day_str
+        )
     if not html_out:
         return static_meta
 

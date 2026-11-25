@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Livinginsider Popular Locations</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&family=Prompt:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com" referrerpolicy="no-referrer">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin referrerpolicy="no-referrer">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&family=Prompt:wght@400;500;600;700;800&display=swap" rel="stylesheet" referrerpolicy="no-referrer">
     <!-- Local-First Leaflet CSS (zero CDN block on LAN) -->
     <link rel="stylesheet" href="/app/static/vendor/leaflet/leaflet.css" />
     <!-- Local FontAwesome Solid Icons via static/fa-solid-900.ttf -->
@@ -532,7 +532,7 @@
                 width: 100%;
                 height: 460px;
             }
-            #leaderboard-panel {
+            #leaderboard-container {
                 flex: none;
                 width: 100%;
                 max-width: 100%;
@@ -723,6 +723,12 @@
     let showMarkers = false;
     let provSortMode = 'top5_median';
     let popupTimer = null;
+
+    if (ALL_PROJECTS.length > 0 && !ALL_PROJECTS.some(p => (p.units || 0) >= activeMinUnits)) {
+        activeMinUnits = 1;
+        const unitSel = document.getElementById('filter-units');
+        if (unitSel) unitSel.value = '1';
+    }
 
     const userExpandedProvs = new Set();
     const userCollapsedProvs = new Set();

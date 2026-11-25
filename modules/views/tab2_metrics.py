@@ -117,6 +117,37 @@ def _is_valid_thai_coord(lat_val, lon_val):
         return False
 
 
+def format_radius_th(radius_km):
+    """Format radius in km cleanly (showing meters for sub-1 km, e.g. '50 ม. (0.05 กม.)')."""
+    r = _safe_float(radius_km, 5.0)
+    if r < 0.1:
+        m = int(round(r * 1000))
+        return f"{m} ม. ({r:.2f} กม.)"
+    if r < 1.0:
+        m = int(round(r * 1000))
+        return f"{r:.1f} กม. ({m} ม.)"
+    if abs(r - round(r)) < 1e-6:
+        return f"{r:.0f} กม."
+    return f"{r:.1f} กม."
+
+
+def _is_centroid_series(df_obj):
+    """Return a boolean Series matching is_true_centroid() row-wise without iterating huge frames."""
+    if df_obj is None or df_obj.empty:
+        return pd.Series(dtype=bool)
+    if 'is_centroid' not in df_obj.columns:
+        return pd.Series(False, index=df_obj.index, dtype=bool)
+    col = df_obj['is_centroid']
+    if pd.api.types.is_bool_dtype(col):
+        return col.fillna(False).astype(bool)
+    if pd.api.types.is_numeric_dtype(col):
+        return (pd.to_numeric(col, errors='coerce').fillna(0.0) != 0.0).astype(bool)
+    raw = col.astype(object)
+    u_vals = raw.dropna().unique()
+    u_map = {v: bool(is_true_centroid(v)) for v in u_vals}
+    return raw.map(u_map).fillna(False).astype(bool)
+
+
 def _fmt_coord_val(row, coord_col):
     val = row.get(coord_col)
     try:
@@ -147,12 +178,14 @@ def _check_pure_land_mask_global(s_types):
         ~p.str.contains('บ้าน|อาคาร|ทาวน์|คอนโด|ตึก|โรงงาน|พาณิชย์|หอพัก|สิ่งปลูกสร้าง|พร้อมสิ่งปลูกสร้าง', regex=True, na=False)
 
 
-def _extract_pure_land_pool_global(df_cand, slim_columns=False):
+def _extract_pure_land_pool_global(df_cand, slim_columns=False, exclude_centroids=False):
     if df_cand is None or df_cand.empty or 'ประเภททรัพย์' not in df_cand.columns or 'ราคา' not in df_cand.columns:
         return pd.DataFrame(), pd.Series(dtype=float)
     is_pure = _check_pure_land_mask_global(df_cand['ประเภททรัพย์'])
     p_num = pd.to_numeric(df_cand['ราคา'], errors='coerce')
     mask = is_pure & (p_num > 0)
+    if exclude_centroids and 'is_centroid' in df_cand.columns:
+        mask = mask & (~_is_centroid_series(df_cand))
     if not mask.any():
         return pd.DataFrame(), pd.Series(dtype=float)
 
@@ -164,7 +197,13 @@ def _extract_pure_land_pool_global(df_cand, slim_columns=False):
 
     valid_rates = rates.loc[valid_mask]
     if slim_columns:
-        cols_keep = [c for c in ('บริษัท', 'ระยะทาง (กม.)') if c in sub_df.columns]
+        cols_keep = [
+            c for c in (
+                'บริษัท', 'ระยะทาง (กม.)', 'ละติจูด', 'ลองจิจูด',
+                'จังหวัด', 'อำเภอ', 'ตำบล', 'is_centroid'
+            )
+            if c in sub_df.columns
+        ]
         pure_df = sub_df.loc[valid_mask, cols_keep].copy()
     else:
         pure_df = sub_df.loc[valid_mask].copy()
@@ -173,9 +212,9 @@ def _extract_pure_land_pool_global(df_cand, slim_columns=False):
     return pure_df, valid_rates
 
 
-@st.cache_resource(show_spinner=False, max_entries=2)
-def _get_cached_nationwide_pure_land(_df_raw, cache_key=None):
-    return _extract_pure_land_pool_global(_df_raw, slim_columns=True)
+@st.cache_resource(show_spinner=False, max_entries=4)
+def _get_cached_nationwide_pure_land(_df_raw, cache_key=None, exclude_centroids=False):
+    return _extract_pure_land_pool_global(_df_raw, slim_columns=True, exclude_centroids=exclude_centroids)
 
 
 def _clean_str_series(s, default='-'):
@@ -227,14 +266,20 @@ def _match_project_mask(df, p_list):
                 norm_col = proj_col.apply(normalize_project_name)
                 mask = mask | norm_col.isin(selected_norm_keys)
 
+        core_pats = []
         for raw_p in clean_p_list:
             clean_core = re.sub(
-                r'^(คอนโด\s*โครงการ|โครงการ\s*คอนโด|โครงการ\s*หมู่บ้าน|อาคารชุด|คอนโดมิเนียม|มีเนียม|โครงการ|หมู่บ้าน|คอนโด|บ้านเดี่ยว|บ้านแฝด|บ้าน|ทาวน์โฮม|ทาวน์เฮ้าส์|ขายคอนโด)\s*',
+                r'^(คอนโด\s*โครงการ|โครงการ\s*คอนโด|โครงการ\s*หมู่บ้าน|อาคารชุด|คอนโดมิเนียม|มีเนียม|โครงการ|หมู่บ้าน|คอนโด|บ้านเดี่ยว|บ้านแฝด|บ้าน(?!กลางเมือง|กลางกรุง|พฤกษา)|ทาวน์โฮม|ทาวน์เฮ้าส์|ขายคอนโด)\s*',
                 '', raw_p, flags=re.IGNORECASE
             ).strip()
             clean_core = re.sub(r'(\[.*?\]|\(.*?\)).*$', '', clean_core).strip()
             if len(clean_core) >= 4:
-                mask = mask | proj_col.str.contains(re.escape(clean_core), case=False, na=False)
+                core_pats.append(re.compile(re.escape(clean_core), re.IGNORECASE))
+        if core_pats:
+            u_projs = proj_col.unique()
+            matched_sub = {p for p in u_projs if p and any(pat.search(p) for pat in core_pats)}
+            if matched_sub:
+                mask = mask | proj_col.isin(matched_sub)
 
     return mask
 

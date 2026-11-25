@@ -3,6 +3,7 @@ from functools import lru_cache
 import base64
 import io
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -11,6 +12,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
+
+logger = logging.getLogger(__name__)
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT_DIR = os.path.abspath(os.path.join(_SCRIPT_DIR, "..", ".."))
@@ -84,11 +87,13 @@ def find_nearby_properties(input_lat, input_lon, df_all, radius_km, match_type=N
     lat_margin = (rad / 110.574) + 0.015
     lon_margin = (rad / (111.32 * cos_lat)) + 0.015
 
+    lat_num = pd.to_numeric(df_all['ละติจูด'], errors='coerce')
+    lon_num = pd.to_numeric(df_all['ลองจิจูด'], errors='coerce')
     mask = (
-        df_all['ละติจูด'].notna() &
-        df_all['ลองจิจูด'].notna() &
-        df_all['ละติจูด'].between(in_lat - lat_margin, in_lat + lat_margin) &
-        df_all['ลองจิจูด'].between(in_lon - lon_margin, in_lon + lon_margin)
+        lat_num.notna() &
+        lon_num.notna() &
+        lat_num.between(in_lat - lat_margin, in_lat + lat_margin) &
+        lon_num.between(in_lon - lon_margin, in_lon + lon_margin)
     )
 
     if company and 'บริษัท' in df_all.columns:
@@ -106,11 +111,11 @@ def find_nearby_properties(input_lat, input_lon, df_all, radius_km, match_type=N
     if df_sub.empty:
         return empty_res
 
-    lats = df_sub['ละติจูด'].to_numpy(dtype=float)
-    lons = df_sub['ลองจิจูด'].to_numpy(dtype=float)
+    lats = pd.to_numeric(df_sub['ละติจูด'], errors='coerce').to_numpy(dtype=float)
+    lons = pd.to_numeric(df_sub['ลองจิจูด'], errors='coerce').to_numpy(dtype=float)
 
     distances = haversine_distance_vectorized(in_lat, in_lon, lats, lons)
-    nearby_mask = distances <= rad
+    nearby_mask = np.isfinite(distances) & (distances <= rad)
 
     if not np.any(nearby_mask):
         return empty_res
@@ -129,13 +134,38 @@ def _get_badge_text_font(font_size):
         'C:/Windows/Fonts/segoeui.ttf',
         'C:/Windows/Fonts/tahoma.ttf',
         'C:/Windows/Fonts/arial.ttf',
+        '/usr/share/fonts/truetype/noto/NotoSansThai-Bold.ttf',
+        '/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+        '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
+        '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',
+        '/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
     ):
         if os.path.exists(fp):
             try:
                 return ImageFont.truetype(fp, font_size)
             except Exception:
                 pass
-    return ImageFont.load_default()
+    try:
+        return ImageFont.load_default(size=font_size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _draw_centered_text(draw, xy, text, font=None, fill=(0, 0, 0, 255)):
+    """Draw text centered at xy, falling back cleanly if Pillow bitmap font rejects anchor='mm'."""
+    try:
+        draw.text(xy, text, font=font, fill=fill, anchor="mm")
+        return
+    except (ValueError, TypeError):
+        pass
+    cx, cy = xy
+    try:
+        bx0, by0, bx1, by1 = draw.textbbox((0, 0), text, font=font)
+        draw.text((cx - (bx0 + bx1) / 2.0, cy - (by0 + by1) / 2.0), text, font=font, fill=fill)
+    except Exception:
+        draw.text((cx - len(str(text)) * 3, cy - 6), text, font=font, fill=fill)
 
 
 @lru_cache(maxsize=16)
@@ -249,10 +279,16 @@ def get_map_icon_atlas_and_mapping(
         "NaYoo": (139, 92, 246, 255), "ZmyHome": (236, 72, 153, 255), "Baania": (245, 158, 11, 255),
         "ไฟล์นำเข้า": custom_rgba,
     }
+    builtin_companies = {
+        "LED", "LED Legal", "LED_SOLD", "SAM", "BAM", "Chayo555", "Chayo", "Chayo NPA",
+        "GHB", "KBANK", "KTB", "SCB", "GSB", "DDproperty", "Livinginsider",
+        "NaYoo", "ZmyHome", "Baania", "จุดอ้างอิง",
+    }
+    builtin_lower = {b.lower() for b in builtin_companies}
     for c_name, c_info in custom_companies_dict.items():
-        if isinstance(c_info, dict) and "color" in c_info:
+        if c_name and str(c_name).strip().lower() not in builtin_lower and isinstance(c_info, dict) and "color" in c_info:
             company_colors_map[c_name] = _hex_to_rgba(c_info["color"])
-    if c_company:
+    if c_company and str(c_company).strip().lower() not in builtin_lower and c_company != "(ตามข้อมูลในไฟล์)":
         company_colors_map[c_company] = custom_rgba
 
     prop_types = [
@@ -317,7 +353,7 @@ def get_map_icon_atlas_and_mapping(
                 c_mid = icon_size // 2
                 draw.ellipse([c_mid - 24, c_mid - 24, c_mid + 24, c_mid + 24], fill=(255, 255, 255, 255))
                 draw.ellipse([c_mid - 12, c_mid - 12, c_mid + 12, c_mid + 12], fill=(239, 68, 68, 255))
-            elif name in ("ไฟล์นำเข้า", c_company) or name in custom_companies_dict:
+            elif (str(name).strip().lower() not in builtin_lower) and (name in ("ไฟล์นำเข้า", c_company) or name in custom_companies_dict):
                 c_conf = custom_companies_dict.get(name, {})
                 c_col_hex = c_conf.get("color", c_color)
                 b_col = _hex_to_rgba(c_col_hex)
@@ -334,7 +370,7 @@ def get_map_icon_atlas_and_mapping(
                 else:
                     f_sz = int(icon_size * 0.28)
                 t_font = _get_badge_text_font(f_sz)
-                draw.text((c_mid, c_mid), sym, font=t_font, fill=b_col, anchor="mm")
+                _draw_centered_text(draw, (c_mid, c_mid), sym, font=t_font, fill=b_col)
             else:
                 b_col = company_colors_map.get(name, (59, 130, 246, 255))
                 draw.ellipse([margin, margin, icon_size - margin, icon_size - margin], fill=(255, 255, 255, 255), outline=b_col, width=border_w)
@@ -372,9 +408,9 @@ def get_map_icon_atlas_and_mapping(
                         off_y = (icon_size - logo.height) // 2
                         cell.paste(logo, (off_x, off_y), logo)
                     except Exception:
-                        draw.text((icon_size // 2, icon_size // 2), name[:4].upper(), fill=(15, 23, 42, 255), anchor="mm")
+                        _draw_centered_text(draw, (icon_size // 2, icon_size // 2), name[:4].upper(), font=_get_badge_text_font(int(icon_size * 0.32)), fill=(15, 23, 42, 255))
                 else:
-                    draw.text((icon_size // 2, icon_size // 2), name[:4].upper(), fill=(15, 23, 42, 255), anchor="mm")
+                    _draw_centered_text(draw, (icon_size // 2, icon_size // 2), name[:4].upper(), font=_get_badge_text_font(int(icon_size * 0.32)), fill=(15, 23, 42, 255))
 
             atlas.paste(cell, (x_offset, y_offset), cell)
             slot_meta = {
@@ -402,7 +438,7 @@ def get_map_icon_atlas_and_mapping(
 
             c = icon_size // 2
             if fa_font and p_char:
-                draw.text((c, c), p_char, font=fa_font, fill=(255, 255, 255, 255), anchor="mm")
+                _draw_centered_text(draw, (c, c), p_char, font=fa_font, fill=(255, 255, 255, 255))
             else:
                 if "บ้าน" in p_type or p_type == "วิลล่า":
                     draw.polygon([(c, c - 26), (c - 28, c - 2), (c + 28, c - 2)], fill=(255, 255, 255, 255))
@@ -456,16 +492,8 @@ def get_map_icon_atlas_and_mapping(
             _ATLAS_CACHE_BY_KEY[cache_key] = (data_uri, dict(icon_mapping))
         return data_uri, icon_mapping
     except Exception:
+        logger.warning("Failed to generate Deck.gl icon atlas; falling back to 1px placeholder", exc_info=True)
         return _TRANSPARENT_1PX_PNG_URI, {}
-
-
-def create_map_circle_coords(lat, lon, radius_km, num_points=64):
-    """Generates lat/lon coordinates for a smooth circular polygon on Plotly map."""
-    angles = np.linspace(0, 2 * np.pi, num_points)
-    d_lat = (radius_km / 111.32) * np.sin(angles)
-    cos_lat = max(0.1, abs(np.cos(np.radians(lat))))
-    d_lon = (radius_km / (111.32 * cos_lat)) * np.cos(angles)
-    return lat + d_lat, lon + d_lon
 
 
 def get_leaflet_logo_dict(
@@ -623,17 +651,22 @@ def get_leaflet_logo_dict(
         else:
             f_sz = int(size * 0.28)
         t_font_mini = _get_badge_text_font(f_sz)
-        d_b.text((mid, mid), sym, font=t_font_mini, fill=rgba, anchor="mm")
+        _draw_centered_text(d_b, (mid, mid), sym, font=t_font_mini, fill=rgba)
 
         buf_b = io.BytesIO()
         im_b.save(buf_b, format="PNG")
         b64_b = base64.b64encode(buf_b.getvalue()).decode("utf-8")
         data_uri_b = f"data:image/png;base64,{b64_b}"
         logo_dict["ไฟล์นำเข้า"] = data_uri_b
-        if c_company and c_company != "(ตามข้อมูลในไฟล์)":
+        protected_logo_lower = {str(k).strip().lower() for k in logo_dict.keys()} | {
+            "led", "led legal", "led_legal", "led_sold", "sam", "bam",
+            "chayo555", "chayo", "chayo npa", "ghb", "kbank", "ktb", "scb", "gsb",
+            "ddproperty", "livinginsider", "nayoo", "zmyhome", "baania",
+        }
+        if c_company and c_company != "(ตามข้อมูลในไฟล์)" and str(c_company).strip().lower() not in protected_logo_lower:
             logo_dict[c_company] = data_uri_b
         for c_name, c_info in custom_companies_dict.items():
-            if not c_name or not isinstance(c_info, dict):
+            if not c_name or not isinstance(c_info, dict) or str(c_name).strip().lower() in protected_logo_lower:
                 continue
             try:
                 c_hex = c_info.get("color", "#6366f1")
@@ -654,16 +687,16 @@ def get_leaflet_logo_dict(
                 else:
                     f_sz = int(size * 0.28)
                 t_f = _get_badge_text_font(f_sz)
-                d_c.text((mid, mid), c_sym_item, font=t_f, fill=c_rgba, anchor="mm")
+                _draw_centered_text(d_c, (mid, mid), c_sym_item, font=t_f, fill=c_rgba)
 
                 buf_c = io.BytesIO()
                 im_c.save(buf_c, format="PNG")
                 b64_c = base64.b64encode(buf_c.getvalue()).decode("utf-8")
                 logo_dict[c_name] = f"data:image/png;base64,{b64_c}"
             except Exception:
-                pass
+                logger.warning("Failed generating custom Leaflet logo for %s", c_name, exc_info=True)
     except Exception:
-        pass
+        logger.warning("Failed building custom company Leaflet logos", exc_info=True)
 
     with _ICON_CACHE_LOCK:
         if len(_LEAFLET_LOGO_CACHE_BY_KEY) >= _MAX_ICON_CACHE_ENTRIES:

@@ -14,6 +14,7 @@ import streamlit as st
 from modules.services.geo_service import find_nearby_properties
 from modules.services.data_cleaner import (
     to_float_sqwah,
+    to_float_sqm,
     normalize_project_name,
     parse_listing_age_days,
     parse_sold_date_value,
@@ -31,6 +32,8 @@ from modules.views.tab2_metrics import (
     _sqm_rate_from_df,
     _safe_float,
     _is_valid_thai_coord,
+    format_radius_th,
+    _is_centroid_series,
     _fmt_coord_val,
     _check_pure_land_mask_global,
     _extract_pure_land_pool_global,
@@ -117,7 +120,10 @@ def render_tab2_reference_analytics_fragment(
                     var u = new URL(window.parent.location.href);
                     u.searchParams.delete('map_price_ref_id');
                     window.parent.history.replaceState({}, '', u.toString());
-                    var iframes = window.parent.document.querySelectorAll('iframe');
+                    var iframes = window.parent.document.querySelectorAll('.st-key-tab_map iframe');
+                    if (!iframes.length) {
+                        iframes = window.parent.document.querySelectorAll('iframe[title="streamlit_components_v1.html"]');
+                    }
                     iframes.forEach(function(f) {
                         try {
                             if (f.contentWindow) {
@@ -175,6 +181,7 @@ def render_tab2_reference_analytics_fragment(
     active_proj = _state["active_proj"]
     map_cos = _state["map_cos"]
     q_only_proj = _state["q_only_proj"]
+    include_centroids = bool(_state.get("include_centroids", False))
     map_types = _state["map_types"]
     map_sales = _state["map_sales"]
     map_min_p = _state["map_min_p"]
@@ -200,6 +207,15 @@ def render_tab2_reference_analytics_fragment(
     active_compare_ids = _state["active_compare_ids"]
     is_province_only = bool(_state.get("is_province_only", False))
     has_any_filter = _state["has_any_filter"]
+
+    df_analytics_pool = df_raw
+    if (
+        not include_centroids
+        and df_analytics_pool is not None
+        and not df_analytics_pool.empty
+        and 'is_centroid' in df_analytics_pool.columns
+    ):
+        df_analytics_pool = df_analytics_pool.loc[~_is_centroid_series(df_analytics_pool)]
 
     # 3. Compute matching DataFrame for Filter Status Bar & Analytics
     status_df = df_raw if df_raw is not None else pd.DataFrame()
@@ -444,7 +460,13 @@ def render_tab2_reference_analytics_fragment(
                     )
                     status_df = status_df[norm_s.isin(shared_norms)]
 
-        status_df = status_df.copy()
+    if (
+        not include_centroids
+        and not is_comparison_active
+        and not status_df.empty
+        and 'is_centroid' in status_df.columns
+    ):
+        status_df = status_df.loc[~_is_centroid_series(status_df)]
 
     matched_count = len(status_df)
 
@@ -486,13 +508,14 @@ def render_tab2_reference_analytics_fragment(
     else:
         loc_str = "ทุกทำเล (ทั่วประเทศ)"
 
+    _rad_disp = format_radius_th(active_ref_radius)
     if has_ref_point:
         if active_ref_prop is not None:
-            rad_str = f"{active_ref_radius:.1f} กม. รอบ [{active_ref_prop.get('บริษัท', '-')}] {active_ref_prop.get('รหัสทรัพย์', '')}"
+            rad_str = f"{_rad_disp} รอบ [{active_ref_prop.get('บริษัท', '-')}] {active_ref_prop.get('รหัสทรัพย์', '')}"
         else:
-            rad_str = f"{active_ref_radius:.1f} กม. ({active_ref_lat:.4f}, {active_ref_lon:.4f})"
+            rad_str = f"{_rad_disp} ({active_ref_lat:.4f}, {active_ref_lon:.4f})"
     else:
-        rad_str = f"รัศมี {active_ref_radius:.1f} กม. (ยังไม่ได้ปักหมุด)"
+        rad_str = f"รัศมี {_rad_disp} (ยังไม่ได้ปักหมุด)"
 
     if q_only_proj and map_cos and len(map_cos) >= 2:
         cos_str = f"{', '.join(map_cos)} (โครงการร่วมกัน)"
@@ -675,13 +698,10 @@ def render_tab2_reference_analytics_fragment(
     if not has_any_filter:
         st.info("กรุณาปักหมุดบนแผนที่ หรือเลือกตัวกรอง/ทำเล เพื่อเริ่มดูข้อมูล", icon=":material/location_on:")
         return
-    if is_province_only:
-        st.info("กรุณาเลือกอำเภอ/เขต หรือตำบล/แขวง เพื่อแสดงหมุดและข้อมูลวิเคราะห์", icon=":material/location_on:")
-        return
 
     # 5. Scope Header
     if has_ref_point and (pin_mode == 'radius' or not has_loc_filter) and not active_proj:
-        scope_header = f"ในรัศมี {active_ref_radius:.1f} กม. รอบจุดอ้างอิง"
+        scope_header = f"ในรัศมี {format_radius_th(active_ref_radius)} รอบจุดอ้างอิง"
     elif active_proj:
         prov_tag = f" จังหวัด{active_prov[0]}" if active_prov else ""
         scope_header = f"ในโครงการ {active_proj}{prov_tag}"
@@ -768,7 +788,7 @@ def render_tab2_reference_analytics_fragment(
                 icon=":material/restart_alt:",
                 key="btn_reset_price_center",
                 on_click=_reset_price_center_callback,
-                use_container_width=True,
+                width="stretch",
                 help="คลิกเพื่อยกเลิกการเทียบตรง และกลับไปใช้ราคากลาง (Median) ของพื้นที่",
             ):
                 st.rerun(scope="fragment")
@@ -800,13 +820,13 @@ def render_tab2_reference_analytics_fragment(
     if is_radius_scope:
         land_radius = max(float(active_ref_radius), 1.0)
         source_icon = "fa-circle-dot"
-        land_source_desc = f"ตามรัศมี {land_radius:.1f} กม. รอบจุดอ้างอิง"
-        cand_raw = find_nearby_properties(active_ref_lat, active_ref_lon, df_raw, land_radius)
+        land_source_desc = f"ตามรัศมี {format_radius_th(land_radius)} รอบจุดอ้างอิง"
+        cand_raw = find_nearby_properties(active_ref_lat, active_ref_lon, df_analytics_pool, land_radius)
         pure_df, pure_rates = _extract_pure_land_pool_global(cand_raw)
 
         cand_50 = None
         if pure_rates.empty:
-            cand_50 = find_nearby_properties(active_ref_lat, active_ref_lon, df_raw, 50.0)
+            cand_50 = find_nearby_properties(active_ref_lat, active_ref_lon, df_analytics_pool, 50.0)
             if not cand_50.empty:
                 cand_50_pure, _ = _extract_pure_land_pool_global(cand_50)
                 if not cand_50_pure.empty and 'ระยะทาง (กม.)' in cand_50_pure.columns:
@@ -826,7 +846,7 @@ def render_tab2_reference_analytics_fragment(
             r_prov = str(active_ref_prop.get('จังหวัด', '')).strip() if active_ref_prop else ""
             if r_dist in _INVALID_LOC_TOKENS or r_prov in _INVALID_LOC_TOKENS:
                 if cand_50 is None:
-                    cand_50 = find_nearby_properties(active_ref_lat, active_ref_lon, df_raw, 50.0)
+                    cand_50 = find_nearby_properties(active_ref_lat, active_ref_lon, df_analytics_pool, 50.0)
                 if not cand_50.empty:
                     # Sort by distance ascending so we pick the NEAREST district/province, not arbitrary index 0
                     cand_50_sorted = cand_50.sort_values('ระยะทาง (กม.)', ascending=True) if 'ระยะทาง (กม.)' in cand_50.columns else cand_50
@@ -839,10 +859,10 @@ def render_tab2_reference_analytics_fragment(
                         if p_vals:
                             r_prov = p_vals[0]
 
-            if r_dist not in _INVALID_LOC_TOKENS and r_prov not in _INVALID_LOC_TOKENS and 'อำเภอ' in df_raw.columns and 'จังหวัด' in df_raw.columns:
-                dist_cand = df_raw[
-                    (df_raw['อำเภอ'].astype(str).str.strip() == r_dist)
-                    & (df_raw['จังหวัด'].astype(str).str.strip() == r_prov)
+            if r_dist not in _INVALID_LOC_TOKENS and r_prov not in _INVALID_LOC_TOKENS and 'อำเภอ' in df_analytics_pool.columns and 'จังหวัด' in df_analytics_pool.columns:
+                dist_cand = df_analytics_pool[
+                    (df_analytics_pool['อำเภอ'].astype(str).str.strip() == r_dist)
+                    & (df_analytics_pool['จังหวัด'].astype(str).str.strip() == r_prov)
                 ]
                 dist_pure, dist_rates = _extract_pure_land_pool_global(dist_cand)
                 if not dist_rates.empty:
@@ -850,8 +870,8 @@ def render_tab2_reference_analytics_fragment(
                     land_source_desc = f"ที่ดินเปล่าใน อ.{r_dist} จ.{r_prov}"
                     source_icon = "fa-location-dot"
 
-            if pure_rates.empty and r_prov not in _INVALID_LOC_TOKENS and 'จังหวัด' in df_raw.columns:
-                prov_cand = df_raw[df_raw['จังหวัด'].astype(str).str.strip() == r_prov]
+            if pure_rates.empty and r_prov not in _INVALID_LOC_TOKENS and 'จังหวัด' in df_analytics_pool.columns:
+                prov_cand = df_analytics_pool[df_analytics_pool['จังหวัด'].astype(str).str.strip() == r_prov]
                 prov_pure, prov_rates = _extract_pure_land_pool_global(prov_cand)
                 if not prov_rates.empty:
                     pure_df, pure_rates = prov_pure, prov_rates
@@ -861,7 +881,7 @@ def render_tab2_reference_analytics_fragment(
     elif active_proj:
         source_icon = "fa-mountain-sun"
         p_list = [p.strip() for p in active_proj.split(",") if p.strip()]
-        proj_df = df_raw[_match_project_mask(df_raw, p_list)].copy() if (df_raw is not None and not df_raw.empty) else pd.DataFrame()
+        proj_df = df_analytics_pool[_match_project_mask(df_analytics_pool, p_list)].copy() if (df_analytics_pool is not None and not df_analytics_pool.empty) else pd.DataFrame()
         # Apply active location scope to proj_df so Card 3 matches status_df location filter
         if not proj_df.empty:
             if active_prov and 'จังหวัด' in proj_df.columns:
@@ -882,7 +902,7 @@ def render_tab2_reference_analytics_fragment(
             if not proj_lats.empty and not proj_lons.empty and _is_valid_thai_coord(proj_lats.median(), proj_lons.median()):
                 c_lat = float(proj_lats.median())
                 c_lon = float(proj_lons.median())
-                cand_30 = find_nearby_properties(c_lat, c_lon, df_raw, 30.0)
+                cand_30 = find_nearby_properties(c_lat, c_lon, df_analytics_pool, 30.0)
                 if not cand_30.empty:
                     cand_30_pure, _ = _extract_pure_land_pool_global(cand_30)
                     if not cand_30_pure.empty and 'ระยะทาง (กม.)' in cand_30_pure.columns:
@@ -896,8 +916,8 @@ def render_tab2_reference_analytics_fragment(
 
             p_dists = [d.split(' (')[0].strip() for d in proj_df['อำเภอ'].dropna().astype(str).unique() if d.strip() not in _INVALID_LOC_TOKENS] if 'อำเภอ' in proj_df.columns else []
             p_provs = [p.strip() for p in proj_df['จังหวัด'].dropna().astype(str).unique() if p.strip() not in _INVALID_LOC_TOKENS] if 'จังหวัด' in proj_df.columns else []
-            if pure_rates.empty and p_dists and 'อำเภอ' in df_raw.columns:
-                cand = df_raw[df_raw['อำเภอ'].astype(str).str.strip().isin(p_dists)]
+            if pure_rates.empty and p_dists and 'อำเภอ' in df_analytics_pool.columns:
+                cand = df_analytics_pool[df_analytics_pool['อำเภอ'].astype(str).str.strip().isin(p_dists)]
                 if p_provs and 'จังหวัด' in cand.columns:
                     cand = cand[cand['จังหวัด'].astype(str).str.strip().isin(p_provs)]
                 cand_pure, cand_rates = _extract_pure_land_pool_global(cand)
@@ -907,8 +927,8 @@ def render_tab2_reference_analytics_fragment(
                     p_lbl = p_provs[0] if p_provs else ""
                     land_source_desc = f"ที่ดินเปล่ารอบโครงการ (อ.{d_lbl} จ.{p_lbl})"
 
-            if pure_rates.empty and p_provs and 'จังหวัด' in df_raw.columns:
-                cand = df_raw[df_raw['จังหวัด'].astype(str).str.strip().isin(p_provs)]
+            if pure_rates.empty and p_provs and 'จังหวัด' in df_analytics_pool.columns:
+                cand = df_analytics_pool[df_analytics_pool['จังหวัด'].astype(str).str.strip().isin(p_provs)]
                 cand_pure, cand_rates = _extract_pure_land_pool_global(cand)
                 if not cand_rates.empty:
                     pure_df, pure_rates = cand_pure, cand_rates
@@ -916,10 +936,10 @@ def render_tab2_reference_analytics_fragment(
 
     else:
         source_icon = "fa-location-dot"
-        if active_subdist and not df_raw.empty and 'ตำบล' in df_raw.columns:
+        if active_subdist and not df_analytics_pool.empty and 'ตำบล' in df_analytics_pool.columns:
             clean_target_subs = [s.split(' (')[0].strip() for s in active_subdist]
             clean_target_dists = [d.split(' (')[0].strip() for d in active_dist] if active_dist else []
-            sub_cand = df_raw[df_raw['ตำบล'].astype(str).str.strip().isin(clean_target_subs)]
+            sub_cand = df_analytics_pool[df_analytics_pool['ตำบล'].astype(str).str.strip().isin(clean_target_subs)]
             if clean_target_dists and 'อำเภอ' in sub_cand.columns:
                 sub_cand = sub_cand[sub_cand['อำเภอ'].astype(str).str.strip().isin(clean_target_dists)]
             if active_prov and 'จังหวัด' in sub_cand.columns:
@@ -931,9 +951,9 @@ def render_tab2_reference_analytics_fragment(
                 clean_d_name = active_dist[0].split(' (')[0].strip() if active_dist else ""
                 land_source_desc = f"ตามทำเล ต.{clean_s_name} อ.{clean_d_name}"
 
-        if pure_rates.empty and active_dist and not df_raw.empty and 'อำเภอ' in df_raw.columns:
+        if pure_rates.empty and active_dist and not df_analytics_pool.empty and 'อำเภอ' in df_analytics_pool.columns:
             clean_target_dists = [d.split(' (')[0].strip() for d in active_dist]
-            dist_cand = df_raw[df_raw['อำเภอ'].astype(str).str.strip().isin(clean_target_dists)]
+            dist_cand = df_analytics_pool[df_analytics_pool['อำเภอ'].astype(str).str.strip().isin(clean_target_dists)]
             if active_prov and 'จังหวัด' in dist_cand.columns:
                 dist_cand = dist_cand[dist_cand['จังหวัด'].astype(str).str.strip().isin(active_prov)]
             pure_dist, rates_dist = _extract_pure_land_pool_global(dist_cand)
@@ -943,20 +963,22 @@ def render_tab2_reference_analytics_fragment(
                 clean_p_name = active_prov[0] if active_prov else ""
                 land_source_desc = f"ที่ดินเปล่าใน อ.{clean_d_name} จ.{clean_p_name}"
 
-        if pure_rates.empty and active_prov and not df_raw.empty and 'จังหวัด' in df_raw.columns:
-            prov_cand = df_raw[df_raw['จังหวัด'].astype(str).str.strip().isin(active_prov)]
+        if pure_rates.empty and active_prov and not df_analytics_pool.empty and 'จังหวัด' in df_analytics_pool.columns:
+            prov_cand = df_analytics_pool[df_analytics_pool['จังหวัด'].astype(str).str.strip().isin(active_prov)]
             pure_prov, rates_prov = _extract_pure_land_pool_global(prov_cand)
             if not rates_prov.empty:
                 pure_df, pure_rates = pure_prov, rates_prov
                 land_source_desc = f"ที่ดินเปล่าใน จ.{active_prov[0]}"
 
     # Final nationwide fallback if still empty
-    if pure_rates.empty and df_raw is not None and not df_raw.empty:
+    if pure_rates.empty and df_analytics_pool is not None and not df_analytics_pool.empty:
         if _has_custom_t2 and not _custom_fp_t2:
-            pure_all, rates_all = _extract_pure_land_pool_global(df_raw)
+            pure_all, rates_all = _extract_pure_land_pool_global(df_analytics_pool)
         else:
             pure_all, rates_all = _get_cached_nationwide_pure_land(
-                df_raw, cache_key=(_cur_mtime_t2, len(df_raw), _custom_fp_t2)
+                df_raw,
+                cache_key=(_cur_mtime_t2, len(df_raw), _custom_fp_t2, include_centroids),
+                exclude_centroids=(not include_centroids),
             )
         if not rates_all.empty:
             pure_df, pure_rates = pure_all, rates_all
@@ -1063,6 +1085,16 @@ def render_tab2_reference_analytics_fragment(
     total_nearby_cnt = len(filtered_nearby)
     safe_scope_header = html.escape(str(scope_header))
 
+    _pink_title_c = "#f9a8d4" if is_dark_mode else "#be185d"
+    _pink_icon_c = "#fda4af" if is_dark_mode else "#e11d48"
+    _pink_sub_c = "#cbd5e1" if is_dark_mode else "#64748b"
+    _em_val_c = "#34d399" if is_dark_mode else "#059669"
+    _em_sub_c = "#cbd5e1" if is_dark_mode else "#64748b"
+    _em_muted_c = "#cbd5e1" if is_dark_mode else "#94a3b8"
+    _br_val_c = "#fbbf24" if is_dark_mode else "#92400e"
+    _br_icon_c = "#f59e0b" if is_dark_mode else "#b45309"
+    _br_sub_c = "#cbd5e1" if is_dark_mode else "#78716c"
+
     price_ref_price = price_ref_sqw_num = price_ref_sqw_rate = price_ref_sqm_rate = 0.0
     ref_is_condo = False
     ref_prop_code = ""
@@ -1080,12 +1112,12 @@ def render_tab2_reference_analytics_fragment(
             f"<div class='metric-card metric-card-pink' id='median-card-1' style='position: relative; overflow: hidden; background: rgba(246, 186, 192, 0.12) !important; border: 1.5px solid rgba(246, 186, 192, 0.6) !important; border-top: 3.5px solid #F6BAC0 !important; border-top-color: #F6BAC0 !important; border-radius: 12px; padding: 12px 14px; box-shadow: 0 4px 12px rgba(246, 186, 192, 0.15) !important; min-height: 140px; display: flex; flex-direction: column; justify-content: space-between;'>"
             f"<div class='metric-card-bg-icon' style='position: absolute; left: -24px; bottom: -20px; font-size: 7rem; line-height: 1; pointer-events: none; z-index: 0; color: #F6BAC0; opacity: 0.25;'><i class='fa-solid fa-scale-balanced'></i></div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div style='font-size: 0.78rem; font-weight: 700; color: #be185d; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-hashtag' style='color: #e11d48; margin-right:4px;'></i> รหัสทรัพย์ศูนย์กลางราคา</div>"
-            f"<div id='median-card1-val' style='font-size: 1.45rem; font-weight: 800; color: #be185d; margin: 3px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='{html.escape(ref_prop_code)}'>{html.escape(ref_prop_code)}</div>"
+            f"<div style='font-size: 0.78rem; font-weight: 700; color: {_pink_title_c}; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-hashtag' style='color: {_pink_icon_c}; margin-right:4px;'></i> รหัสทรัพย์ศูนย์กลางราคา</div>"
+            f"<div id='median-card1-val' style='font-size: 1.45rem; font-weight: 800; color: {_pink_title_c}; margin: 3px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='{html.escape(ref_prop_code)}'>{html.escape(ref_prop_code)}</div>"
             f"</div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div id='median-card1-loc' style='color: #e11d48; font-size: 0.76rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'><i class='fa-solid fa-tag' style='color:#e11d48; font-size:0.72rem; margin-right:3px;'></i>{card1_price_str}</div>"
-            f"<div id='median-card1-sub' style='color: #64748b; font-size: 0.74rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'>{ref_title_sub}</div>"
+            f"<div id='median-card1-loc' style='color: {_pink_icon_c}; font-size: 0.76rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'><i class='fa-solid fa-tag' style='color:{_pink_icon_c}; font-size:0.72rem; margin-right:3px;'></i>{card1_price_str}</div>"
+            f"<div id='median-card1-sub' style='color: {_pink_sub_c}; font-size: 0.74rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'>{ref_title_sub}</div>"
             f"</div>"
             f"</div>"
         )
@@ -1101,17 +1133,20 @@ def render_tab2_reference_analytics_fragment(
             f"<div class='metric-card metric-card-pink' id='median-card-3' style='position: relative; overflow: hidden; background: rgba(246, 186, 192, 0.12) !important; border: 1.5px solid rgba(246, 186, 192, 0.6) !important; border-top: 3.5px solid #F6BAC0 !important; border-top-color: #F6BAC0 !important; border-radius: 12px; padding: 12px 14px; box-shadow: 0 4px 12px rgba(246, 186, 192, 0.15) !important; min-height: 140px; display: flex; flex-direction: column; justify-content: space-between;'>"
             f"<div class='metric-card-bg-icon' style='position: absolute; left: -24px; bottom: -20px; font-size: 7rem; line-height: 1; pointer-events: none; z-index: 0; color: #F6BAC0; opacity: 0.25;'><i class='fa-solid fa-house-chimney'></i></div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div id='median-card3-title' style='font-size: 0.78rem; font-weight: 700; color: #be185d; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-house' style='color: #e11d48; margin-right:4px;'></i> ราคา / ตร.ว. (ทรัพย์ที่เลือก)</div>"
-            f"<div id='median-card3-val' style='font-size: 1.55rem; font-weight: 800; color: #be185d; margin: 3px 0;'>{c4_main} <span style='font-size:0.85rem; font-weight:600; color:#64748b;'>{c4_unit}</span></div>"
+            f"<div id='median-card3-title' style='font-size: 0.78rem; font-weight: 700; color: {_pink_title_c}; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-house' style='color: {_pink_icon_c}; margin-right:4px;'></i> ราคา / ตร.ว. (ทรัพย์ที่เลือก)</div>"
+            f"<div id='median-card3-val' style='font-size: 1.55rem; font-weight: 800; color: {_pink_title_c}; margin: 3px 0;'>{c4_main} <span style='font-size:0.85rem; font-weight:600; color:{_pink_sub_c};'>{c4_unit}</span></div>"
             f"</div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div id='median-card3-sub' style='color: #64748b; font-size: 0.76rem;'>{c4_sub}</div>"
+            f"<div id='median-card3-sub' style='color: {_pink_sub_c}; font-size: 0.76rem;'>{c4_sub}</div>"
             f"</div>"
             f"</div>"
         )
 
         if price_ref_sqm_rate > 0:
-            raw_sqm = _safe_float(active_price_ref_prop.get('พื้นที่ใช้สอย (ตร.ม.)'), 0.0)
+            _raw_sqm_v = active_price_ref_prop.get('พื้นที่ใช้สอย (ตร.ม.)')
+            raw_sqm = to_float_sqm(_raw_sqm_v)
+            if pd.isna(raw_sqm) or raw_sqm <= 0:
+                raw_sqm = _safe_float(_raw_sqm_v, 0.0)
             c3_main, c3_unit = f"฿{price_ref_sqm_rate:,.0f}", "/ตร.ม."
             c3_sub = f"พื้นที่ใช้สอย: {raw_sqm:,.1f} ตร.ม." if raw_sqm > 0 else "พื้นที่ใช้สอย (มีข้อมูล)"
         else:
@@ -1121,11 +1156,11 @@ def render_tab2_reference_analytics_fragment(
             f"<div class='metric-card metric-card-pink' id='median-card-2' style='position: relative; overflow: hidden; background: rgba(246, 186, 192, 0.12) !important; border: 1.5px solid rgba(246, 186, 192, 0.6) !important; border-top: 3.5px solid #F6BAC0 !important; border-top-color: #F6BAC0 !important; border-radius: 12px; padding: 12px 14px; box-shadow: 0 4px 12px rgba(246, 186, 192, 0.15) !important; min-height: 140px; display: flex; flex-direction: column; justify-content: space-between;'>"
             f"<div class='metric-card-bg-icon' style='position: absolute; left: -24px; bottom: -20px; font-size: 7rem; line-height: 1; pointer-events: none; z-index: 0; color: #F6BAC0; opacity: 0.25;'><i class='fa-solid fa-building'></i></div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div id='median-card2-title' style='font-size: 0.78rem; font-weight: 700; color: #be185d; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-building' style='color: #e11d48; margin-right:4px;'></i> ราคา / ตร.ม. (ทรัพย์ที่เลือก)</div>"
-            f"<div id='median-card2-val' style='font-size: 1.55rem; font-weight: 800; color: #be185d; margin: 3px 0;'>{c3_main} <span style='font-size:0.85rem; font-weight:600; color:#64748b;'>{c3_unit}</span></div>"
+            f"<div id='median-card2-title' style='font-size: 0.78rem; font-weight: 700; color: {_pink_title_c}; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-building' style='color: {_pink_icon_c}; margin-right:4px;'></i> ราคา / ตร.ม. (ทรัพย์ที่เลือก)</div>"
+            f"<div id='median-card2-val' style='font-size: 1.55rem; font-weight: 800; color: {_pink_title_c}; margin: 3px 0;'>{c3_main} <span style='font-size:0.85rem; font-weight:600; color:{_pink_sub_c};'>{c3_unit}</span></div>"
             f"</div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div id='median-card2-sub' style='color: #64748b; font-size: 0.76rem;'>{c3_sub}</div>"
+            f"<div id='median-card2-sub' style='color: {_pink_sub_c}; font-size: 0.76rem;'>{c3_sub}</div>"
             f"</div>"
             f"</div>"
         )
@@ -1134,22 +1169,22 @@ def render_tab2_reference_analytics_fragment(
             p_co = html.escape(str(active_ref_prop.get('บริษัท', '-')))
             p_code = html.escape(str(active_ref_prop.get('รหัสทรัพย์', '-')))
             p_type_str = html.escape(str(active_ref_prop.get('ประเภททรัพย์', '-')))
-            sub_ref_info = f"<div id='median-card1-sub' style='color: #94a3b8; font-size: 0.74rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'>[{p_co}] {p_code} &bull; {p_type_str}</div>"
+            sub_ref_info = f"<div id='median-card1-sub' style='color: {_em_muted_c}; font-size: 0.74rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'>[{p_co}] {p_code} &bull; {p_type_str}</div>"
         elif has_ref_point:
-            sub_ref_info = "<div id='median-card1-sub' style='color: #94a3b8; font-size: 0.74rem; margin-top: 2px;'>กำหนดจากพิกัดแผนที่</div>"
+            sub_ref_info = f"<div id='median-card1-sub' style='color: {_em_muted_c}; font-size: 0.74rem; margin-top: 2px;'>กำหนดจากพิกัดแผนที่</div>"
         else:
-            sub_ref_info = f"<div id='median-card1-sub' style='color: #94a3b8; font-size: 0.74rem; margin-top: 2px;'>{safe_scope_header}</div>"
+            sub_ref_info = f"<div id='median-card1-sub' style='color: {_em_muted_c}; font-size: 0.74rem; margin-top: 2px;'>{safe_scope_header}</div>"
 
-        card1_loc_detail = f"{active_ref_lat:.5f}, {active_ref_lon:.5f} (รัศมี {active_ref_radius:.1f} กม.)" if has_ref_point else safe_scope_header
+        card1_loc_detail = f"{active_ref_lat:.5f}, {active_ref_lon:.5f} (รัศมี {format_radius_th(active_ref_radius)})" if has_ref_point else safe_scope_header
         card1_html = (
             f"<div class='metric-card' id='median-card-1' style='position: relative; overflow: hidden; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 12px; padding: 12px 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); min-height: 140px; display: flex; flex-direction: column; justify-content: space-between;'>"
             f"<div class='metric-card-bg-icon' style='position: absolute; left: -24px; bottom: -20px; font-size: 7rem; line-height: 1; pointer-events: none; z-index: 0;'><i class='fa-solid fa-layer-group'></i></div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div style='font-size: 0.78rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-layer-group' style='color: #10b981; margin-right:4px;'></i> จำนวนทรัพย์ทั้งหมด</div>"
-            f"<div id='median-card1-val' style='font-size: 1.55rem; font-weight: 800; color: #059669; margin: 3px 0;'>{total_nearby_cnt:,} <span style='font-size:0.85rem; font-weight:600; color:#64748b;'>รายการ</span></div>"
+            f"<div style='font-size: 0.78rem; font-weight: 700; color: {_em_sub_c}; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-layer-group' style='color: #10b981; margin-right:4px;'></i> จำนวนทรัพย์ทั้งหมด</div>"
+            f"<div id='median-card1-val' style='font-size: 1.55rem; font-weight: 800; color: {_em_val_c}; margin: 3px 0;'>{total_nearby_cnt:,} <span style='font-size:0.85rem; font-weight:600; color:{_em_sub_c};'>รายการ</span></div>"
             f"</div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div id='median-card1-loc' style='color: #64748b; font-size: 0.76rem;'><i class='fa-solid fa-location-dot' style='color:#10b981; font-size:0.72rem; margin-right:3px;'></i>{card1_loc_detail}</div>"
+            f"<div id='median-card1-loc' style='color: {_em_sub_c}; font-size: 0.76rem;'><i class='fa-solid fa-location-dot' style='color:#10b981; font-size:0.72rem; margin-right:3px;'></i>{card1_loc_detail}</div>"
             f"{sub_ref_info}"
             f"</div>"
             f"</div>"
@@ -1166,11 +1201,11 @@ def render_tab2_reference_analytics_fragment(
             f"<div class='metric-card' id='median-card-2' style='position: relative; overflow: hidden; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 12px; padding: 12px 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); min-height: 140px; display: flex; flex-direction: column; justify-content: space-between;'>"
             f"<div class='metric-card-bg-icon' style='position: absolute; left: -24px; bottom: -20px; font-size: 7rem; line-height: 1; pointer-events: none; z-index: 0;'><i class='fa-solid fa-building'></i></div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div id='median-card2-title' style='font-size: 0.78rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-building' style='color: #10b981; margin-right:4px;'></i> ราคากลาง / ตร.ม. <span id='median-card2-badge'>{c3_badge}</span></div>"
-            f"<div id='median-card2-val' style='font-size: 1.55rem; font-weight: 800; color: #059669; margin: 3px 0;'>{c3_main} <span style='font-size:0.85rem; font-weight:600; color:#64748b;'>{c3_unit}</span></div>"
+            f"<div id='median-card2-title' style='font-size: 0.78rem; font-weight: 700; color: {_em_sub_c}; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-building' style='color: #10b981; margin-right:4px;'></i> ราคากลาง / ตร.ม. <span id='median-card2-badge'>{c3_badge}</span></div>"
+            f"<div id='median-card2-val' style='font-size: 1.55rem; font-weight: 800; color: {_em_val_c}; margin: 3px 0;'>{c3_main} <span style='font-size:0.85rem; font-weight:600; color:{_em_sub_c};'>{c3_unit}</span></div>"
             f"</div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div id='median-card2-sub' style='color: #64748b; font-size: 0.76rem;'>{c3_sub}</div>"
+            f"<div id='median-card2-sub' style='color: {_em_sub_c}; font-size: 0.76rem;'>{c3_sub}</div>"
             f"</div>"
             f"</div>"
         )
@@ -1179,7 +1214,7 @@ def render_tab2_reference_analytics_fragment(
             c4_main, c4_unit = f"฿{median_u_sel:,.0f}", "/ตร.ว."
             c4_sub = f"ต่ำสุด ฿{min_u_sel:,.0f} &bull; สูงสุด ฿{max_u_sel:,.0f}"
             if c2_source_desc:
-                c4_sub = f"<div style='color: #059669; font-size: 0.74rem; font-weight: 600;'><i class='fa-solid fa-location-dot' style='font-size:0.72rem; margin-right:3px;'></i>{html.escape(str(c2_source_desc))}</div>" + c4_sub
+                c4_sub = f"<div style='color: {_em_val_c}; font-size: 0.74rem; font-weight: 600;'><i class='fa-solid fa-location-dot' style='font-size:0.72rem; margin-right:3px;'></i>{html.escape(str(c2_source_desc))}</div>" + c4_sub
             c4_badge = f"<span style='font-size:0.74rem; font-weight:600; color:#10b981;'>({count_u_sel:,} แปลง)</span>"
         else:
             c4_main, c4_unit, c4_sub, c4_badge = "-", "", "-", ""
@@ -1188,11 +1223,11 @@ def render_tab2_reference_analytics_fragment(
             f"<div class='metric-card' id='median-card-3' style='position: relative; overflow: hidden; background: rgba(16, 185, 129, 0.04); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 12px; padding: 12px 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); min-height: 140px; display: flex; flex-direction: column; justify-content: space-between;'>"
             f"<div class='metric-card-bg-icon' style='position: absolute; left: -24px; bottom: -20px; font-size: 7rem; line-height: 1; pointer-events: none; z-index: 0;'><i class='fa-solid fa-house-chimney'></i></div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div id='median-card3-title' style='font-size: 0.78rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-house' style='color: #10b981; margin-right:4px;'></i> {html.escape(str(title_c2))} <span id='median-card3-badge'>{c4_badge}</span></div>"
-            f"<div id='median-card3-val' style='font-size: 1.55rem; font-weight: 800; color: #059669; margin: 3px 0;'>{c4_main} <span style='font-size:0.85rem; font-weight:600; color:#64748b;'>{c4_unit}</span></div>"
+            f"<div id='median-card3-title' style='font-size: 0.78rem; font-weight: 700; color: {_em_sub_c}; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-house' style='color: #10b981; margin-right:4px;'></i> {html.escape(str(title_c2))} <span id='median-card3-badge'>{c4_badge}</span></div>"
+            f"<div id='median-card3-val' style='font-size: 1.55rem; font-weight: 800; color: {_em_val_c}; margin: 3px 0;'>{c4_main} <span style='font-size:0.85rem; font-weight:600; color:{_em_sub_c};'>{c4_unit}</span></div>"
             f"</div>"
             f"<div style='position: relative; z-index: 1;'>"
-            f"<div id='median-card3-sub' style='color: #64748b; font-size: 0.76rem;'>{c4_sub}</div>"
+            f"<div id='median-card3-sub' style='color: {_em_sub_c}; font-size: 0.76rem;'>{c4_sub}</div>"
             f"</div>"
             f"</div>"
         )
@@ -1200,22 +1235,22 @@ def render_tab2_reference_analytics_fragment(
     if has_raw_land:
         c5_main, c5_unit = f"฿{median_raw_land:,.0f}", "/ตร.ว."
         c5_sub = f"ต่ำสุด ฿{min_raw_land:,.0f} &bull; สูงสุด ฿{max_raw_land:,.0f}"
-        c5_badge = f"<span style='font-size:0.74rem; font-weight:600; color:#92400e;'>({count_raw_land:,} แปลง)</span>"
+        c5_badge = f"<span style='font-size:0.74rem; font-weight:600; color:{_br_val_c};'>({count_raw_land:,} แปลง)</span>"
         safe_land_desc = html.escape(str(land_source_desc))
-        c5_source_html = f"<div id='median-card4-source' style='color: #92400e; font-size: 0.76rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='{safe_land_desc}'><i class='fa-solid {source_icon}' style='font-size:0.72rem; margin-right:3px; color: #b45309;'></i>{safe_land_desc}</div>"
+        c5_source_html = f"<div id='median-card4-source' style='color: {_br_val_c}; font-size: 0.76rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' title='{safe_land_desc}'><i class='fa-solid {source_icon}' style='font-size:0.72rem; margin-right:3px; color: {_br_icon_c};'></i>{safe_land_desc}</div>"
     else:
         c5_main, c5_unit, c5_sub, c5_badge, c5_source_html = "-", "", "-", "", ""
 
     card5_html = (
-        f"<div class='metric-card metric-card-brown' id='median-card-4' style='position: relative; overflow: hidden; background: rgba(180, 83, 9, 0.04) !important; border: 1px solid rgba(180, 83, 9, 0.35) !important; border-top: 3.5px solid #92400e !important; border-radius: 12px; padding: 12px 14px; box-shadow: 0 4px 12px rgba(120, 53, 15, 0.06); min-height: 140px; display: flex; flex-direction: column; justify-content: space-between;'>"
-        f"<div class='metric-card-bg-icon metric-card-bg-icon-brown' style='position: absolute; left: -24px; bottom: -20px; font-size: 7rem; line-height: 1; pointer-events: none; z-index: 0; color: #92400e;'><i class='fa-solid fa-mountain-sun'></i></div>"
+        f"<div class='metric-card metric-card-brown' id='median-card-4' style='position: relative; overflow: hidden; background: rgba(180, 83, 9, 0.04) !important; border: 1px solid rgba(180, 83, 9, 0.35) !important; border-top: 3.5px solid {_br_val_c} !important; border-radius: 12px; padding: 12px 14px; box-shadow: 0 4px 12px rgba(120, 53, 15, 0.06); min-height: 140px; display: flex; flex-direction: column; justify-content: space-between;'>"
+        f"<div class='metric-card-bg-icon metric-card-bg-icon-brown' style='position: absolute; left: -24px; bottom: -20px; font-size: 7rem; line-height: 1; pointer-events: none; z-index: 0; color: {_br_val_c};'><i class='fa-solid fa-mountain-sun'></i></div>"
         f"<div style='position: relative; z-index: 1;'>"
-        f"<div id='median-card4-title' style='font-size: 0.78rem; font-weight: 700; color: #78716c; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-mountain-sun' style='color: #b45309; margin-right:4px;'></i> ราคากลางที่ดินเปล่า <span id='median-card4-badge'>{c5_badge}</span></div>"
-        f"<div id='median-card4-val' style='font-size: 1.55rem; font-weight: 800; color: #92400e; margin: 3px 0;'>{c5_main} <span style='font-size:0.85rem; font-weight:600; color:#78716c;'>{c5_unit}</span></div>"
+        f"<div id='median-card4-title' style='font-size: 0.78rem; font-weight: 700; color: {_br_sub_c}; text-transform: uppercase; letter-spacing: 0.4px;'><i class='fa-solid fa-mountain-sun' style='color: {_br_icon_c}; margin-right:4px;'></i> ราคากลางที่ดินเปล่า <span id='median-card4-badge'>{c5_badge}</span></div>"
+        f"<div id='median-card4-val' style='font-size: 1.55rem; font-weight: 800; color: {_br_val_c}; margin: 3px 0;'>{c5_main} <span style='font-size:0.85rem; font-weight:600; color:{_br_sub_c};'>{c5_unit}</span></div>"
         f"</div>"
         f"<div style='position: relative; z-index: 1;'>"
         f"{c5_source_html}"
-        f"<div id='median-card4-sub' style='color: #78716c; font-size: 0.74rem; margin-top: 1px;'>{c5_sub}</div>"
+        f"<div id='median-card4-sub' style='color: {_br_sub_c}; font-size: 0.74rem; margin-top: 1px;'>{c5_sub}</div>"
         f"</div>"
         f"</div>"
     )

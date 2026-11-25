@@ -302,9 +302,12 @@ def record_failed_attempt(
 
     count = int(state.get("count", 0) or 0) + 1
     if count >= max_attempts:
+        strikes = int(state.get("strikes", 0) or 0)
+        eff_lockout = min(900, int(lockout_seconds) * (2 ** min(strikes, 5)))
         state["count"] = 0
-        state["locked_until"] = cur_now + lockout_seconds
-        return state, lockout_seconds
+        state["strikes"] = strikes + 1
+        state["locked_until"] = cur_now + eff_lockout
+        return state, eff_lockout
 
     state["count"] = count
     state["locked_until"] = 0.0

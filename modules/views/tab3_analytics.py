@@ -1,5 +1,6 @@
 import html
 import json
+import re
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -117,7 +118,7 @@ def _vectorized_price_tier(price_series):
         p < 3_000_000,
         p < 5_000_000,
         p < 10_000_000,
-        p < 20_000_000,
+        p <= 20_000_000,
     ]
     choices = [
         "ไม่ระบุราคา",
@@ -261,7 +262,7 @@ def _build_tab3_subtab1_uncached(df_filtered, is_dark_mode):
 
     vibrant_donut_colors = ['#10b981', '#3b82f6', '#f59e0b', '#06b6d4', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#64748b']
     c2_series_data = [
-        {"name": name, "y": cnt, "color": '#94a3b8' if name == 'อื่นๆ' else vibrant_donut_colors[i % len(vibrant_donut_colors)]}
+        {"name": html.escape(str(name), quote=True), "y": cnt, "color": '#94a3b8' if name == 'อื่นๆ' else vibrant_donut_colors[i % len(vibrant_donut_colors)]}
         for i, (name, cnt) in enumerate(pie_rows)
     ]
 
@@ -274,7 +275,7 @@ def _build_tab3_subtab1_uncached(df_filtered, is_dark_mode):
     <html>
     <head>
         <meta charset="utf-8">
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" referrerpolicy="no-referrer">
         {hc_scripts}
         <style>
             * {{
@@ -476,7 +477,7 @@ def _build_tab3_subtab1_uncached(df_filtered, is_dark_mode):
 
     fig_price_dist.update_layout(
         title=dict(
-            text=f'การกระจายตัวของราคาทรัพย์สิน ≤ 16 ล้านบาท (ข้อมูลครบ 100%: {len(df_price_capped):,} รายการ)',
+            text=f'การกระจายตัวของราคาทรัพย์สิน ≤ 16 ล้านบาท ({len(df_price_capped):,} รายการจากที่มีราคา > 0)',
             font=dict(size=14, family="Noto Sans Thai, Inter, sans-serif"),
         ),
         barmode='stack',
@@ -530,6 +531,8 @@ def _build_tab3_subtab2_uncached(df_filtered, is_val_metric, is_dark_mode):
     companies_3d_data = []
     for comp in companies:
         comp_color = COMPANY_COLORS.get(comp, '#3b82f6')
+        if is_dark_mode and str(comp_color).lower() == '#475569':
+            comp_color = '#94a3b8'
         cdf = comp_type_df[comp_type_df['บริษัท'].astype(str) == comp].sort_values(value_col, ascending=False)
         total = float(cdf[value_col].sum())
         if total <= 0:
@@ -544,19 +547,23 @@ def _build_tab3_subtab2_uncached(df_filtered, is_val_metric, is_dark_mode):
         existing_other_idx = None
         for _, r in major.iterrows():
             t_name = str(r['ประเภททรัพย์']).strip() or 'อื่นๆ'
+            t_raw = float(r[value_col])
             t_pct = round(float(r['pct']), 1)
             t_c = PROPERTY_TYPE_COLORS.get(t_name, '#6366f1')
+            raw_lbl = (f"฿{t_raw:,.0f}" if t_raw < 1e6 else f"฿{t_raw/1e6:,.2f}M") if is_val_metric else f"{int(round(t_raw)):,} รายการ"
             if t_name == 'อื่นๆ':
                 existing_other_idx = len(series_data)
-            series_data.append({"name": t_name, "y": t_pct, "color": t_c})
+            series_data.append({"name": html.escape(t_name, quote=True), "y": t_pct, "color": t_c, "raw_label": raw_lbl})
 
         if not minor.empty:
             other_pct = round(float(minor['pct'].sum()), 1)
+            other_raw = float(minor[value_col].sum())
+            other_lbl = (f"฿{other_raw:,.0f}" if other_raw < 1e6 else f"฿{other_raw/1e6:,.2f}M") if is_val_metric else f"{int(round(other_raw)):,} รายการ"
             if other_pct > 0:
                 if existing_other_idx is not None:
                     series_data[existing_other_idx]["y"] = round(series_data[existing_other_idx]["y"] + other_pct, 1)
                 else:
-                    series_data.append({"name": "อื่นๆ", "y": other_pct, "color": other_color})
+                    series_data.append({"name": "อื่นๆ", "y": other_pct, "color": other_color, "raw_label": other_lbl})
 
         total_display = f"฿{total/1e6:,.0f}M" if is_val_metric and total >= 1e6 else (f"{int(total):,} รายการ" if not is_val_metric else f"฿{total:,.0f}")
 
@@ -595,7 +602,7 @@ def _build_tab3_subtab2_uncached(df_filtered, is_val_metric, is_dark_mode):
         <div class="donut-card" style="border-top: 4px solid {comp_color};">
             <div class="card-header">
                 <span style="color: {comp_color}; font-weight: 800; font-size: 18px;">{_INLINE_BUILDING_SVG}{comp}</span>
-                <span style="color: #64748b; font-weight: 700; font-size: 14.5px;">รวม: <b style="color:{text_color};">{total_str}</b></span>
+                <span style="color: {'#cbd5e1' if is_dark_mode else '#64748b'}; font-weight: 700; font-size: 14.5px;">รวม: <b style="color:{text_color};">{total_str}</b></span>
             </div>
             <div style="text-align:center; margin-top:4px; margin-bottom: 6px;">{top_pills_html}</div>
             <div id="chart3d_{idx}" class="chart-box"></div>
@@ -619,7 +626,7 @@ def _build_tab3_subtab2_uncached(df_filtered, is_val_metric, is_dark_mode):
             title: {{ text: null }},
             tooltip: {{
                 headerFormat: '',
-                pointFormat: '<b>{{point.name}}</b>: <b>{{point.y:.1f}}%</b>',
+                pointFormat: '<b>{{point.name}}</b>: <b>{{point.y:.1f}}%</b> ({{point.raw_label}})',
                 style: {{ fontSize: '13px', fontFamily: 'Noto Sans Thai' }}
             }},
             plotOptions: {{
@@ -670,7 +677,7 @@ def _build_tab3_subtab2_uncached(df_filtered, is_val_metric, is_dark_mode):
     <html>
     <head>
         <meta charset="utf-8">
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" referrerpolicy="no-referrer">
         {hc_scripts}
         <style>
             * {{
@@ -800,32 +807,37 @@ def _build_tab3_subtab2_bundle(_df_filtered, is_val_metric, is_dark_mode, cache_
     return _build_tab3_subtab2_uncached(_df_filtered, is_val_metric, is_dark_mode)
 
 
+def _fmt_mb_label(val_million):
+    """Format million-Baht scalar without misleading '฿0M' rounding on sub-1M non-zero totals."""
+    if val_million is None or not np.isfinite(val_million) or val_million <= 0:
+        return ""
+    if val_million < 1.0:
+        return f"฿{val_million * 1000:,.0f}K" if val_million >= 0.001 else f"฿{val_million * 1e6:,.0f}"
+    return f"฿{val_million:,.0f}M"
+
+
 def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_company, is_dark_mode):
     plotly_template = "plotly_dark" if is_dark_mode else "plotly_white"
     comp_bar_color = COMP_BRAND_COLORS.get(selected_company, "#10b981")
     comp2_bar_color = COMP_BRAND_COLORS.get(compare_company, "#3b82f6")
 
     comp_df_tab2 = (
-        df_filtered[df_filtered['บริษัท'].astype(str) == str(selected_company)].copy()
+        df_filtered[df_filtered['บริษัท'] == str(selected_company)].copy()
         if (df_filtered is not None and not df_filtered.empty and 'บริษัท' in df_filtered.columns)
         else pd.DataFrame()
     )
-    if comp_df_tab2.empty and df_raw is not None and 'บริษัท' in df_raw.columns:
-        comp_df_tab2 = df_raw[df_raw['บริษัท'].astype(str) == str(selected_company)].copy()
 
     is_comparing = (compare_company != "(ไม่เปรียบเทียบ - ดูบริษัทเดียว)")
     comp_df_2 = pd.DataFrame()
     if is_comparing:
         comp_df_2 = (
-            df_filtered[df_filtered['บริษัท'].astype(str) == str(compare_company)].copy()
+            df_filtered[df_filtered['บริษัท'] == str(compare_company)].copy()
             if (df_filtered is not None and not df_filtered.empty and 'บริษัท' in df_filtered.columns)
             else pd.DataFrame()
         )
-        if comp_df_2.empty and df_raw is not None and 'บริษัท' in df_raw.columns:
-            comp_df_2 = df_raw[df_raw['บริษัท'].astype(str) == str(compare_company)].copy()
 
-    if comp_df_tab2.empty and (not is_comparing or comp_df_2.empty):
-        return {"mode": "empty"}
+    if comp_df_tab2.empty or (is_comparing and comp_df_2.empty):
+        return {"mode": "empty", "selected_empty": comp_df_tab2.empty, "compare_empty": bool(is_comparing and comp_df_2.empty)}
 
     safe_c1_hover = _safe_hover_label(selected_company)
     safe_c2_hover = _safe_hover_label(compare_company)
@@ -900,7 +912,7 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
         fig_tier_comp.add_trace(go.Bar(
             x=tier1['Price_Tier'],
             y=tier1['count'],
-            name=f'{selected_company} (จำนวนทรัพย์)',
+            name=f'{safe_c1} (จำนวนทรัพย์)',
             yaxis='y',
             marker=dict(color=grad1, cornerradius=8, line=dict(width=1.2, color='rgba(255, 255, 255, 0.4)')),
             text=[f"{int(c):,}" for c in tier1['count']],
@@ -911,7 +923,7 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
         fig_tier_comp.add_trace(go.Bar(
             x=tier2['Price_Tier'],
             y=tier2['count'],
-            name=f'{compare_company} (จำนวนทรัพย์)',
+            name=f'{safe_c2} (จำนวนทรัพย์)',
             yaxis='y',
             marker=dict(color=grad2, cornerradius=8, line=dict(width=1.2, color='rgba(255, 255, 255, 0.4)')),
             text=[f"{int(c):,}" for c in tier2['count']],
@@ -922,12 +934,12 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
         fig_tier_comp.add_trace(go.Scatter(
             x=tier1['Price_Tier'],
             y=tier1['val_million'],
-            name=f'{selected_company} (มูลค่ารวม MB)',
+            name=f'{safe_c1} (มูลค่ารวม MB)',
             yaxis='y2',
             mode='lines+markers+text',
             line=dict(width=3, color=comp_bar_color, shape='spline'),
             marker=dict(size=8, color=comp_bar_color, line=dict(width=2, color='#ffffff')),
-            text=[f"฿{v:,.0f}M" if v > 0 else "" for v in tier1['val_million']],
+            text=[_fmt_mb_label(v) for v in tier1['val_million']],
             textposition='top center',
             textfont=dict(size=10, family="Noto Sans Thai", color=comp_bar_color, weight="bold"),
             hovertemplate=f"มูลค่ารวม {safe_c1_hover}: <b>฿%{{y:,.1f}}M</b><extra></extra>"
@@ -935,19 +947,19 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
         fig_tier_comp.add_trace(go.Scatter(
             x=tier2['Price_Tier'],
             y=tier2['val_million'],
-            name=f'{compare_company} (มูลค่ารวม MB)',
+            name=f'{safe_c2} (มูลค่ารวม MB)',
             yaxis='y2',
             mode='lines+markers+text',
             line=dict(width=3, color=comp2_bar_color, shape='spline', dash='dot'),
             marker=dict(size=8, color=comp2_bar_color, line=dict(width=2, color='#ffffff')),
-            text=[f"฿{v:,.0f}M" if v > 0 else "" for v in tier2['val_million']],
+            text=[_fmt_mb_label(v) for v in tier2['val_million']],
             textposition='top center',
             textfont=dict(size=10, family="Noto Sans Thai", color=comp2_bar_color, weight="bold"),
             hovertemplate=f"มูลค่ารวม {safe_c2_hover}: <b>฿%{{y:,.1f}}M</b><extra></extra>"
         ))
 
         fig_tier_comp.update_layout(
-            title=dict(text=f'เปรียบเทียบจำนวนทรัพย์และมูลค่าตามช่วงราคา ({selected_company} vs {compare_company})', font=dict(size=14, family="Noto Sans Thai")),
+            title=dict(text=f'เปรียบเทียบจำนวนทรัพย์และมูลค่าตามช่วงราคา ({safe_c1} vs {safe_c2})', font=dict(size=14, family="Noto Sans Thai")),
             barmode='group',
             bargroupgap=0.1,
             bargap=0.25,
@@ -981,10 +993,10 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
         box2_df = box2_df[box2_df['ประเภททรัพย์'].isin(combined_top) & (box2_df['val_million'] > 0)]
 
         fig_box = go.Figure()
-        fig_box.add_trace(_build_precomputed_box_trace(box1_df, combined_top, str(selected_company), comp_bar_color))
-        fig_box.add_trace(_build_precomputed_box_trace(box2_df, combined_top, str(compare_company), comp2_bar_color))
+        fig_box.add_trace(_build_precomputed_box_trace(box1_df, combined_top, safe_c1, comp_bar_color))
+        fig_box.add_trace(_build_precomputed_box_trace(box2_df, combined_top, safe_c2, comp2_bar_color))
         fig_box.update_layout(
-            title=dict(text=f'เปรียบเทียบการกระจายราคาของ 6 ประเภททรัพย์หลัก ({selected_company} vs {compare_company})', font=dict(size=14, family="Noto Sans Thai")),
+            title=dict(text=f'เปรียบเทียบการกระจายราคาของ 6 ประเภททรัพย์หลัก ({safe_c1} vs {safe_c2})', font=dict(size=14, family="Noto Sans Thai")),
             boxmode='group',
             height=460,
             yaxis_type="log",
@@ -1020,7 +1032,7 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
         fig_share.add_trace(go.Bar(
             y=common_types,
             x=t_share1_vals,
-            name=f'{selected_company}',
+            name=safe_c1,
             orientation='h',
             marker=dict(color=grad_share1, cornerradius=8, line=dict(width=1.2, color='rgba(255, 255, 255, 0.4)')),
             text=[f"{p:.1f}%" if p > 0 else "" for p in t_share1_vals],
@@ -1031,7 +1043,7 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
         fig_share.add_trace(go.Bar(
             y=common_types,
             x=t_share2_vals,
-            name=f'{compare_company}',
+            name=safe_c2,
             orientation='h',
             marker=dict(color=grad_share2, cornerradius=8, line=dict(width=1.2, color='rgba(255, 255, 255, 0.4)')),
             text=[f"{p:.1f}%" if p > 0 else "" for p in t_share2_vals],
@@ -1080,7 +1092,7 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
             fig_region.add_trace(go.Bar(
                 x=regions_all,
                 y=r1['count'],
-                name=f'{selected_company}',
+                name=safe_c1,
                 marker=dict(color=grad_reg1, cornerradius=8, line=dict(width=1.2, color='rgba(255, 255, 255, 0.4)')),
                 text=[f"{int(c):,}" if c > 0 else "" for c in r1['count']],
                 textposition='outside',
@@ -1090,7 +1102,7 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
             fig_region.add_trace(go.Bar(
                 x=regions_all,
                 y=r2['count'],
-                name=f'{compare_company}',
+                name=safe_c2,
                 marker=dict(color=grad_reg2, cornerradius=8, line=dict(width=1.2, color='rgba(255, 255, 255, 0.4)')),
                 text=[f"{int(c):,}" if c > 0 else "" for c in r2['count']],
                 textposition='outside',
@@ -1098,7 +1110,7 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
                 hovertemplate=f"<b>{safe_c2_hover}</b><br>ภูมิภาค: %{{x}}<br>จำนวน: <b>%{{y:,}}</b> รายการ<extra></extra>"
             ))
             fig_region.update_layout(
-                title=dict(text=f'เปรียบเทียบการกระจายตัวตามภูมิภาค ({selected_company} vs {compare_company})', font=dict(size=14, family="Noto Sans Thai")),
+                title=dict(text=f'เปรียบเทียบการกระจายตัวตามภูมิภาค ({safe_c1} vs {safe_c2})', font=dict(size=14, family="Noto Sans Thai")),
                 barmode='group',
                 bargroupgap=0.1,
                 bargap=0.25,
@@ -1155,7 +1167,7 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
             y=tier_df['val_million'],
             name='มูลค่ารวม (ล้านบาท)',
             mode='lines+markers+text',
-            text=[f"฿{v:,.0f}M" for v in tier_df['val_million']],
+            text=[_fmt_mb_label(v) for v in tier_df['val_million']],
             textposition='top center',
             textfont=dict(size=11, family="Noto Sans Thai", color="#3b82f6", weight="bold"),
             yaxis='y2',
@@ -1165,8 +1177,9 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
             fillcolor='rgba(59, 130, 246, 0.08)',
             hovertemplate="มูลค่ารวม: <b>฿%{y:,.1f}M</b><extra></extra>"
         ))
+        safe_c1_single = html.escape(str(selected_company))
         fig_tier.update_layout(
-            title=dict(text=f'การกระจายตัวตามช่วงราคา {selected_company} (Price Tier Pyramid)', font=dict(size=14, family="Noto Sans Thai")),
+            title=dict(text=f'การกระจายตัวตามช่วงราคา {safe_c1_single} (Price Tier Pyramid)', font=dict(size=14, family="Noto Sans Thai")),
             yaxis=dict(title='จำนวนทรัพย์ (รายการ)', showgrid=True, gridcolor='rgba(255,255,255,0.06)' if is_dark_mode else 'rgba(0,0,0,0.05)', zeroline=False),
             yaxis2=dict(title='มูลค่ารวม (ล้านบาท)', overlaying='y', side='right', showgrid=False),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(family="Noto Sans Thai", size=12)),
@@ -1203,7 +1216,7 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
                 lowerfence=[st_q["lowerfence"]],
                 upperfence=[st_q["upperfence"]],
                 mean=[st_q["mean"]],
-                name=cat,
+                name=html.escape(str(cat)),
                 marker=dict(color=col_c, opacity=0.85),
                 line=dict(color=col_c, width=1.6),
                 boxpoints=False,
@@ -1211,7 +1224,7 @@ def _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_
             ))
 
         fig_box.update_layout(
-            title=dict(text=f'การกระจายราคาของ 6 ประเภททรัพย์หลัก {selected_company} (Box Plot - ล้านบาท)', font=dict(size=14, family="Noto Sans Thai")),
+            title=dict(text=f'การกระจายราคาของ 6 ประเภททรัพย์หลัก {safe_c1_single} (Box Plot - ล้านบาท)', font=dict(size=14, family="Noto Sans Thai")),
             height=460,
             showlegend=False,
             yaxis_type="log",
@@ -1275,6 +1288,133 @@ def precompute_tab3_analytics(df_raw, is_dark_mode=False, data_mtime=0):
 
 
 @fragment_decorator
+def _render_tab3_subtab2_fragment(df_filtered, is_dark_mode, bypass_cache, base_cache_key):
+    st.markdown("#### <i class='fa-solid fa-home-user' style='color:#059669; margin-right:6px;'></i>สัดส่วนประเภททรัพย์สินคู่แข่งเชิงลึก (Asset Type Focus)", unsafe_allow_html=True)
+
+    st.markdown(
+        f"<div style='font-size: 0.9rem; font-weight: 700; color: {'#f8fafc' if is_dark_mode else '#0f172a'}; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;'>"
+        f"<i class='fa-solid fa-sliders' style='color: #059669;'></i> เลือกเกณฑ์การวิเคราะห์:"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+    focus_metric = st.radio(
+        "เลือกเกณฑ์การวิเคราะห์",
+        ["จำนวนทรัพย์สิน (Asset Count)", "มูลค่าทรัพย์สินรวม (Total Value)"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="focus_metric_type",
+    )
+
+    is_val_metric = (focus_metric == "มูลค่าทรัพย์สินรวม (Total Value)")
+    if bypass_cache:
+        full_html, total_height = _build_tab3_subtab2_uncached(df_filtered, is_val_metric, is_dark_mode)
+    else:
+        full_html, total_height = _build_tab3_subtab2_bundle(
+            df_filtered, is_val_metric, is_dark_mode, cache_key=(base_cache_key, is_val_metric)
+        )
+    if full_html and total_height > 0:
+        components.html(full_html, height=total_height, scrolling=True)
+
+
+@fragment_decorator
+def _render_tab3_subtab3_fragment(df_filtered, df_raw, is_dark_mode, bypass_cache, base_cache_key):
+    col_head1, col_head2, col_head3 = st.columns([1.8, 1.1, 1.1])
+    with col_head1:
+        st.markdown("#### <i class='fa-solid fa-scale-balanced' style='color:#059669; margin-right:6px;'></i>การกระจายตัวเชิงลึกของพอร์ตโฟลิโอรายบริษัท", unsafe_allow_html=True)
+        st.caption("วิเคราะห์และเปรียบเทียบการกระจายตัวตามช่วงราคา และประเภททรัพย์สินหลักระหว่างบริษัท")
+
+    comp_list_avail = []
+    if not df_filtered.empty and 'บริษัท' in df_filtered.columns:
+        comp_list_avail = [str(c) for c in df_filtered['บริษัท'].dropna().unique()]
+
+    comp_options = sorted(
+        comp_list_avail,
+        key=lambda c: (PREFERRED_COMPANY_ORDER.index(c) if c in PREFERRED_COMPANY_ORDER else 999, c)
+    )
+    if not comp_options:
+        st.warning("ไม่พบรายชื่อบริษัทสำหรับเปรียบเทียบ")
+        return
+
+    default_idx1 = comp_options.index("SAM") if "SAM" in comp_options else 0
+
+    with col_head2:
+        st.markdown(
+            f"<div style='font-size: 0.9rem; font-weight: 700; color: {'#f8fafc' if is_dark_mode else '#0f172a'}; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;'>"
+            f"<i class='fa-solid fa-building' style='color: #059669;'></i> บริษัทหลัก (Company 1):"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+        selected_company = st.selectbox(
+            "บริษัทหลัก (Company 1):",
+            options=comp_options,
+            index=default_idx1,
+            label_visibility="collapsed",
+            key="tab2_subtab3_selected_company",
+        )
+
+    comp_2_options = ["(ไม่เปรียบเทียบ - ดูบริษัทเดียว)"] + [c for c in comp_options if c != selected_company]
+    if selected_company == "SAM" and "BAM" in comp_2_options:
+        def_idx2 = comp_2_options.index("BAM")
+    elif selected_company == "BAM" and "SAM" in comp_2_options:
+        def_idx2 = comp_2_options.index("SAM")
+    elif len(comp_2_options) > 1:
+        def_idx2 = 1
+    else:
+        def_idx2 = 0
+
+    with col_head3:
+        st.markdown(
+            f"<div style='font-size: 0.9rem; font-weight: 700; color: {'#f8fafc' if is_dark_mode else '#0f172a'}; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;'>"
+            f"<i class='fa-solid fa-arrows-left-right' style='color: #059669;'></i> เปรียบเทียบกับ (Company 2):"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+        compare_company = st.selectbox(
+            "เปรียบเทียบกับ (Company 2):",
+            options=comp_2_options,
+            index=def_idx2,
+            label_visibility="collapsed",
+            key="tab2_subtab3_compare_company",
+        )
+
+    if bypass_cache:
+        sub3_bundle = _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_company, is_dark_mode)
+    else:
+        sub3_bundle = _build_tab3_subtab3_bundle(
+            df_filtered, df_raw, selected_company, compare_company, is_dark_mode,
+            cache_key=(base_cache_key, selected_company, compare_company),
+        )
+
+    if sub3_bundle.get("mode") == "empty":
+        safe_sel_md = re.sub(r'([\\\[\]()!*_`<>])', r'\\\1', str(selected_company))
+        if sub3_bundle.get("compare_empty"):
+            safe_cmp_md = re.sub(r'([\\\[\]()!*_`<>])', r'\\\1', str(compare_company))
+            st.warning(f"ไม่พบข้อมูลทรัพย์สินของ {safe_cmp_md} (หรือ {safe_sel_md}) ในตัวกรองปัจจุบัน")
+        else:
+            st.warning(f"ไม่พบข้อมูลทรัพย์สินของ {safe_sel_md} ในตัวกรองปัจจุบัน")
+    elif sub3_bundle.get("mode") == "compare":
+        st.markdown(sub3_bundle["cards_html"], unsafe_allow_html=True)
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.plotly_chart(sub3_bundle["fig_tier_comp"], width="stretch", theme=None)
+        with col_c2:
+            st.plotly_chart(sub3_bundle["fig_box"], width="stretch", theme=None)
+
+        col_c3, col_c4 = st.columns(2)
+        with col_c3:
+            st.plotly_chart(sub3_bundle["fig_share"], width="stretch", theme=None)
+        with col_c4:
+            if sub3_bundle.get("fig_region") is not None:
+                st.plotly_chart(sub3_bundle["fig_region"], width="stretch", theme=None)
+    elif sub3_bundle.get("mode") == "single":
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            st.plotly_chart(sub3_bundle["fig_tier"], width="stretch", theme=None)
+        with col_s2:
+            st.plotly_chart(sub3_bundle["fig_box"], width="stretch", theme=None)
+
+
+@fragment_decorator
 def render_tab3_analytics_view(df_filtered, df_raw, is_dark_mode):
     """
     Renders Tab 3: Competitor & Market Analytics:
@@ -1294,9 +1434,17 @@ def render_tab3_analytics_view(df_filtered, df_raw, is_dark_mode):
     )
     custom_fp = st.session_state.get("_custom_import_fp") if has_custom else None
     bypass_cache = has_custom and not custom_fp
+    _idx_hash = (
+        int(pd.util.hash_pandas_object(df_filtered.index, index=False).sum() & 0xFFFFFFFFFFFF)
+        if len(df_filtered) > 0
+        else 0
+    )
+    _co_sig = tuple(sorted(str(c) for c in df_filtered['บริษัท'].dropna().unique())) if 'บริษัท' in df_filtered.columns else ()
     base_cache_key = (
         get_data_mtime(),
         len(df_filtered),
+        _idx_hash,
+        _co_sig,
         custom_fp,
         bool(is_dark_mode),
     )
@@ -1338,124 +1486,10 @@ def render_tab3_analytics_view(df_filtered, df_raw, is_dark_mode):
     # SUB-TAB 2: ASSET TYPE FOCUS (3D DONUTS)
     # =========================================================================
     with sub_tab2:
-        st.markdown("#### <i class='fa-solid fa-home-user' style='color:#059669; margin-right:6px;'></i>สัดส่วนประเภททรัพย์สินคู่แข่งเชิงลึก (Asset Type Focus)", unsafe_allow_html=True)
-
-        st.markdown(
-            f"<div style='font-size: 0.9rem; font-weight: 700; color: {'#f8fafc' if is_dark_mode else '#0f172a'}; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;'>"
-            f"<i class='fa-solid fa-sliders' style='color: #059669;'></i> เลือกเกณฑ์การวิเคราะห์:"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-        focus_metric = st.radio(
-            "เลือกเกณฑ์การวิเคราะห์",
-            ["จำนวนทรัพย์สิน (Asset Count)", "มูลค่าทรัพย์สินรวม (Total Value)"],
-            horizontal=True,
-            label_visibility="collapsed",
-            key="focus_metric_type",
-        )
-
-        is_val_metric = (focus_metric == "มูลค่าทรัพย์สินรวม (Total Value)")
-        if bypass_cache:
-            full_html, total_height = _build_tab3_subtab2_uncached(df_filtered, is_val_metric, is_dark_mode)
-        else:
-            full_html, total_height = _build_tab3_subtab2_bundle(
-                df_filtered, is_val_metric, is_dark_mode, cache_key=(base_cache_key, is_val_metric)
-            )
-        if full_html and total_height > 0:
-            components.html(full_html, height=total_height, scrolling=True)
+        _render_tab3_subtab2_fragment(df_filtered, is_dark_mode, bypass_cache, base_cache_key)
 
     # =========================================================================
     # SUB-TAB 3: PORTFOLIO DEEP DIVE (SINGLE OR 2-COMPANY COMPARISON)
     # =========================================================================
     with sub_tab3:
-        col_head1, col_head2, col_head3 = st.columns([1.8, 1.1, 1.1])
-        with col_head1:
-            st.markdown("#### <i class='fa-solid fa-scale-balanced' style='color:#059669; margin-right:6px;'></i>การกระจายตัวเชิงลึกของพอร์ตโฟลิโอรายบริษัท", unsafe_allow_html=True)
-            st.caption("วิเคราะห์และเปรียบเทียบการกระจายตัวตามช่วงราคา และประเภททรัพย์สินหลักระหว่างบริษัท")
-
-        comp_list_avail = []
-        if not df_filtered.empty and 'บริษัท' in df_filtered.columns:
-            comp_list_avail = [str(c) for c in df_filtered['บริษัท'].dropna().unique()]
-        elif df_raw is not None and not df_raw.empty and 'บริษัท' in df_raw.columns:
-            comp_list_avail = [str(c) for c in df_raw['บริษัท'].dropna().unique()]
-
-        comp_options = sorted(
-            comp_list_avail,
-            key=lambda c: (PREFERRED_COMPANY_ORDER.index(c) if c in PREFERRED_COMPANY_ORDER else 999, c)
-        )
-        if not comp_options:
-            st.warning("ไม่พบรายชื่อบริษัทสำหรับเปรียบเทียบ")
-            return
-
-        default_idx1 = comp_options.index("SAM") if "SAM" in comp_options else 0
-
-        with col_head2:
-            st.markdown(
-                f"<div style='font-size: 0.9rem; font-weight: 700; color: {'#f8fafc' if is_dark_mode else '#0f172a'}; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;'>"
-                f"<i class='fa-solid fa-building' style='color: #059669;'></i> บริษัทหลัก (Company 1):"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-            selected_company = st.selectbox(
-                "บริษัทหลัก (Company 1):",
-                options=comp_options,
-                index=default_idx1,
-                label_visibility="collapsed",
-                key="tab2_subtab3_selected_company",
-            )
-
-        comp_2_options = ["(ไม่เปรียบเทียบ - ดูบริษัทเดียว)"] + [c for c in comp_options if c != selected_company]
-        if selected_company == "SAM" and "BAM" in comp_2_options:
-            def_idx2 = comp_2_options.index("BAM")
-        elif selected_company == "BAM" and "SAM" in comp_2_options:
-            def_idx2 = comp_2_options.index("SAM")
-        elif len(comp_2_options) > 1:
-            def_idx2 = 1
-        else:
-            def_idx2 = 0
-
-        with col_head3:
-            st.markdown(
-                f"<div style='font-size: 0.9rem; font-weight: 700; color: {'#f8fafc' if is_dark_mode else '#0f172a'}; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;'>"
-                f"<i class='fa-solid fa-arrows-left-right' style='color: #059669;'></i> เปรียบเทียบกับ (Company 2):"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-            compare_company = st.selectbox(
-                "เปรียบเทียบกับ (Company 2):",
-                options=comp_2_options,
-                index=def_idx2,
-                label_visibility="collapsed",
-                key="tab2_subtab3_compare_company",
-            )
-
-        if bypass_cache:
-            sub3_bundle = _build_tab3_subtab3_uncached(df_filtered, df_raw, selected_company, compare_company, is_dark_mode)
-        else:
-            sub3_bundle = _build_tab3_subtab3_bundle(
-                df_filtered, df_raw, selected_company, compare_company, is_dark_mode,
-                cache_key=(base_cache_key, selected_company, compare_company),
-            )
-
-        if sub3_bundle.get("mode") == "empty":
-            st.warning(f"ไม่พบข้อมูลทรัพย์สินของ {selected_company} ในตัวกรองปัจจุบัน")
-        elif sub3_bundle.get("mode") == "compare":
-            st.markdown(sub3_bundle["cards_html"], unsafe_allow_html=True)
-            col_c1, col_c2 = st.columns(2)
-            with col_c1:
-                st.plotly_chart(sub3_bundle["fig_tier_comp"], width="stretch", theme=None)
-            with col_c2:
-                st.plotly_chart(sub3_bundle["fig_box"], width="stretch", theme=None)
-
-            col_c3, col_c4 = st.columns(2)
-            with col_c3:
-                st.plotly_chart(sub3_bundle["fig_share"], width="stretch", theme=None)
-            with col_c4:
-                if sub3_bundle.get("fig_region") is not None:
-                    st.plotly_chart(sub3_bundle["fig_region"], width="stretch", theme=None)
-        elif sub3_bundle.get("mode") == "single":
-            col_s1, col_s2 = st.columns(2)
-            with col_s1:
-                st.plotly_chart(sub3_bundle["fig_tier"], width="stretch", theme=None)
-            with col_s2:
-                st.plotly_chart(sub3_bundle["fig_box"], width="stretch", theme=None)
+        _render_tab3_subtab3_fragment(df_filtered, df_raw, is_dark_mode, bypass_cache, base_cache_key)

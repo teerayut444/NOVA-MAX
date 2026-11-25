@@ -168,10 +168,10 @@ def inject_global_theme_css(is_dark_mode=False):
     css_template = load_global_css_template()
     fa_inlined_css = get_inlined_fa_local_css()
     head_links = (
-        '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
-        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
-        '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">\n'
-        '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />'
+        '<link rel="preconnect" href="https://fonts.googleapis.com" referrerpolicy="no-referrer">\n'
+        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin referrerpolicy="no-referrer">\n'
+        '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" referrerpolicy="no-referrer">\n'
+        '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" referrerpolicy="no-referrer" />'
     )
     font_imports = (
         "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap');\n"

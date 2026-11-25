@@ -19,11 +19,58 @@ _HELPER_LOCK = threading.RLock()
 _AMP_EN_TO_TH_CACHE: dict[str, str] | None = None
 _CENTROIDS_SET_CACHE: set[str] | None = None
 _CANONICAL_PROJ_MAP_CACHE: dict[str, str] | None = None
+_GEOJSON_DATA_CACHE: dict[str, dict] = {}
+_THAI_DISTRICT_NAMES_CACHE: frozenset[str] | None = None
 
-_PERSON_TITLES_PATTERN = re.compile(
-    r"(?<![ทน])นาย(?!หน้า|ายอาม)|"
+
+def _get_cached_geojson(rel_path: str) -> dict:
+    """Load and parse a workspace GeoJSON file once per process (thread-safe)."""
+    if rel_path in _GEOJSON_DATA_CACHE:
+        return _GEOJSON_DATA_CACHE[rel_path]
+    with _HELPER_LOCK:
+        if rel_path in _GEOJSON_DATA_CACHE:
+            return _GEOJSON_DATA_CACHE[rel_path]
+        p = os.path.join(_ROOT_DIR, rel_path)
+        data: dict = {}
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    data = loaded
+            except Exception:
+                data = {}
+        _GEOJSON_DATA_CACHE[rel_path] = data
+        return data
+
+
+def get_thai_district_names_set() -> frozenset[str]:
+    """Lazily extract Thai district names from cached districts.geojson (excluding brand collisions)."""
+    global _THAI_DISTRICT_NAMES_CACHE
+    if _THAI_DISTRICT_NAMES_CACHE is not None:
+        return _THAI_DISTRICT_NAMES_CACHE
+    with _HELPER_LOCK:
+        if _THAI_DISTRICT_NAMES_CACHE is not None:
+            return _THAI_DISTRICT_NAMES_CACHE
+        names: set[str] = set()
+        gj = _get_cached_geojson("data/districts.geojson")
+        for feat in gj.get("features", []):
+            pr = feat.get("properties", {})
+            a_th = str(pr.get("amp_th") or "").strip()
+            if a_th:
+                names.add(a_th)
+                if a_th.startswith("เมือง") and len(a_th) > 5:
+                    names.add(a_th[5:])
+        names.add("ราชพฤกษ์")
+        names.difference_update({"ชัยพฤกษ์", "บัวทอง", "ลุมพินี"})
+        _THAI_DISTRICT_NAMES_CACHE = frozenset(names)
+        return _THAI_DISTRICT_NAMES_CACHE
+
+_PERSON_TITLE_CORE = (
+    r"(?<!ท)(?<!เจ้า)(?<!นคร)นาย(?!หน้า|ายอาม|กเทศ|กองค์|กสมาคม|ก\s*อบต)|"
+    r"ทนาย(?!ความ)|"
     r"นางสาว|น\.?ส\.|"
-    r"นาง(?!รอง|เลิ้ง|แล)|"
+    r"นาง(?!รอง|เลิ้ง|แล|ฟ้า|พญา|ไม้)|"
     r"เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|"
     r"ว่าที่\s*ร้อย|ว่าที่\s*ร\.ต\.|ว่าที่\s*ร\.ท\.|ว่าที่\s*ร\.อ\.|"
     r"(?:ร้อย|พัน|พล)\s*(?:ตรี|โท|เอก)|"
@@ -31,38 +78,20 @@ _PERSON_TITLES_PATTERN = re.compile(
     r"(?:ร|พ|พล)\.ต\.[อตท]\.|(?:ร|พ|พล|น)\.[อตท]\.|"
     r"ดาบตำรวจ|ด\.ต\.|จ่าสิบ|จ\.ส\.[อตท]\.|สิบตำรวจ|ส\.ต\.[อตท]\.|"
     r"นายแพทย์|แพทย์หญิง|นพ\.|พญ\.|"
-    r"ผศ\.|รศ\.|ศ\.ดร\.|"
-    r"มิสเตอร์|มิสซิส|มิส(?!ทีน)|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)",
-    re.IGNORECASE,
+    r"ศ\.ดร\.|ผศ\.ดร\.|รศ\.ดร\.|ดร\.|ผศ\.|รศ\.|(?<![พคจม]\.)(?<![พคม])ศ\.|"
+    r"คุณหญิง|ท่านผู้หญิง|ม\.ร\.ว\.|ม\.ล\.|หม่อมราชวงศ์|หม่อมหลวง|"
+    r"มิสเตอร์|มิสซิส|มิส(?!ทีน)|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)"
 )
 
+_PERSON_TITLES_PATTERN = re.compile(_PERSON_TITLE_CORE, re.IGNORECASE)
+
 _PERSON_START_PATTERN = re.compile(
-    r"^(?:"
-    r"นาย(?!หน้า|ายอาม)|นางสาว|น\.?ส\.|นาง(?!รอง|เลิ้ง|แล)|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|"
-    r"ว่าที่\s*ร้อย|ว่าที่\s*ร\.ต\.|ว่าที่\s*ร\.ท\.|ว่าที่\s*ร\.อ\.|"
-    r"(?:ร้อย|พัน|พล)\s*(?:ตรี|โท|เอก)|"
-    r"(?:ร้อย|พัน|พล)\s*ตำรวจ\s*(?:ตรี|โท|เอก)|"
-    r"(?:ร|พ|พล)\.ต\.[อตท]\.|(?:ร|พ|พล|น)\.[อตท]\.|"
-    r"ดาบตำรวจ|ด\.ต\.|จ่าสิบ|จ\.ส\.[อตท]\.|สิบตำรวจ|ส\.ต\.[อตท]\.|"
-    r"นายแพทย์|แพทย์หญิง|นพ\.|พญ\.|"
-    r"ผศ\.|รศ\.|ศ\.ดร\.|"
-    r"มิสเตอร์|มิสซิส|มิส(?!ทีน)|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)"
-    r")",
+    r"^(?:(?:โดย|แทน|ในนาม|ผู้รับมอบอำนาจ)\s*)?(?:" + _PERSON_TITLE_CORE + r")",
     re.IGNORECASE,
 )
 
 _PERSON_SUFFIX_STRIP_PATTERN = re.compile(
-    r"[\s,]+(?:โดย\s*)?(?:"
-    r"นาย(?!หน้า|ายอาม)|นางสาว|น\.?ส\.|นาง(?!รอง|เลิ้ง|แล)|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|"
-    r"ว่าที่\s*ร้อย|ว่าที่\s*ร\.ต\.|ว่าที่\s*ร\.ท\.|ว่าที่\s*ร\.อ\.|"
-    r"(?:ร้อย|พัน|พล)\s*(?:ตรี|โท|เอก)|"
-    r"(?:ร้อย|พัน|พล)\s*ตำรวจ\s*(?:ตรี|โท|เอก)|"
-    r"(?:ร|พ|พล)\.ต\.[อตท]\.|(?:ร|พ|พล|น)\.[อตท]\.|"
-    r"ดาบตำรวจ|ด\.ต\.|จ่าสิบ|จ\.ส\.[อตท]\.|สิบตำรวจ|ส\.ต\.[อตท]\.|"
-    r"นายแพทย์|แพทย์หญิง|นพ\.|พญ\.|"
-    r"ผศ\.|รศ\.|ศ\.ดร\.|"
-    r"มิสเตอร์|มิสซิส|มิส(?!ทีน)|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)"
-    r").*$",
+    r"[\s,]+(?:(?:โดย|แทน|ในนาม|ผู้รับมอบอำนาจ)\s*)?(?:" + _PERSON_TITLE_CORE + r").*$",
     re.IGNORECASE,
 )
 
@@ -108,12 +137,8 @@ def get_amp_en_to_th() -> dict[str, str]:
             return _AMP_EN_TO_TH_CACHE
         mapping: dict[str, str] = {}
         for rel in ("data/districts.geojson", "data/subdistricts.geojson"):
-            p = os.path.join(_ROOT_DIR, rel)
-            if not os.path.exists(p):
-                continue
             try:
-                with open(p, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                data = _get_cached_geojson(rel)
                 for feat in data.get("features", []):
                     props = feat.get("properties", {})
                     th = str(props.get("amp_th") or "").strip()
@@ -157,8 +182,9 @@ def translate_amphoe_en_to_th(val) -> str:
             return amp_map[sub_key]
 
     if re.search(r"[ก-๙]", s):
-        s_th = re.sub(r"[a-zA-Z]", "", s)
-        s_th = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", "", s_th)
+        # Strip ASCII-only parentheticals first so Thai names inside parentheses e.g. 'Amphoe X (เมืองเก่า)' are kept
+        s_th = re.sub(r"[\(\[\{][a-zA-Z0-9\s,.\-_/]*[\)\]\}]", "", s)
+        s_th = re.sub(r"[a-zA-Z]+", "", s_th)
         s_th = re.sub(r"[\(\[\{\)\]\}\/\\_:,.]+", " ", s_th)
         s_th = re.sub(r"^[\s\-]+|[\s\-]+$", "", s_th)
         s_th = re.sub(r"\s+", " ", s_th).strip()
@@ -180,11 +206,9 @@ def get_known_centroids_set() -> set[str]:
         try:
             from shapely.geometry import shape
             for rel in ("data/districts.geojson", "data/subdistricts.geojson"):
-                p = os.path.join(_ROOT_DIR, rel)
-                if not os.path.exists(p):
+                data = _get_cached_geojson(rel)
+                if not data:
                     continue
-                with open(p, "r", encoding="utf-8") as f:
-                    data = json.load(f)
                 for feat in data.get("features", []):
                     geom = feat.get("geometry")
                     if not geom:

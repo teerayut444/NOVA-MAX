@@ -1,6 +1,5 @@
 import os
 import re
-import ast
 import math
 import datetime
 import threading
@@ -42,7 +41,7 @@ _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 _PROJ_CACHE_LOCK = threading.Lock()
 _TH_TZ = datetime.timezone(datetime.timedelta(hours=7))
 _LED_LEGAL_COMPANIES = frozenset({"LED LEGAL", "LED_LEGAL", "LED_SOLD", "LED SOLD"})
-_SAFE_LINK_PREFIXES = ("https://", "http://", "/app/static/")
+_SAFE_LINK_PREFIXES = ("https://", "http://", "/app/static/", "app/static/")
 
 
 def clean_project_name(name, **kwargs):
@@ -239,30 +238,9 @@ _DISTRICTS_NAME_SET_CACHE = None
 
 
 def _get_thai_district_names_set():
-    """Lazily loads Thai district/amphoe names from data/districts.geojson (excluding estate-brand collisions)."""
-    global _DISTRICTS_NAME_SET_CACHE
-    if _DISTRICTS_NAME_SET_CACHE is not None:
-        return _DISTRICTS_NAME_SET_CACHE
-    names = set()
-    try:
-        import json
-        p = os.path.join(_ROOT_DIR, "data", "districts.geojson")
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8") as f:
-                gj = json.load(f)
-            for feat in gj.get("features", []):
-                pr = feat.get("properties", {})
-                a_th = str(pr.get("amp_th") or "").strip()
-                if a_th:
-                    names.add(a_th)
-                    if a_th.startswith("เมือง") and len(a_th) > 5:
-                        names.add(a_th[5:])
-    except Exception:
-        pass
-    names.add('ราชพฤกษ์')
-    names.difference_update({'ชัยพฤกษ์', 'บัวทอง', 'ลุมพินี'})
-    _DISTRICTS_NAME_SET_CACHE = frozenset(names)
-    return _DISTRICTS_NAME_SET_CACHE
+    """Delegates to shared text_clean_helpers GeoJSON-cached district set (avoids duplicate GeoJSON parse)."""
+    from modules.services.text_clean_helpers import get_thai_district_names_set
+    return get_thai_district_names_set()
 
 
 def is_pure_location_project_name(name):
@@ -496,7 +474,7 @@ _PREFIX_PAT = re.compile(
     re.I
 )
 _SUFFIX_PAT = re.compile(
-    r'(\[.*?\]|\(.*?\)|\[[^\]]*$|\([^)]*$|,\s*(กรุงเทพมหานคร|กรุงเทพฯ|กรุงเทพ|นนทบุรี|ปทุมธานี|สมุทรปราการ|ชลบุรี|เชียงใหม่|ระยอง|ภูเก็ต).*$|[\s\-_/]+(?:อาคาร|ตึก)\s+[a-zA-Z0-9ก-๙]\s+ชั้น\s*\d+.*$|[\s\-_/]+ชั้น\s*\d+.*$|ชั้น\s*\d+.*$|(?:^|\s)(?:ติด|ใกล้)\s*(?:bts|mrt).*$)',
+    r'(\[.*?\]|\(\s*(?:มือสอง|เจ้าของขายเอง|ราคาพิเศษ|พร้อมอยู่|ขายด่วน|ด่วน|ลดราคา|รีโนเวท|renovate|ห้องมุม|corner|วิว[^)]*|ใกล้\s*(?:bts|mrt|arl)[^)]*|ติด\s*(?:bts|mrt|arl)[^)]*|ไม่ระบุ|ไม่มี|null|none)\s*\)|\[[^\]]*$|\([^)]*$|,\s*(กรุงเทพมหานคร|กรุงเทพฯ|กรุงเทพ|นนทบุรี|ปทุมธานี|สมุทรปราการ|ชลบุรี|เชียงใหม่|ระยอง|ภูเก็ต).*$|[\s\-_/]+(?:อาคาร|ตึก)\s+[a-zA-Z0-9ก-๙]\s+ชั้น\s*\d+.*$|[\s\-_/]+ชั้น\s*\d+.*$|ชั้น\s*\d+.*$|(?:^|\s)(?:ติด|ใกล้)\s*(?:bts|mrt).*$)',
     re.I
 )
 _SPACE_CLEAN = re.compile(r'[\s\-_/.,:;()\[\]{}]+')
@@ -724,7 +702,7 @@ def to_float_sqm(val):
         f = float(val)
         return f if (math.isfinite(f) and f > 0) else np.nan
     val_str = str(val).strip()
-    if not val_str or val_str in ['nan', 'None', '-', ''] or val_str.startswith('-'):
+    if not val_str or val_str in ['nan', 'None', '-', ''] or re.search(r'(?:^|[\s(:])-\s*\d', val_str):
         return np.nan
     try:
         m = re.search(r'(?<!-)\b([\d,]+(?:\.\d+)?)', val_str)
@@ -742,23 +720,27 @@ def format_to_rai_ngan_wah(val):
     val_str = _strip_excel_text_formula(val)
     if not val_str or val_str in ['nan', 'None', '-', '0', '0-0-0', '0-0-0.0']:
         return "-"
-    if re.match(r'^\d+-\d+-\d+(?:\.\d+)?$', val_str):
-        return "-" if val_str in ['0-0-0', '0-0-0.0'] else val_str
+    m_rnw = re.match(r'^(\d+)-(\d+)-(\d+(?:\.\d+)?)$', val_str)
+    if m_rnw:
+        r_i, n_i, w_f = int(m_rnw.group(1)), int(m_rnw.group(2)), float(m_rnw.group(3))
+        if r_i == 0 and n_i == 0 and w_f <= 0:
+            return "-"
+        if n_i < 4 and w_f < 100.0:
+            return val_str
     sqwah = to_float_sqwah(val)
     if pd.isna(sqwah) or sqwah <= 0:
         return "-"
-    sqwah = round(sqwah, 4)
-    rai = int(sqwah // 400)
-    rem = round(sqwah % 400, 4)
-    ngan = int(rem // 100)
-    wah = round(rem % 100, 2)
-    if wah >= 100.0:
-        ngan += int(wah // 100)
-        wah = round(wah % 100, 2)
-    if ngan >= 4:
-        rai += ngan // 4
-        ngan = ngan % 4
-    wah_str = str(int(wah)) if wah == int(wah) else f"{wah:.1f}"
+    total_tenths = int(round(float(sqwah) * 10))
+    if total_tenths <= 0:
+        return "-"
+    rai = total_tenths // 4000
+    rem = total_tenths % 4000
+    ngan = rem // 1000
+    wah_tenths = rem % 1000
+    if wah_tenths % 10 == 0:
+        wah_str = str(wah_tenths // 10)
+    else:
+        wah_str = f"{wah_tenths / 10:.1f}"
     return f"{rai}-{ngan}-{wah_str}"
 
 
@@ -1005,14 +987,29 @@ def combine_split_land_area_columns(df, drop_source_cols=True):
         "dropped_cols": dropped_cols,
     }
 
+_TH_MONTH_TEXT_MAP = {
+    'ม.ค.': 1, 'มกราคม': 1, 'ก.พ.': 2, 'กุมภาพันธ์': 2, 'มี.ค.': 3, 'มีนาคม': 3,
+    'เม.ย.': 4, 'เมษายน': 4, 'พ.ค.': 5, 'พฤษภาคม': 5, 'มิ.ย.': 6, 'มิถุนายน': 6,
+    'ก.ค.': 7, 'กรกฎาคม': 7, 'ส.ค.': 8, 'สิงหาคม': 8, 'ก.ย.': 9, 'กันยายน': 9,
+    'ต.ค.': 10, 'ตุลาคม': 10, 'พ.ย.': 11, 'พฤศจิกายน': 11, 'ธ.ค.': 12, 'ธันวาคม': 12,
+}
+
+
+def _resolve_2_or_4_digit_year(y_str):
+    y_i = int(y_str)
+    if len(y_str) == 2:
+        # 2-digit Thai BE years (e.g. '67', '68', '69' -> 2567..2569 -> 2024..2026); <40 assumed CE 2000+
+        return (2500 + y_i - 543) if y_i >= 40 else (2000 + y_i)
+    return (y_i - 543) if y_i >= 2400 else y_i
+
+
 def _parse_announcement_date(s):
     """Parse Thai/CE date strings (full date preferred over year-only); returns (datetime.date | None, year_only_diff | None)."""
-    # 1. Full d/m/yyyy (with optional HH:MM[:SS]) - handles BE years >= 2400 and m/d/yyyy fallback
-    m_dmy = re.match(r'^(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{4})(?:[T\s]+\d{1,2}:\d{2}(?::\d{2})?)?$', s)
+    # 1. Full d/m/yyyy or d/m/yy (with optional HH:MM[:SS]) - handles 4-digit BE >= 2400 and 2-digit BE >= 40
+    m_dmy = re.match(r'^(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2}|\d{4})(?:[T\s]+\d{1,2}:\d{2}(?::\d{2})?)?$', s)
     if m_dmy:
-        d_i, m_i, y_i = int(m_dmy.group(1)), int(m_dmy.group(2)), int(m_dmy.group(3))
-        if y_i >= 2400:
-            y_i -= 543
+        d_i, m_i = int(m_dmy.group(1)), int(m_dmy.group(2))
+        y_i = _resolve_2_or_4_digit_year(m_dmy.group(3))
         try:
             return datetime.date(y_i, m_i, d_i), None
         except ValueError:
@@ -1021,6 +1018,16 @@ def _parse_announcement_date(s):
                     return datetime.date(y_i, d_i, m_i), None
                 except ValueError:
                     pass
+
+    # 1b. Thai text date e.g. '15 ม.ค. 2569', '15 ม.ค. 69', '15 มกราคม 2569'
+    m_th = re.match(r'^(\d{1,2})\s+([ก-๙\.]+)\s+(\d{2}|\d{4})(?:\s.*)?$', s)
+    if m_th:
+        m_num = _TH_MONTH_TEXT_MAP.get(m_th.group(2).strip())
+        if m_num:
+            try:
+                return datetime.date(_resolve_2_or_4_digit_year(m_th.group(3)), m_num, int(m_th.group(1))), None
+            except ValueError:
+                pass
 
     # 2. ISO yyyy-mm-dd / timestamp (supports T or space separator and BE years)
     m_iso = re.match(r'^(\d{4})[-/\.](\d{1,2})[-/\.](\d{1,2})(?:[T\s].*)?$', s)
@@ -1154,100 +1161,6 @@ def parse_listing_age_days(val, ref_date=None):
 
     return -1
 
-def parse_floor_numeric(val):
-    """
-    Extracts numeric floor number or building floor count from string/number.
-    Returns float >= 0, or -1.0 if missing/unspecified/negative.
-    """
-    if pd.isna(val) or val is None:
-        return -1.0
-    s = str(val).strip()
-    if s in ['', '-', 'nan', 'None', '<NA>', 'null', 'ไม่ระบุ', 'ไม่มีข้อมูล'] or s.startswith('-'):
-        return -1.0
-    m = re.search(r'(?<!-)(\d+(?:\.\d+)?)', s)
-    if m:
-        try:
-            f = float(m.group(1))
-            return f if (math.isfinite(f) and f >= 0) else -1.0
-        except (ValueError, TypeError):
-            return -1.0
-    return -1.0
-
-def parse_room_count(val):
-    """
-    Extracts room/parking count.
-    Returns float >= 0 (0.0 for studio/none), or -1.0 if missing/unspecified/negative.
-    """
-    if pd.isna(val) or val is None:
-        return -1.0
-    s = str(val).strip().lower()
-    if s in ['', '-', 'nan', 'none', '<na>', 'null', 'ไม่ระบุ', 'ไม่มีข้อมูล'] or s.startswith('-'):
-        return -1.0
-    if 'สตูดิโอ' in s or 'studio' in s:
-        return 0.0
-    try:
-        f = float(s)
-        return f if (math.isfinite(f) and f >= 0) else -1.0
-    except (ValueError, TypeError):
-        m = re.search(r'(?<!-)(\d+(?:\.\d+)?)', s)
-        if m:
-            try:
-                f = float(m.group(1))
-                return f if (math.isfinite(f) and f >= 0) else -1.0
-            except (ValueError, TypeError):
-                return -1.0
-        return -1.0
-
-def format_num_val(val):
-    """Safely format numeric fields (e.g., bedrooms, area) to nice string."""
-    if val is None or pd.isna(val):
-        return ""
-    s = str(val).strip()
-    if s == "" or s.lower() in ("nan", "$undefined"):
-        return ""
-    try:
-        f_val = float(val)
-        if not math.isfinite(f_val):
-            return ""
-        if f_val.is_integer():
-            return str(int(f_val))
-        return str(f_val)
-    except (ValueError, TypeError):
-        return s
-
-def get_clean_title(val):
-    """Clean property title string."""
-    if not val or pd.isna(val):
-        return "ไม่มีชื่อประกาศ"
-    val_str = str(val).strip()
-    if val_str.startswith("{") and val_str.endswith("}"):
-        try:
-            d = ast.literal_eval(val_str)
-            if isinstance(d, dict):
-                return d.get('th') or d.get('en') or val_str
-        except Exception:
-            pass
-    return val_str
-
-def get_clean_link(val):
-    """Clean property link string and enforce safe URL schemes."""
-    if not val or pd.isna(val):
-        return ""
-    val_str = str(val).strip()
-    if val_str.startswith("{") and val_str.endswith("}"):
-        try:
-            d = ast.literal_eval(val_str)
-            if isinstance(d, dict):
-                val_str = str(d.get('th') or d.get('en') or "").strip()
-        except Exception:
-            pass
-    if not val_str:
-        return ""
-    low = val_str.lower()
-    if any(low.startswith(p) for p in _SAFE_LINK_PREFIXES):
-        return val_str
-    return ""
-
 def format_coord_vectorized(df, coord_col):
     """Vectorized coordinate formatting with centroid warning prefix ('⚠️ ') and '-' fallback."""
     if df is None or df.empty or coord_col not in df.columns:
@@ -1374,41 +1287,60 @@ def _sanitize_unit_prices(df):
 def _apply_led_legal_sold_prices(df):
     """For LED Legal (LED_SOLD): uses 'ราคาขายได้' as the selling price 'ราคา'
     and recalculates per-sqw and per-sqm unit rates based on the actual sold price.
+    When 'ราคาขายได้' is missing/invalid for an LED Legal row, clears stale asking
+    prices and unit rates to NaN so unverified asking bids are never treated as sold prices.
     """
-    if 'บริษัท' in df.columns and 'ราคาขายได้' in df.columns and 'ราคา' in df.columns:
+    if 'บริษัท' in df.columns and 'ราคา' in df.columns:
         legal_sold_mask = df['บริษัท'].astype(str).str.strip().str.upper().isin(_LED_LEGAL_COMPANIES)
         if legal_sold_mask.any():
             if df['ราคา'].dtype != 'float64':
-                df['ราคา'] = pd.to_numeric(df['ราคา'], errors='coerce').astype('float64')
-            sold_p = pd.to_numeric(df.loc[legal_sold_mask, 'ราคาขายได้'], errors='coerce')
-            valid_sold = sold_p.notna() & (sold_p >= 500)
-            if valid_sold.any():
-                target_idx = sold_p[valid_sold].index
-                df.loc[target_idx, 'ราคา'] = sold_p.loc[target_idx]
+                df['ราคา'] = _coerce_numeric_price_series(df['ราคา']).astype('float64')
+            if 'ราคาขายได้' in df.columns:
+                sold_p = _coerce_numeric_price_series(df.loc[legal_sold_mask, 'ราคาขายได้'])
+                valid_sold = sold_p.notna() & (sold_p >= 500)
+                invalid_sold = ~valid_sold
+                if invalid_sold.any():
+                    inv_idx = sold_p[invalid_sold].index
+                    df.loc[inv_idx, 'ราคา'] = np.nan
+                    if 'ราคาต่อตารางวา' in df.columns:
+                        df.loc[inv_idx, 'ราคาต่อตารางวา'] = np.nan
+                    if 'ราคาต่อตารางเมตร' in df.columns:
+                        df.loc[inv_idx, 'ราคาต่อตารางเมตร'] = np.nan
+                if valid_sold.any():
+                    target_idx = sold_p[valid_sold].index
+                    df.loc[target_idx, 'ราคา'] = sold_p.loc[target_idx]
 
-                sqw_col = 'พื้นที่_ตารางวา' if 'พื้นที่_ตารางวา' in df.columns else ('เนื้อที่ (ตร.ว.)' if 'เนื้อที่ (ตร.ว.)' in df.columns else None)
-                if sqw_col and 'ราคาต่อตารางวา' in df.columns:
-                    if df['ราคาต่อตารางวา'].dtype != 'float64':
-                        df['ราคาต่อตารางวา'] = pd.to_numeric(df['ราคาต่อตารางวา'], errors='coerce').astype('float64')
-                    if sqw_col == 'พื้นที่_ตารางวา':
-                        sqw_vals = pd.to_numeric(df.loc[target_idx, sqw_col], errors='coerce')
-                    else:
-                        u_sqw = df.loc[target_idx, sqw_col].dropna().unique()
-                        sqw_map = {v: to_float_sqwah(v) for v in u_sqw}
-                        sqw_vals = df.loc[target_idx, sqw_col].map(sqw_map)
-                    valid_sqw = sqw_vals.notna() & (sqw_vals > 0) & (sold_p.loc[target_idx] > 0)
-                    if valid_sqw.any():
-                        v_idx = target_idx[valid_sqw.values]
-                        df.loc[v_idx, 'ราคาต่อตารางวา'] = (sold_p.loc[v_idx] / sqw_vals.loc[v_idx]).astype('float64')
+                    sqw_col = 'พื้นที่_ตารางวา' if 'พื้นที่_ตารางวา' in df.columns else ('เนื้อที่ (ตร.ว.)' if 'เนื้อที่ (ตร.ว.)' in df.columns else None)
+                    if sqw_col and 'ราคาต่อตารางวา' in df.columns:
+                        if df['ราคาต่อตารางวา'].dtype != 'float64':
+                            df['ราคาต่อตารางวา'] = pd.to_numeric(df['ราคาต่อตารางวา'], errors='coerce').astype('float64')
+                        if sqw_col == 'พื้นที่_ตารางวา':
+                            sqw_vals = pd.to_numeric(df.loc[target_idx, sqw_col], errors='coerce')
+                        else:
+                            u_sqw = df.loc[target_idx, sqw_col].dropna().unique()
+                            sqw_map = {v: to_float_sqwah(v) for v in u_sqw}
+                            sqw_vals = df.loc[target_idx, sqw_col].map(sqw_map)
+                        valid_sqw = sqw_vals.notna() & (sqw_vals > 0) & (sold_p.loc[target_idx] > 0)
+                        df.loc[target_idx, 'ราคาต่อตารางวา'] = np.nan
+                        if valid_sqw.any():
+                            v_idx = target_idx[valid_sqw.values]
+                            df.loc[v_idx, 'ราคาต่อตารางวา'] = (sold_p.loc[v_idx] / sqw_vals.loc[v_idx]).astype('float64')
 
-                if 'พื้นที่ใช้สอย (ตร.ม.)' in df.columns and 'ราคาต่อตารางเมตร' in df.columns:
-                    if df['ราคาต่อตารางเมตร'].dtype != 'float64':
-                        df['ราคาต่อตารางเมตร'] = pd.to_numeric(df['ราคาต่อตารางเมตร'], errors='coerce').astype('float64')
-                    sqm_vals = pd.to_numeric(df.loc[target_idx, 'พื้นที่ใช้สอย (ตร.ม.)'], errors='coerce')
-                    valid_sqm = sqm_vals.notna() & (sqm_vals > 0) & (sold_p.loc[target_idx] > 0)
-                    if valid_sqm.any():
-                        v_idx = target_idx[valid_sqm.values]
-                        df.loc[v_idx, 'ราคาต่อตารางเมตร'] = (sold_p.loc[v_idx] / sqm_vals.loc[v_idx]).astype('float64')
+                    if 'พื้นที่ใช้สอย (ตร.ม.)' in df.columns and 'ราคาต่อตารางเมตร' in df.columns:
+                        if df['ราคาต่อตารางเมตร'].dtype != 'float64':
+                            df['ราคาต่อตารางเมตร'] = pd.to_numeric(df['ราคาต่อตารางเมตร'], errors='coerce').astype('float64')
+                        sqm_vals = pd.to_numeric(df.loc[target_idx, 'พื้นที่ใช้สอย (ตร.ม.)'], errors='coerce')
+                        valid_sqm = sqm_vals.notna() & (sqm_vals > 0) & (sold_p.loc[target_idx] > 0)
+                        df.loc[target_idx, 'ราคาต่อตารางเมตร'] = np.nan
+                        if valid_sqm.any():
+                            v_idx = target_idx[valid_sqm.values]
+                            df.loc[v_idx, 'ราคาต่อตารางเมตร'] = (sold_p.loc[v_idx] / sqm_vals.loc[v_idx]).astype('float64')
+            else:
+                df.loc[legal_sold_mask, 'ราคา'] = np.nan
+                if 'ราคาต่อตารางวา' in df.columns:
+                    df.loc[legal_sold_mask, 'ราคาต่อตารางวา'] = np.nan
+                if 'ราคาต่อตารางเมตร' in df.columns:
+                    df.loc[legal_sold_mask, 'ราคาต่อตารางเมตร'] = np.nan
     df = _sanitize_unit_prices(df)
     return df
 
@@ -1461,7 +1393,10 @@ def ensure_derived_cols(df, persist_cache=False):
                 df['โจทก์'] = _clean_plaintiff_series_fast(df['โจทก์'])
             for f64_col in ['ราคา', 'ราคาขายได้', 'ละติจูด', 'ลองจิจูด', 'พื้นที่_ตารางวา', 'พื้นที่ใช้สอย (ตร.ม.)', 'ราคาต่อตารางวา', 'ราคาต่อตารางเมตร']:
                 if f64_col in df.columns and df[f64_col].dtype != 'float64':
-                    df[f64_col] = pd.to_numeric(df[f64_col], errors='coerce').astype('float64')
+                    if f64_col in ('ราคา', 'ราคาขายได้'):
+                        df[f64_col] = _coerce_numeric_price_series(df[f64_col])
+                    else:
+                        df[f64_col] = pd.to_numeric(df[f64_col], errors='coerce').astype('float64')
             if 'norm_project_name' not in df.columns:
                 if 'ชื่อโครงการ' in df.columns:
                     u_projs = df['ชื่อโครงการ'].dropna().unique()
@@ -1730,6 +1665,8 @@ def ensure_derived_cols(df, persist_cache=False):
         df.loc[df['ราคา'] < 500, 'ราคา'] = np.nan
     else:
         df['ราคา'] = np.nan
+    if 'ราคาขายได้' in df.columns:
+        df['ราคาขายได้'] = _coerce_numeric_price_series(df['ราคาขายได้'])
 
     df, _ = combine_split_land_area_columns(df, drop_source_cols=True)
 
@@ -1790,6 +1727,9 @@ def ensure_derived_cols(df, persist_cache=False):
         if 'ประเภททรัพย์' in df.columns:
             bad_area_mask |= (df['ประเภททรัพย์'].isin(['คอนโด', 'คอนโดมิเนียม', 'ห้องชุด', 'ห้องชุดพักอาศัย', 'ทาวน์เฮ้าส์', 'ทาวน์โฮม']) & (df['พื้นที่ใช้สอย (ตร.ม.)'] > 5000))
         df.loc[bad_area_mask, 'พื้นที่ใช้สอย (ตร.ม.)'] = np.nan
+
+    # Apply LED Legal sold-price overrides & clears BEFORE deriving unit rates (MED-06 / HIGH-07)
+    df = _apply_led_legal_sold_prices(df)
 
     if 'ราคาต่อตารางวา' not in df.columns:
         df['ราคาต่อตารางวา'] = np.where((df['พื้นที่_ตารางวา'] > 0) & (df['ราคา'] > 0), df['ราคา'] / df['พื้นที่_ตารางวา'], np.nan)

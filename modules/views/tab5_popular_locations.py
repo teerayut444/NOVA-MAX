@@ -7,13 +7,13 @@ import os
 import re
 import statistics
 import threading
+import time
 import streamlit as st
 import streamlit.components.v1 as stc
 
 from modules.config.constants import REGION_PROVINCES, PROVINCE_TO_REGION
 from modules.services.data_cleaner import get_dataset_month_year
 from modules.services.data_loader import (
-    _SERVER_PAYLOAD_SECRET,
     _safe_json_inline,
     _today_th_str,
     get_data_mtime,
@@ -29,7 +29,7 @@ _TAB5_TEMPLATE_PATH = os.path.join(_STATIC_DIR, "tab5_popular_locations.html")
 _TAB5_PAYLOAD_LOCK = threading.Lock()
 _TAB5_OFFLOAD_MIN_PROJECTS = 200
 _SLIM_PROJECT_KEYS = (
-    "name", "units", "prov", "dist", "subdist", "prop_type",
+    "name", "units", "is_zone_group", "prov", "dist", "subdist", "prop_type",
     "lat", "lon", "price", "p_sqm", "p_sqw",
     "vd", "cd", "sum_vd", "sum_cd", "pop", "ctr", "days", "start_dt", "end_dt", "link",
 )
@@ -55,6 +55,11 @@ def _load_tab5_html_template(template_mtime: float) -> str:
 
     leaflet_css = _read_static(os.path.join("vendor", "leaflet", "leaflet.css"))
     if leaflet_css:
+        leaflet_css = re.sub(
+            r'url\((["\']?)images/',
+            r'url(\1/app/static/vendor/leaflet/images/',
+            leaflet_css,
+        )
         html_str = html_str.replace(
             '<link rel="stylesheet" href="/app/static/vendor/leaflet/leaflet.css" />',
             f"<style>\n{leaflet_css}\n</style>",
@@ -101,7 +106,7 @@ def get_static_tab5_payload_meta(data_mtime=None, th_date=None):
     size_token = get_data_size_token()
     token_hex = hmac.new(
         get_payload_secret(),
-        f"tab5_v2|sz={size_token}".encode("utf-8"),
+        f"tab5_v2|sz={size_token}|mt={mtime_token}|d={day_str}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()[:32]
     filename = f"tab5_payload_{token_hex}.gz"
@@ -115,15 +120,20 @@ def get_static_tab5_payload_meta(data_mtime=None, th_date=None):
     }
 
 
-def _cleanup_stale_tab5_payloads(keep_filename=None):
+def _cleanup_stale_tab5_payloads(keep_filename=None, min_age_sec=86400, tmp_min_age_sec=300):
+    now_ts = time.time()
     try:
         if os.path.isdir(_STATIC_DIR):
             for name in os.listdir(_STATIC_DIR):
                 if name == keep_filename:
                     continue
                 if name.startswith("tab5_payload_") and (name.endswith(".gz") or ".tmp." in name):
+                    fpath = os.path.join(_STATIC_DIR, name)
                     try:
-                        os.remove(os.path.join(_STATIC_DIR, name))
+                        age = now_ts - os.path.getmtime(fpath)
+                        cutoff = tmp_min_age_sec if ".tmp." in name else min_age_sec
+                        if age >= cutoff:
+                            os.remove(fpath)
                     except OSError:
                         pass
     except Exception:

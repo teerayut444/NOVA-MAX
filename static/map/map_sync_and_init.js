@@ -114,6 +114,14 @@ function updateParentKpiCards(sharedActiveData) {
     (inMapFilterState.companies && inMapFilterState.companies.size > 0) ||
     (inMapFilterState.types && inMapFilterState.types.size > 0) ||
     (inMapFilterState.sales && inMapFilterState.sales.size > 0) ||
+    !!inMapFilterState.onlyWithProject ||
+    !!inMapFilterState.includeCentroids ||
+    (inMapFilterState.floors && inMapFilterState.floors.size > 0) ||
+    inMapFilterState.minFloor !== null || inMapFilterState.maxFloor !== null ||
+    (inMapFilterState.bedrooms && inMapFilterState.bedrooms.size > 0) ||
+    (inMapFilterState.bathrooms && inMapFilterState.bathrooms.size > 0) ||
+    (inMapFilterState.parkings && inMapFilterState.parkings.size > 0) ||
+    inMapFilterState.agePreset !== null || inMapFilterState.maxAge !== null ||
     inMapFilterState.minPrice !== null || inMapFilterState.maxPrice !== null ||
     inMapFilterState.minSqw !== null || inMapFilterState.maxSqw !== null ||
     inMapFilterState.minSqm !== null || inMapFilterState.maxSqm !== null ||
@@ -303,16 +311,18 @@ function updateParentFilterStatusBanner(sharedActiveData) {
     const radEl = pdoc.getElementById('active-filter-rad-val');
     if (radEl) {
       let radStr = '';
-      const rVal = currentRadiusKm < 1 ? currentRadiusKm.toFixed(2) : currentRadiusKm.toFixed(1);
+      const rDisp = (typeof formatRadiusDisplay === 'function')
+        ? formatRadiusDisplay(currentRadiusKm)
+        : ((currentRadiusKm < 1 ? currentRadiusKm.toFixed(2) : currentRadiusKm.toFixed(1)) + ' กม.');
       if (hasRef) {
         if (currentRefProp && currentRefProp._id) {
           const comp = currentRefProp._company || '-';
-          radStr = `${rVal} กม. รอบ [${comp}] ${currentRefProp._id}`;
+          radStr = `${rDisp} รอบ [${comp}] ${currentRefProp._id}`;
         } else {
-          radStr = `${rVal} กม. (${referencePoint[1].toFixed(4)}, ${referencePoint[0].toFixed(4)})`;
+          radStr = `${rDisp} (${referencePoint[1].toFixed(4)}, ${referencePoint[0].toFixed(4)})`;
         }
       } else {
-        radStr = `รัศมี ${rVal} กม. (ยังไม่ได้ปักหมุด)`;
+        radStr = `รัศมี ${rDisp} (ยังไม่ได้ปักหมุด)`;
       }
       radEl.innerText = radStr;
       setChipActive(radEl, isRadiusEffective);
@@ -556,10 +566,8 @@ function updateParentMedianCards(sharedActiveData) {
       const sqmRates = [];
       for (let i = 0; i < activeData.length; i++) {
         const d = activeData[i];
-        if (d._price > 0 && d._sqm > 0) {
-          const r = d._price / d._sqm;
-          if (r > 0) sqmRates.push(r);
-        }
+        const r = (d._pum && d._pum > 0) ? d._pum : ((d._price > 0 && d._sqm > 0) ? (d._price / d._sqm) : null);
+        if (r && r > 0) sqmRates.push(r);
       }
       const sqmStats = calcMedianMinMax(sqmRates);
       if (sqmStats.has) {
@@ -622,8 +630,8 @@ function updateParentMedianCards(sharedActiveData) {
     if (matchCard3Fn) {
       for (let i = 0; i < activeData.length; i++) {
         const d = activeData[i];
-        if (d._price <= 0 || !matchCard3Fn(d)) continue;
-        const r = (d._sqw && d._sqw > 0) ? (d._price / d._sqw) : ((d._puw && d._puw > 0) ? d._puw : null);
+        if (!matchCard3Fn(d)) continue;
+        const r = (d._puw && d._puw > 0) ? d._puw : ((d._price > 0 && d._sqw > 0) ? (d._price / d._sqw) : null);
         if (r && r > 0) targetRates.push(r);
       }
     }
@@ -922,9 +930,17 @@ function scheduleParentKpiUpdate() {
 let _mapResizeObserver = null;
 let _mapResizeRaf = null;
 let _deferredBoundaryTimer = null;
+let _deckLastViewportW = 0;
+let _deckLastViewportH = 0;
+let _deckViewportNudged = false;
 
-function _triggerImmediateMapRedraw() {
+function _triggerImmediateMapRedraw(forceWake) {
   if (!deckglInstance) return;
+  const mapEl = document.getElementById('map');
+  const curW = mapEl ? (mapEl.clientWidth || 0) : 0;
+  const curH = mapEl ? (mapEl.clientHeight || 0) : 0;
+  if (curW <= 0 || curH <= 0) return;
+
   if (typeof armInstantBackdropSafetyTimer === 'function') {
     armInstantBackdropSafetyTimer();
   }
@@ -932,7 +948,33 @@ function _triggerImmediateMapRedraw() {
   _mapResizeRaf = requestAnimationFrame(() => {
     _mapResizeRaf = null;
     try {
+      const el = document.getElementById('map');
+      const w = el ? (el.clientWidth || 0) : 0;
+      const h = el ? (el.clientHeight || 0) : 0;
+      if (w <= 0 || h <= 0 || !deckglInstance) return;
+
+      const sizeChanged = (w !== _deckLastViewportW || h !== _deckLastViewportH);
+      const needsTileWake = !!(forceWake || sizeChanged || (typeof _deckFirstViewportLoaded !== 'undefined' && !_deckFirstViewportLoaded));
+      _deckLastViewportW = w;
+      _deckLastViewportH = h;
+
       window.dispatchEvent(new Event('resize'));
+      if (needsTileWake && currentViewState) {
+        const baseZoom = Number(currentViewState.zoom) || 5.2;
+        const nudgeZoom = _deckViewportNudged ? (baseZoom - 1e-5) : (baseZoom + 1e-5);
+        _deckViewportNudged = !_deckViewportNudged;
+        currentViewState = Object.assign({}, currentViewState, { zoom: nudgeZoom });
+        deckglInstance.setProps({
+          width: w,
+          height: h,
+          viewState: currentViewState
+        });
+        if (typeof _deckFirstViewportLoaded !== 'undefined' && !_deckFirstViewportLoaded && typeof updateDeckLayers === 'function') {
+          updateDeckLayers();
+        }
+      } else if (sizeChanged) {
+        deckglInstance.setProps({ width: w, height: h });
+      }
       if (deckglInstance && typeof deckglInstance.redraw === 'function') {
         deckglInstance.redraw(true);
       }
@@ -941,8 +983,14 @@ function _triggerImmediateMapRedraw() {
   });
 }
 
+let _ownTabCleanup = null;
+
 function setupParentTabListeners() {
   try {
+    if (_parentTabRetryTimer) {
+      clearInterval(_parentTabRetryTimer);
+      _parentTabRetryTimer = null;
+    }
     if (!window.parent || !window.parent.document) return;
     const pWin = window.parent;
     const pdoc = pWin.document;
@@ -988,10 +1036,11 @@ function setupParentTabListeners() {
       });
       obs.observe(tablist, { attributes: true, subtree: true, attributeFilter: ['aria-selected'] });
 
-      pWin.__NOVA_TAB_LISTENER_CLEANUP__ = () => {
+      _ownTabCleanup = () => {
         try { if (ac) ac.abort(); } catch (_e) {}
         try { obs.disconnect(); } catch (_e) {}
       };
+      pWin.__NOVA_TAB_LISTENER_CLEANUP__ = _ownTabCleanup;
 
       // If Tab 2 is already active right now, apply immediately
       if (tabs[1] && tabs[1].getAttribute('aria-selected') === 'true') {
@@ -1031,15 +1080,20 @@ function cleanupMapResources() {
     if (placeSearchTimer) { clearTimeout(placeSearchTimer); placeSearchTimer = null; }
     if (placeSearchAbortCtrl) { try { placeSearchAbortCtrl.abort(); } catch (_e) {} placeSearchAbortCtrl = null; }
     if (_parentTabRetryTimer) { clearInterval(_parentTabRetryTimer); _parentTabRetryTimer = null; }
+    if (typeof _tab2HeartbeatTimer !== 'undefined' && _tab2HeartbeatTimer) { clearInterval(_tab2HeartbeatTimer); _tab2HeartbeatTimer = null; }
+    if (typeof _webglLostTimer !== 'undefined' && _webglLostTimer) { clearTimeout(_webglLostTimer); _webglLostTimer = null; }
     if (_deferredBoundaryTimer) { clearTimeout(_deferredBoundaryTimer); _deferredBoundaryTimer = null; }
     if (typeof _hoverDetailPrefetchTimer !== 'undefined' && _hoverDetailPrefetchTimer) { clearTimeout(_hoverDetailPrefetchTimer); _hoverDetailPrefetchTimer = null; }
     if (_ttObserverInstance) { _ttObserverInstance.disconnect(); _ttObserverInstance = null; }
     if (_mapResizeObserver) { _mapResizeObserver.disconnect(); _mapResizeObserver = null; }
     if (typeof dismissInstantMapBackdrop === 'function') { dismissInstantMapBackdrop(); }
     if (typeof clearDecodedTileBitmaps === 'function') { clearDecodedTileBitmaps(); }
-    if (window.parent && typeof window.parent.__NOVA_TAB_LISTENER_CLEANUP__ === 'function') {
-      window.parent.__NOVA_TAB_LISTENER_CLEANUP__();
-      window.parent.__NOVA_TAB_LISTENER_CLEANUP__ = null;
+    if (_ownTabCleanup) {
+      if (window.parent && window.parent.__NOVA_TAB_LISTENER_CLEANUP__ === _ownTabCleanup) {
+        window.parent.__NOVA_TAB_LISTENER_CLEANUP__ = null;
+      }
+      _ownTabCleanup();
+      _ownTabCleanup = null;
     }
     if (deckglInstance) {
       if (typeof deckglInstance.finalize === 'function') {
@@ -1234,15 +1288,19 @@ function cancelPendingReferencePoint() {
 
 let hoverRaf = null;
 function handleMapHover(info) {
-  // If reference point already set, do not move preview circle
-  if (referencePoint) return;
+  // Only track preview hover circle in radius mode before a reference pin is locked
+  if (mapPinMode !== 'radius' || referencePoint) return;
   if (!info || !info.coordinate) return;
 
   const [lon, lat] = info.coordinate;
   if (hoverRaf) cancelAnimationFrame(hoverRaf);
   hoverRaf = requestAnimationFrame(() => {
     mousePreviewCoord = [lon, lat];
-    updateDeckLayers();
+    if (typeof updatePreviewCursorOnly === 'function') {
+      updatePreviewCursorOnly();
+    } else {
+      updateDeckLayers();
+    }
   });
 }
 
@@ -1341,11 +1399,56 @@ function setBasemapStyle(styleName) {
   document.getElementById('map-style-controls')?.classList.remove('open');
 }
 
+let _tab2HeartbeatTimer = null;
+let _webglLostTimer = null;
+
+function _signalParentTab2Alive() {
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.__NOVA_TAB2_ALIVE_TS__ = Date.now();
+    }
+  } catch (_e) {}
+}
+
+function _signalParentTab2TokenExpired(reason, status) {
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.__NOVA_TAB2_TOKEN_EXPIRED__ = {
+        reason: String(reason || 'payload_error'),
+        status: Number(status || 0),
+        ts: Date.now()
+      };
+    }
+  } catch (_e) {}
+}
+
+function _triggerParentTab2ReloadBtn() {
+  try {
+    const pdoc = window.parent && window.parent.document;
+    const btn = pdoc && pdoc.querySelector('.st-key-btn_tab2_reload_map button');
+    if (btn) {
+      if (window.NovaMapCache && typeof window.NovaMapCache.clearParentMapCache === 'function') {
+        window.NovaMapCache.clearParentMapCache();
+      }
+      btn.click();
+      return true;
+    }
+  } catch (_e) {}
+  return false;
+}
+
 async function initMap() {
   try {
     if (!window.NovaMapCache) {
       const _builderUrl = '/app/static/map_cache_builder.js?v=' + encodeURIComponent(cacheBuilderVerToken || '1');
       await _loadScriptAsync(typeof resolveNovaStaticUrl === 'function' ? resolveNovaStaticUrl(_builderUrl) : _builderUrl);
+    }
+
+    if (window.__NOVA_FORCE_MAP_RELOAD__) {
+      window.__NOVA_FORCE_MAP_RELOAD__ = false;
+      if (window.NovaMapCache && typeof window.NovaMapCache.clearParentMapCache === 'function') {
+        window.NovaMapCache.clearParentMapCache();
+      }
     }
 
     let _lut = { co: [], ty: [], pv: [], st: [], rg: [], dt: [], subdt: [], prj: [], plaintiff: [], co_rgb: [] };
@@ -1367,13 +1470,13 @@ async function initMap() {
         }
       }
 
-      let cacheObj = window.NovaMapCache.getValidParentCache(dataMtimeToken);
+      const resolvedPayloadUrl = (mapPayloadUrl && mapPayloadUrl !== ("MAP_PAYLOAD_URL_" + "PLACEHOLDER")) ? mapPayloadUrl : "";
+      let cacheObj = window.NovaMapCache.getValidParentCache(dataMtimeToken, resolvedPayloadUrl);
       if (cacheObj) {
         // Fast 0ms path: hide loader immediately before constructing DeckGL
         loader.style.display = 'none';
       } else {
         loaderText.innerText = "กำลังโหลดข้อมูลพิกัดแผนที่...";
-        const resolvedPayloadUrl = (mapPayloadUrl && mapPayloadUrl !== ("MAP_PAYLOAD_URL_" + "PLACEHOLDER")) ? mapPayloadUrl : "";
         if (resolvedPayloadUrl && typeof window.NovaMapCache.fetchAndBuildParentCache === 'function') {
           cacheObj = await window.NovaMapCache.fetchAndBuildParentCache(
             dataMtimeToken,
@@ -1387,22 +1490,74 @@ async function initMap() {
 
       _lut = cacheObj.lut;
       data = cacheObj.data;
-      cachedData = data;
-      window._activeMapCacheObj = cacheObj;
+      const hasCustomDelta = !!(
+        typeof customCsvBase64 === 'string' &&
+        customCsvBase64.length > 0 &&
+        customCsvBase64 !== ("CUSTOM_CSV_BASE64_" + "PLACEHOLDER")
+      );
       const _isIOSCache = !!(window.NovaMapCache && typeof window.NovaMapCache.isIOSOrIPadOS === 'function' && window.NovaMapCache.isIOSOrIPadOS());
-      if (cacheObj.idExactLookupMap && cacheObj.idStrippedLookupMap) {
-        idExactLookupMap = cacheObj.idExactLookupMap;
-        idStrippedLookupMap = cacheObj.idStrippedLookupMap;
-      } else if (!_isIOSCache) {
-        buildIdLookupIndex(data);
+
+      if (hasCustomDelta) {
+        loaderText.innerText = "กำลังผสานข้อมูลนำเข้า (Custom Import)...";
+        const [deltaLutStr, deltaCsvStr] = await Promise.all([
+          (typeof customLookupBase64 === 'string' && customLookupBase64.length > 0 && customLookupBase64 !== ("CUSTOM_LOOKUP_BASE64_" + "PLACEHOLDER"))
+            ? decompressGzip(customLookupBase64).catch(() => null)
+            : Promise.resolve(null),
+          decompressGzip(customCsvBase64).catch(() => '')
+        ]);
+        let deltaLut = { co: [], ty: [], pv: [], st: [], rg: [], dt: [], subdt: [], prj: [], plaintiff: [], co_rgb: [] };
+        if (deltaLutStr) {
+          try { deltaLut = JSON.parse(deltaLutStr); } catch (_e) {}
+        }
+        const deltaRows = deltaCsvStr ? d3.csvParse(deltaCsvStr) : [];
+        if (deltaRows.length > 0) {
+          if (window.NovaMapCache && typeof window.NovaMapCache.hydrateMapRows === 'function') {
+            window.NovaMapCache.hydrateMapRows(deltaRows, deltaLut);
+          }
+          const uidBase = cacheObj.data.length;
+          for (let di = 0; di < deltaRows.length; di++) {
+            deltaRows[di]._uid = uidBase + di;
+          }
+          data = cacheObj.data.concat(deltaRows);
+          if (deltaLut && Array.isArray(deltaLut.co)) {
+            _lut = Object.assign({}, cacheObj.lut, {
+              co: Array.from(new Set([].concat(cacheObj.lut.co || [], deltaLut.co || []))),
+              ty: Array.from(new Set([].concat(cacheObj.lut.ty || [], deltaLut.ty || []))),
+              st: Array.from(new Set([].concat(cacheObj.lut.st || [], deltaLut.st || [])))
+            });
+          }
+          spatialGrid = buildSpatialGrid(data);
+          buildSamProjectOptions(data, _lut);
+          if (!_isIOSCache) buildIdLookupIndex(data);
+          else { idExactLookupMap = null; idStrippedLookupMap = null; }
+        } else {
+          spatialGrid = cacheObj.spatialGrid;
+          applyPrebuiltProjectIndex(cacheObj.projIndex);
+          if (cacheObj.idExactLookupMap && cacheObj.idStrippedLookupMap) {
+            idExactLookupMap = cacheObj.idExactLookupMap;
+            idStrippedLookupMap = cacheObj.idStrippedLookupMap;
+          } else if (!_isIOSCache) {
+            buildIdLookupIndex(data);
+          } else { idExactLookupMap = null; idStrippedLookupMap = null; }
+        }
       } else {
-        idExactLookupMap = null;
-        idStrippedLookupMap = null;
+        if (cacheObj.idExactLookupMap && cacheObj.idStrippedLookupMap) {
+          idExactLookupMap = cacheObj.idExactLookupMap;
+          idStrippedLookupMap = cacheObj.idStrippedLookupMap;
+        } else if (!_isIOSCache) {
+          buildIdLookupIndex(data);
+        } else {
+          idExactLookupMap = null;
+          idStrippedLookupMap = null;
+        }
+        spatialGrid = cacheObj.spatialGrid;
+        applyPrebuiltProjectIndex(cacheObj.projIndex);
       }
-      spatialGrid = cacheObj.spatialGrid;
-      applyPrebuiltProjectIndex(cacheObj.projIndex);
+
+      cachedData = data;
+      window._activeMapCacheObj = hasCustomDelta ? null : cacheObj;
       restoreInMapFiltersFromParentUrl();
-      initInMapFilterChips(_lut, data, cacheObj.typeCounts);
+      initInMapFilterChips(_lut, data, hasCustomDelta ? null : cacheObj.typeCounts);
     } else {
       // Inline payload path (custom imports, filtered subsets, or static-write fallback)
       loaderText.innerText = "GZIP: ถอดรหัส และ Decompress ข้อมูลพิกัด...";
@@ -1448,10 +1603,11 @@ async function initMap() {
     if (mapPinMode === 'location') {
       applyInMapFilters(true);
     } else {
+      const initRadDisp = (typeof formatRadiusDisplay === 'function') ? formatRadiusDisplay(currentRadiusKm) : `${currentRadiusKm} กม.`;
       const ptCountEl = document.getElementById('points-count');
-      if (ptCountEl) ptCountEl.innerText = `คลิกบนแผนที่เพื่อกำหนดจุดอ้างอิง (รัศมี ${currentRadiusKm} กม.)`;
+      if (ptCountEl) ptCountEl.innerText = `คลิกบนแผนที่เพื่อกำหนดจุดอ้างอิง (รัศมี ${initRadDisp})`;
       const radStatusEl = document.getElementById('radius-status-text');
-      if (radStatusEl) radStatusEl.innerHTML = `คลิกบนแผนที่เพื่อกำหนดจุดอ้างอิง (รัศมี ${currentRadiusKm} กม.)`;
+      if (radStatusEl) radStatusEl.innerHTML = `คลิกบนแผนที่เพื่อกำหนดจุดอ้างอิง (รัศมี ${escapeHtml(initRadDisp)})`;
       updateLegendContent();
     }
     const overlapInit = document.getElementById('legend-overlap-text');
@@ -1530,8 +1686,15 @@ async function initMap() {
     if (initialBoundaryL) initialLayers.push(initialBoundaryL);
 
     const _isIOSDevice = !!(window.NovaMapCache && typeof window.NovaMapCache.isIOSOrIPadOS === 'function' && window.NovaMapCache.isIOSOrIPadOS());
+    const _initMapEl = document.getElementById('map');
+    const _initW = _initMapEl ? (_initMapEl.clientWidth || 0) : 0;
+    const _initH = _initMapEl ? (_initMapEl.clientHeight || 0) : 0;
+    _deckLastViewportW = _initW;
+    _deckLastViewportH = _initH;
     deckglInstance = new deck.DeckGL({
       container: 'map',
+      width: _initW > 0 ? _initW : '100%',
+      height: _initH > 0 ? _initH : '100%',
       mapboxApiAccessToken: false,
       useDevicePixels: _isIOSDevice ? 1 : true,
       glOptions: _isIOSDevice ? { antialias: false, preserveDrawingBuffer: false, powerPreference: 'default' } : undefined,
@@ -1574,14 +1737,24 @@ async function initMap() {
         });
         _ttObserverInstance.observe(mapContainer, { childList: true });
 
-        // Prevent uncaught WebGL context loss on iPadOS Safari from crashing the tab
+        // Prevent uncaught WebGL context loss on iPadOS Safari / long-idle Chrome from leaving a blank map
         try {
           const glCanvas = mapContainer.querySelector('canvas');
           if (glCanvas) {
             glCanvas.addEventListener('webglcontextlost', (ev) => {
               ev.preventDefault();
+              if (_webglLostTimer) clearTimeout(_webglLostTimer);
+              _webglLostTimer = setTimeout(() => {
+                _webglLostTimer = null;
+                _signalParentTab2TokenExpired('webgl_context_lost', 0);
+              }, 3500);
             }, false);
             glCanvas.addEventListener('webglcontextrestored', () => {
+              if (_webglLostTimer) {
+                clearTimeout(_webglLostTimer);
+                _webglLostTimer = null;
+              }
+              _signalParentTab2Alive();
               _triggerImmediateMapRedraw();
             }, false);
           }
@@ -1598,7 +1771,7 @@ async function initMap() {
             if (w > 0 && h > 0 && (w !== lastW || h !== lastH)) {
               lastW = w;
               lastH = h;
-              _triggerImmediateMapRedraw();
+              _triggerImmediateMapRedraw(true);
             }
           });
           _mapResizeObserver.observe(mapContainer);
@@ -1643,6 +1816,18 @@ async function initMap() {
     }
 
     loader.style.display = 'none';
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.__NOVA_TAB2_TOKEN_EXPIRED__ = null;
+      }
+    } catch (_e) {}
+    _signalParentTab2Alive();
+    if (_tab2HeartbeatTimer) clearInterval(_tab2HeartbeatTimer);
+    _tab2HeartbeatTimer = setInterval(() => {
+      if (document.visibilityState !== 'hidden' && deckglInstance) {
+        _signalParentTab2Alive();
+      }
+    }, 4000);
     // Defer 8 MB GeoJSON boundary scripts slightly so initial basemap tiles & WebGL textures get full priority
     _deferredBoundaryTimer = setTimeout(() => {
       _deferredBoundaryTimer = null;
@@ -1710,8 +1895,16 @@ async function initMap() {
       }, 100);
     }
   } catch(err) {
+    const errMsg = err && err.message ? err.message : String(err);
+    const isTokenErr = !!(
+      (err && (err.isTokenExpired || err.status === 404 || err.status === 410)) ||
+      /HTTP\s*(404|410)|Missing tokenized/i.test(errMsg)
+    );
+    if (isTokenErr) {
+      _signalParentTab2TokenExpired('payload_404', (err && err.status) || 404);
+    }
     loader.style.display = 'flex';
-    loaderText.innerHTML = `<span style="color: #ef4444;"><i class="fa-solid fa-circle-xmark" style="margin-right: 6px;"></i>โหลดแผนที่ล้มเหลว: ${escapeHtml(err && err.message ? err.message : String(err))}</span> <button type="button" onclick="loaderText.innerText='กำลังลองโหลดแผนที่ใหม่...'; initMap();" style="margin-left: 10px; padding: 4px 12px; border-radius: 9999px; border: none; background: #059669; color: #ffffff; font-weight: 700; font-size: 12px; cursor: pointer;">ลองโหลดใหม่</button>`;
+    loaderText.innerHTML = `<span style="color: #ef4444;"><i class="fa-solid fa-circle-xmark" style="margin-right: 6px;"></i>โหลดแผนที่ล้มเหลว: ${escapeHtml(errMsg)}</span> <button type="button" onclick="loaderText.innerText='กำลังขอ Token และโหลดแผนที่ใหม่...'; if (!_triggerParentTab2ReloadBtn()) { initMap(); }" style="margin-left: 10px; padding: 4px 12px; border-radius: 9999px; border: none; background: #059669; color: #ffffff; font-weight: 700; font-size: 12px; cursor: pointer;">ลองโหลดใหม่</button>`;
     console.error(err);
   }
 }

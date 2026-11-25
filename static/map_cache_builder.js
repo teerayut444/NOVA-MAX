@@ -301,10 +301,10 @@
       .replace(/อินดี้?/gi, 'อินดี้');
 
     txt = txt
-      .replace(/(?<![ก-๙a-zA-Z])([ก-๙a-zA-Z])\s*,\s*([ก-๙a-zA-Z])\s*,\s*([ก-๙a-zA-Z])(?![ก-๙a-zA-Z])/g, '$1$2$3')
-      .replace(/(?<![ก-๙a-zA-Z])([ก-๙a-zA-Z])\s*,\s*([ก-๙a-zA-Z])(?![ก-๙a-zA-Z])/g, '$1$2')
-      .replace(/(?<![ก-๙a-zA-Z])([ก-๙a-zA-Z])\s*\.\s*([ก-๙a-zA-Z])\s*\.\s*([ก-๙a-zA-Z])(?![ก-๙a-zA-Z])/g, '$1$2$3')
-      .replace(/(?<![ก-๙a-zA-Z])([ก-๙a-zA-Z])\s*\.\s*([ก-๙a-zA-Z])(?![ก-๙a-zA-Z])/g, '$1$2')
+      .replace(/(^|[^ก-๙a-zA-Z])([ก-๙a-zA-Z])\s*,\s*([ก-๙a-zA-Z])\s*,\s*([ก-๙a-zA-Z])(?![ก-๙a-zA-Z])/g, '$1$2$3$4')
+      .replace(/(^|[^ก-๙a-zA-Z])([ก-๙a-zA-Z])\s*,\s*([ก-๙a-zA-Z])(?![ก-๙a-zA-Z])/g, '$1$2$3')
+      .replace(/(^|[^ก-๙a-zA-Z])([ก-๙a-zA-Z])\s*\.\s*([ก-๙a-zA-Z])\s*\.\s*([ก-๙a-zA-Z])(?![ก-๙a-zA-Z])/g, '$1$2$3$4')
+      .replace(/(^|[^ก-๙a-zA-Z])([ก-๙a-zA-Z])\s*\.\s*([ก-๙a-zA-Z])(?![ก-๙a-zA-Z])/g, '$1$2$3')
       .replace(/\s*-\s*/g, '-')
       .replace(/คลอง\s*(\d+)/g, 'คลอง $1')
       .replace(/\s+/g, ' ')
@@ -327,7 +327,7 @@
       txt = nt;
     }
     txt = txt.replace(
-      /(\[.*?\]|\(.*?\)|\[[^\]]*$|\([^)]*$|,\s*(กรุงเทพมหานคร|กรุงเทพฯ|กรุงเทพ|นนทบุรี|ปทุมธานี|สมุทรปราการ|ชลบุรี|เชียงใหม่|ระยอง|ภูเก็ต).*$|[\s\-_/]+(?:อาคาร|ตึก)\s+[a-zA-Z0-9ก-๙]\s+ชั้น\s*\d+.*$|[\s\-_/]+ชั้น\s*\d+.*$|ชั้น\s*\d+.*$|(?:^|\s)(?:ติด|ใกล้)\s*(?:bts|mrt).*$)/gi,
+      /(\[.*?\]|\(\s*(?:มือสอง|เจ้าของขายเอง|ราคาพิเศษ|พร้อมอยู่|ขายด่วน|ด่วน|ลดราคา|รีโนเวท|renovate|ห้องมุม|corner|วิว[^)]*|ใกล้\s*(?:bts|mrt|arl)[^)]*|ติด\s*(?:bts|mrt|arl)[^)]*|ไม่ระบุ|ไม่มี|null|none)\s*\)|\[[^\]]*$|\([^)]*$|,\s*(กรุงเทพมหานคร|กรุงเทพฯ|กรุงเทพ|นนทบุรี|ปทุมธานี|สมุทรปราการ|ชลบุรี|เชียงใหม่|ระยอง|ภูเก็ต).*$|[\s\-_/]+(?:อาคาร|ตึก)\s+[a-zA-Z0-9ก-๙]\s+ชั้น\s*\d+.*$|[\s\-_/]+ชั้น\s*\d+.*$|ชั้น\s*\d+.*$|(?:^|\s)(?:ติด|ใกล้)\s*(?:bts|mrt).*$)/gi,
       ''
     );
 
@@ -952,12 +952,33 @@
     return null;
   }
 
-  function getValidParentCache(expectedMtime) {
+  function extractPayloadToken(url) {
+    if (!url) return '';
+    const m = String(url).match(/map_payload_([a-f0-9]{16,64})\.gz/i);
+    return m ? m[1].toLowerCase() : String(url).split('?')[0].trim();
+  }
+
+  function clearParentMapCache() {
+    const host = getParentHost();
+    if (!host) return;
+    try {
+      host.__NOVA_MAP_CACHE__ = null;
+      host.__NOVA_MAP_CACHE_PROMISE__ = null;
+      host.__NOVA_MAP_CACHE_PROMISE_KEY__ = '';
+    } catch (_e) {}
+  }
+
+  function getValidParentCache(expectedMtime, expectedPayloadUrl) {
     const host = getParentHost();
     if (!host || !host.__NOVA_MAP_CACHE__) return null;
     const c = host.__NOVA_MAP_CACHE__;
     if (!c.data || !c.data.length || !c.spatialGrid || !c.projIndex) return null;
     if (expectedMtime && String(c.mtime || '') !== String(expectedMtime)) return null;
+    if (expectedPayloadUrl) {
+      const wantTok = extractPayloadToken(expectedPayloadUrl);
+      const haveTok = c.payloadToken || extractPayloadToken(c.payloadUrl || (c.detailConfig && c.detailConfig.dir ? ('map_payload_' + String(c.detailConfig.dir).replace(/^map_details_/, '') + '.gz') : ''));
+      if (wantTok && haveTok && wantTok !== haveTok) return null;
+    }
     return c;
   }
 
@@ -1372,7 +1393,7 @@
     return '/app/static/' + detailDir;
   }
 
-  async function _finalizeCacheObj(mtimeStr, lutObj, data, detailConfig, onProgress) {
+  async function _finalizeCacheObj(mtimeStr, lutObj, data, detailConfig, onProgress, payloadUrl) {
     if (!data || !data.length) {
       throw new Error('Missing map coordinate rows');
     }
@@ -1392,8 +1413,11 @@
     // On iPadOS/iOS, defer the two 460k-entry ID Maps until first ID search to stay safely under WebKit Jetsam RAM limits
     const idLookup = isIOSOrIPadOS() ? { idExactLookupMap: null, idStrippedLookupMap: null } : buildIdLookupIndex(data);
 
+    const resolvedUrl = payloadUrl ? String(payloadUrl) : '';
     const cacheObj = {
       mtime: mtimeStr || '',
+      payloadUrl: resolvedUrl,
+      payloadToken: extractPayloadToken(resolvedUrl),
       lut: _lut,
       data: data,
       spatialGrid: spatialGrid,
@@ -1597,7 +1621,7 @@
       : null;
 
     const resolvedMtime = expectedMtime || String(headerObj.mtime || '');
-    return await _finalizeCacheObj(resolvedMtime, headerObj.lut, data, detailConfig, onProgress);
+    return await _finalizeCacheObj(resolvedMtime, headerObj.lut, data, detailConfig, onProgress, winningPayloadUrl);
   }
 
   function _expandChunkLink(encLink, lp) {
@@ -1647,6 +1671,19 @@
         }
       }
       if (lastErr || !jsonText) {
+        if (lastErr && (lastErr.status === 404 || lastErr.status === 410 || lastErr.isTokenExpired)) {
+          try {
+            const host = getParentHost();
+            if (host) {
+              host.__NOVA_TAB2_TOKEN_EXPIRED__ = {
+                reason: 'detail_chunk_404',
+                status: lastErr.status || 404,
+                url: chunkUrl,
+                ts: Date.now()
+              };
+            }
+          } catch (_e) {}
+        }
         throw lastErr || new Error('Failed to load detail chunk ' + chunkFile);
       }
       const parsed = JSON.parse(jsonText);
@@ -1730,14 +1767,17 @@
       }
     }
     if (lastStatus > 0) {
-      throw new Error('ไม่สามารถโหลดไฟล์แคชข้อมูลแผนที่ได้ (HTTP ' + lastStatus + ')');
+      const httpErr = new Error('ไม่สามารถโหลดไฟล์แคชข้อมูลแผนที่ได้ (HTTP ' + lastStatus + ')');
+      httpErr.status = lastStatus;
+      httpErr.isTokenExpired = (lastStatus === 404 || lastStatus === 410);
+      throw httpErr;
     }
     throw lastErr || new Error('ไม่สามารถโหลดไฟล์แคชข้อมูลแผนที่ได้ (HTTP 0)');
   }
 
   async function fetchAndBuildParentCache(mtimeToken, payloadUrl, onProgress) {
     const mtimeStr = mtimeToken ? String(mtimeToken) : '';
-    const existing = getValidParentCache(mtimeStr);
+    const existing = getValidParentCache(mtimeStr, payloadUrl);
     if (existing) {
       if (typeof onProgress === 'function') onProgress(100, '✓ พร้อมใช้งานแล้ว');
       return existing;
@@ -2020,6 +2060,8 @@
     computeTypeCounts: computeTypeCounts,
     getEffectiveSelfOrigin: getEffectiveSelfOrigin,
     getParentHost: getParentHost,
+    extractPayloadToken: extractPayloadToken,
+    clearParentMapCache: clearParentMapCache,
     getValidParentCache: getValidParentCache,
     buildAndStoreParentCache: buildAndStoreParentCache,
     fetchAndBuildParentCache: fetchAndBuildParentCache,

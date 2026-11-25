@@ -320,6 +320,7 @@ function _refreshCardDetailFields(d) {
 }
 
 function showPropertyCard(d, rebuildStack = true) {
+  if (d && d.item) d = d.item;
   activePropertyData = d;
   const card = document.getElementById('property-card');
   if (!card) return;
@@ -345,7 +346,7 @@ function showPropertyCard(d, rebuildStack = true) {
     if (activeCoordStack && activeCoordStack.length > 1) {
       stackNav.style.display = 'flex';
 
-      const coMap = {};
+      const coMap = Object.create(null);
       activeCoordStack.forEach(item => {
         const c = item._company || 'ไม่ระบุ';
         coMap[c] = (coMap[c] || 0) + 1;
@@ -410,7 +411,18 @@ function showPropertyCard(d, rebuildStack = true) {
   if (centroidWarning) centroidWarning.style.display = isCentroid ? 'flex' : 'none';
 
   title.innerText = _getDisplayItemTitle(d);
-  price.innerText = d._price_str || 'ไม่ระบุราคา';
+  const _isLegalCompany = (companyName === 'LED Legal' || companyName === 'LED_SOLD');
+  if (_isLegalCompany) {
+    if (d._sold_p !== undefined && d._sold_p !== null && +d._sold_p >= 500) {
+      price.innerText = `฿${Math.round(+d._sold_p).toLocaleString('en-US')} บาท (ขายได้)`;
+    } else if (d._price_str && d._price_str !== 'ไม่ระบุราคา') {
+      price.innerText = `${d._price_str} (ขายได้)`;
+    } else {
+      price.innerText = 'ไม่ระบุราคาขายได้';
+    }
+  } else {
+    price.innerText = d._price_str || 'ไม่ระบุราคา';
+  }
 
   const idEl = document.getElementById('card-id');
   const rawId = String(d._id || '').trim();
@@ -940,7 +952,7 @@ function openPropertyLink() {
     if (link.startsWith('app/static/')) {
       link = '/' + link;
     }
-    if (typeof resolveNovaStaticUrl === 'function' && link.startsWith('/app/static/')) {
+    if (typeof resolveNovaStaticUrl === 'function' && !/^https?:\/\//i.test(link) && link.indexOf('/' + 'app/static/') !== -1) {
       link = resolveNovaStaticUrl(link);
     }
     if (isSafeNavUrl(link)) {
@@ -1310,12 +1322,17 @@ let _instantBackdropActive = false;
 let _deckFirstViewportLoaded = false;
 let _userInteractedWithMap = false;
 let _instantBackdropSafetyTimer = null;
+let _instantBackdropWakeTimer = null;
 
 function dismissInstantMapBackdrop() {
   _instantBackdropActive = false;
   if (_instantBackdropSafetyTimer) {
     clearTimeout(_instantBackdropSafetyTimer);
     _instantBackdropSafetyTimer = null;
+  }
+  if (_instantBackdropWakeTimer) {
+    clearTimeout(_instantBackdropWakeTimer);
+    _instantBackdropWakeTimer = null;
   }
   try {
     const wrap = document.getElementById('map-instant-backdrop-wrap');
@@ -1329,11 +1346,26 @@ function dismissInstantMapBackdrop() {
 }
 
 function armInstantBackdropSafetyTimer() {
-  if (!_instantBackdropActive || _instantBackdropSafetyTimer) return;
-  _instantBackdropSafetyTimer = setTimeout(() => {
-    _instantBackdropSafetyTimer = null;
-    dismissInstantMapBackdrop();
-  }, 1500);
+  if (!_instantBackdropActive) return;
+  const mapEl = document.getElementById('map');
+  if (!mapEl || (mapEl.clientWidth || 0) <= 0 || (mapEl.clientHeight || 0) <= 0) return;
+  if (!_instantBackdropWakeTimer) {
+    _instantBackdropWakeTimer = setTimeout(() => {
+      _instantBackdropWakeTimer = null;
+      if (_instantBackdropActive && !_deckFirstViewportLoaded && typeof _triggerImmediateMapRedraw === 'function') {
+        _triggerImmediateMapRedraw(true);
+      }
+    }, 1000);
+  }
+  if (!_instantBackdropSafetyTimer) {
+    _instantBackdropSafetyTimer = setTimeout(() => {
+      _instantBackdropSafetyTimer = null;
+      if (!_deckFirstViewportLoaded && typeof _triggerImmediateMapRedraw === 'function') {
+        _triggerImmediateMapRedraw(true);
+      }
+      dismissInstantMapBackdrop();
+    }, 4500);
+  }
 }
 
 function clearDecodedTileBitmaps() {
@@ -1527,13 +1559,14 @@ function createBasemapLayer(styleName) {
     maxRequests: isIOS ? 8 : 64,
     maxCacheSize: isIOS ? 64 : 300,
     refinementStrategy: 'best-available',
-    onViewportLoad: () => {
+    onViewportLoad: (tiles) => {
       const mapEl = document.getElementById('map');
-      if (mapEl && mapEl.clientWidth > 0 && mapEl.clientHeight > 0) {
+      const hasLoadedTiles = Array.isArray(tiles) ? tiles.length > 0 : true;
+      if (hasLoadedTiles && mapEl && mapEl.clientWidth > 0 && mapEl.clientHeight > 0) {
         _deckFirstViewportLoaded = true;
         if (_instantBackdropActive) {
-          // Wait 1 paint frame so WebGL composites all loaded tiles before removing the pixel-identical backdrop
-          requestAnimationFrame(() => dismissInstantMapBackdrop());
+          // Wait 2 paint frames so WebGL composites all loaded tiles before removing the pixel-identical backdrop
+          requestAnimationFrame(() => requestAnimationFrame(() => dismissInstantMapBackdrop()));
         }
       }
     },
@@ -1569,7 +1602,10 @@ function createBasemapLayer(styleName) {
       if (predecoded) {
         // Transfer single ownership to DeckGL so tile unload cannot affect other consumers
         _decodedTileBitmapCache.delete(key);
-        return predecoded;
+        const isDetachedBitmap = (typeof ImageBitmap !== 'undefined' && predecoded instanceof ImageBitmap && (predecoded.width === 0 || predecoded.height === 0));
+        if (!isDetachedBitmap) {
+          return predecoded;
+        }
       }
       const blob = await window.NovaMapCache.fetchAndCacheTileBlob(
         styleName,
@@ -1608,7 +1644,7 @@ function getMapTooltip(info) {
         document.body.appendChild(tt);
       }
     }, 0);
-    const d = info.object;
+    const d = (info.object && info.object.item) ? info.object.item : info.object;
     const coordKey = getCoordKey(d);
     const stack = (currentCoordMap && currentCoordMap.get(coordKey)) || [d];
     const hasOverlap = stack.length > 1;
@@ -1616,7 +1652,7 @@ function getMapTooltip(info) {
     let overlapHtml = '';
     const fmtUnitInt = v => `฿${Math.round(v).toLocaleString()}`;
     if (hasOverlap) {
-      const coCounts = {};
+      const coCounts = Object.create(null);
       let minP = Infinity, maxP = -Infinity;
       let minPuw = Infinity, maxPuw = -Infinity;
       let minPum = Infinity, maxPum = -Infinity;
@@ -1792,11 +1828,12 @@ const PROP_TYPE_COLORS = {
 
 function getCompanyLogoUri(co) {
   if (!companyLogos || !co) return null;
-  if (companyLogos[co]) return companyLogos[co];
+  const _hasOwn = Object.prototype.hasOwnProperty;
+  if (_hasOwn.call(companyLogos, co)) return companyLogos[co];
   const lower = String(co).toLowerCase().replace(/[\s\-_]+/g, '');
-  if (companyLogos[lower]) return companyLogos[lower];
+  if (_hasOwn.call(companyLogos, lower)) return companyLogos[lower];
   const upper = String(co).toUpperCase().replace(/[\s\-_]+/g, '');
-  if (companyLogos[upper]) return companyLogos[upper];
+  if (_hasOwn.call(companyLogos, upper)) return companyLogos[upper];
 
   for (const [k, v] of Object.entries(companyLogos)) {
     const cleanK = String(k).toLowerCase().replace(/[\s\-_]+/g, '').replace('logo', '');

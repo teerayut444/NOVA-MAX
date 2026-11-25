@@ -250,11 +250,11 @@ def _render_admin_logs_body(is_dark_mode):
                 data=lambda: user_logger.export_auth_logs_csv() or "id,event_time,event_type,username,user_name,ip,session_id,user_agent,details\n",
                 file_name=f"auth_logs_{file_date_tag}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
                 key="btn_download_auth_logs",
             )
         with a_col2:
-            if st.button("รีเฟรช", icon=":material/refresh:", use_container_width=True, key="btn_refresh_auth_logs"):
+            if st.button("รีเฟรช", icon=":material/refresh:", width="stretch", key="btn_refresh_auth_logs"):
                 st.rerun(scope="fragment") if _fragment_decorator is not None else st.rerun()
         return
 
@@ -469,11 +469,11 @@ def _render_admin_logs_body(is_dark_mode):
             data=lambda: user_logger.export_logs_csv() or "id,user_name,machine_user,ip,session_id,first_seen,last_seen,duration_seconds,duration_minutes,visit_count,user_agent\n",
             file_name=f"access_logs_{file_date_tag}.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
             key="btn_download_logs",
         )
     with btn_col2:
-        if st.button("รีเฟรช", icon=":material/refresh:", use_container_width=True, key="btn_refresh_logs"):
+        if st.button("รีเฟรช", icon=":material/refresh:", width="stretch", key="btn_refresh_logs"):
             st.rerun(scope="fragment") if _fragment_decorator is not None else st.rerun()
 
 
@@ -513,7 +513,7 @@ def _render_admin_panel(is_dark_mode):
                     submitted_unlock = st.form_submit_button(
                         "",
                         icon=":material/lock_open:",
-                        use_container_width=True,
+                        width="stretch",
                         help="ปลดล็อคระบบผู้ดูแลด้วยรหัสผ่าน admin (เดียวกับหน้า Login)",
                     )
 
@@ -606,7 +606,7 @@ def _render_admin_panel(is_dark_mode):
                 '<i class="fa-solid fa-shield-halved"></i> <span>ผู้ดูแลระบบ (Admin)</span></div>'
             )
         with col_logout_btn:
-            if st.button("ล็อค", icon=":material/lock:", key="btn_log_logout", use_container_width=True, help="ล็อคแผงผู้ดูแลระบบ"):
+            if st.button("ล็อค", icon=":material/lock:", key="btn_log_logout", width="stretch", help="ล็อคแผงผู้ดูแลระบบ"):
                 st.session_state["_log_auth"] = False
                 st.session_state["_admin_manual_lock"] = True
                 st.session_state["_confirm_clear_server_cache"] = False
@@ -628,7 +628,7 @@ def _render_admin_panel(is_dark_mode):
             "ล้างแคชทั้งระบบ (Clear Server Cache)",
             icon=":material/cleaning_services:",
             key="btn_admin_clear_server_cache",
-            use_container_width=True,
+            width="stretch",
             help="ล้างแคชข้อมูลและทรัพยากรระดับเซิร์ฟเวอร์ทั้งหมด (st.cache_data และ st.cache_resource) โหลดข้อมูลใหม่จากดิสก์",
         ):
             st.session_state["_confirm_clear_server_cache"] = True
@@ -638,9 +638,9 @@ def _render_admin_panel(is_dark_mode):
             st.warning("⚠️ การล้างแคชเซิร์ฟเวอร์จะส่งผลต่อผู้ใช้งานทุกคนบน LAN ชั่วคราว ต้องการยืนยันหรือไม่?")
             c_cf1, c_cf2 = st.columns(2)
             with c_cf1:
-                confirm_clear = st.button("ยืนยันล้างแคช", type="primary", key="btn_confirm_clear_server_cache", use_container_width=True)
+                confirm_clear = st.button("ยืนยันล้างแคช", type="primary", key="btn_confirm_clear_server_cache", width="stretch")
             with c_cf2:
-                if st.button("ยกเลิก", key="btn_cancel_clear_server_cache", use_container_width=True):
+                if st.button("ยกเลิก", key="btn_cancel_clear_server_cache", width="stretch"):
                     st.session_state["_confirm_clear_server_cache"] = False
                     st.rerun()
 
@@ -744,6 +744,14 @@ def render_sidebar(df_raw):
                         }
                     } catch (_e) {}
                     try {
+                        win.__NOVA_MAP_CACHE__ = null;
+                        win.__NOVA_MAP_CACHE_PROMISE__ = null;
+                        win.__NOVA_MAP_CACHE_PROMISE_KEY__ = '';
+                        win.__NOVA_TAB5_CACHE__ = null;
+                        win.__NOVA_TAB2_TOKEN_EXPIRED__ = null;
+                        win.__NOVA_TAB2_ALIVE_TS__ = 0;
+                    } catch (_e) {}
+                    try {
                         var doc = win.document;
                         if (doc) {
                             var cards = doc.querySelectorAll('.floating-kpi-container .floating-card');
@@ -825,7 +833,7 @@ def render_sidebar(df_raw):
                     unsafe_allow_html=True,
                 )
             with col_user_logout:
-                if st.button("ออก", icon=":material/logout:", key="btn_user_logout", use_container_width=True, help="ออกจากระบบ (Logout)"):
+                if st.button("ออก", icon=":material/logout:", key="btn_user_logout", width="stretch", help="ออกจากระบบ (Logout)"):
                     try:
                         user_logger.log_auth_event(
                             "logout",
@@ -841,6 +849,7 @@ def render_sidebar(df_raw):
                         pass
                     # Full session wipe ensures imported_custom_df, export buffers, and admin state never leak across users
                     st.session_state.clear()
+                    st.session_state["_nova_just_logged_out"] = True
                     st.rerun()
 
         if df_raw is not None and not df_raw.empty:
@@ -861,7 +870,7 @@ def render_sidebar(df_raw):
             "รีเซ็ตตัวกรอง",
             icon=":material/restart_alt:",
             key="btn_reset_filters_main",
-            use_container_width=True,
+            width="stretch",
             on_click=_reset_dashboard_all_callback,
             help="รีเซ็ตตัวกรองทุกแท็บ ไฟล์นำเข้า พิกัดที่บันทึก ธีม (โหมดสว่าง) และกลับหน้า Welcome เพื่อโหลดเข้าหน้าแรกใหม่โดยไม่ต้องล็อกอินซ้ำ",
         )

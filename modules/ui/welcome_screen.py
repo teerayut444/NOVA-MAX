@@ -182,6 +182,12 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta, is_from
           pWin.__NOVA_TAB_LISTENER_CLEANUP__();
           pWin.__NOVA_TAB_LISTENER_CLEANUP__ = null;
         }}
+        pWin.__NOVA_MAP_CACHE__ = null;
+        pWin.__NOVA_MAP_CACHE_PROMISE__ = null;
+        pWin.__NOVA_MAP_CACHE_PROMISE_KEY__ = '';
+        pWin.__NOVA_TAB5_CACHE__ = null;
+        pWin.__NOVA_TAB2_TOKEN_EXPIRED__ = null;
+        pWin.__NOVA_TAB2_ALIVE_TS__ = 0;
       }}
     }} catch (_e) {{}}
   }}
@@ -280,10 +286,16 @@ def _render_browser_map_prewarmer(data_mtime, builder_ver, payload_meta, is_from
   function hasValidParentCacheFast() {{
     try {{
       if (window.NovaMapCache && typeof window.NovaMapCache.getValidParentCache === 'function') {{
-        return !!window.NovaMapCache.getValidParentCache(MTIME_TOKEN);
+        return !!window.NovaMapCache.getValidParentCache(MTIME_TOKEN, PAYLOAD_URL);
       }}
       const c = window.parent && window.parent.__NOVA_MAP_CACHE__;
-      return !!(c && c.data && c.data.length > 0 && c.spatialGrid && c.projIndex && String(c.mtime || '') === MTIME_TOKEN);
+      if (!(c && c.data && c.data.length > 0 && c.spatialGrid && c.projIndex && String(c.mtime || '') === MTIME_TOKEN)) {{
+        return false;
+      }}
+      if (PAYLOAD_URL && c.payloadUrl && String(c.payloadUrl) !== String(PAYLOAD_URL)) {{
+        return false;
+      }}
+      return true;
     }} catch (_e) {{
       return false;
     }}
@@ -419,7 +431,7 @@ def _render_welcome_login_card():
                 "เข้าสู่ระบบ",
                 icon=":material/login:",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             )
 
         if submitted:
@@ -431,6 +443,7 @@ def _render_welcome_login_card():
             remaining_lock = max(
                 check_lockout(attempt_state),
                 check_server_lockout("login", srv_lock_key),
+                check_server_lockout("login_ip", clean_ip or "unknown"),
             )
 
             if remaining_lock > 0:
@@ -451,6 +464,7 @@ def _render_welcome_login_card():
             auth_res = authenticate_user(clean_u, password_input or "")
             if auth_res["ok"]:
                 reset_server_attempts("login", srv_lock_key)
+                reset_server_attempts("login_ip", clean_ip or "unknown")
                 st.session_state["authenticated"] = True
                 st.session_state["auth_username"] = auth_res["username"]
                 st.session_state["auth_display_name"] = auth_res["display_name"]
@@ -491,7 +505,13 @@ def _render_welcome_login_card():
 
             new_state, sess_locked_for = record_failed_attempt(attempt_state)
             srv_state, srv_locked_for = record_server_failed_attempt("login", srv_lock_key)
-            locked_for = max(sess_locked_for, srv_locked_for)
+            _ip_state, ip_locked_for = record_server_failed_attempt(
+                "login_ip",
+                clean_ip or "unknown",
+                max_attempts=15,
+                lockout_seconds=120,
+            )
+            locked_for = max(sess_locked_for, srv_locked_for, ip_locked_for)
             st.session_state["_login_attempts"] = new_state
             if locked_for > 0:
                 try:
@@ -578,9 +598,9 @@ def render_welcome_screen():
 
     from modules.config.constants import rewrite_static_paths
     st.html(rewrite_static_paths(f"""
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&family=Outfit:wght@600;700;800;900&family=Noto+Sans+Thai:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com" referrerpolicy="no-referrer">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin referrerpolicy="no-referrer">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&family=Outfit:wght@600;700;800;900&family=Noto+Sans+Thai:wght@500;600;700;800&display=swap" rel="stylesheet" referrerpolicy="no-referrer">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&family=Outfit:wght@600;700;800;900&family=Noto+Sans+Thai:wght@500;600;700;800&display=swap');
 {fa_inlined_css}
@@ -814,6 +834,33 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
 """))
 
     if not is_authenticated:
+        if st.session_state.pop("_nova_just_logged_out", False):
+            st.html(
+                """
+                <script>
+                (function() {
+                    try {
+                        var pWin = window.parent || window;
+                        if (pWin.localStorage) {
+                            for (var i = pWin.localStorage.length - 1; i >= 0; i--) {
+                                var k = pWin.localStorage.key(i);
+                                if (k && k.indexOf('nova_saved_reference_coords') === 0) {
+                                    pWin.localStorage.removeItem(k);
+                                }
+                            }
+                        }
+                        delete pWin.__NOVA_MAP_CACHE__;
+                        delete pWin.__NOVA_BOUNDARY_CACHE__;
+                        if (typeof pWin.__NOVA_TAB_LISTENER_CLEANUP__ === 'function') {
+                            pWin.__NOVA_TAB_LISTENER_CLEANUP__();
+                            pWin.__NOVA_TAB_LISTENER_CLEANUP__ = null;
+                        }
+                    } catch (_e) {}
+                })();
+                </script>
+                """,
+                unsafe_allow_javascript=True,
+            )
         _render_welcome_login_card()
         return
 
@@ -869,7 +916,7 @@ div[data-testid="stElementContainer"]:has(.st-key-welcome_prewarm_host) {{
                 pts_label = f" {len(df_p):,} จุด"
 
         update_welcome_progress(progress_slot, 65, f"กำลังเตรียม Tab 2: พิกัดแผนที่{pts_label}...")
-        payload_meta = precompute_full_map_html(cur_mtime) or payload_meta
+        payload_meta = precompute_full_map_html(cur_mtime, force_refresh=is_from_reset) or payload_meta
         get_map_icon_atlas_and_mapping(include_session_custom=False)
         get_leaflet_logo_dict(include_session_custom=False)
         if df_p is not None and not df_p.empty:

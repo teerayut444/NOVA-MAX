@@ -52,7 +52,21 @@ def _compute_df_content_fp(df_obj):
     return h.hexdigest()
 
 
-def _build_tab2_show_df_uncached(
+def _materialize_export_df(show_df, export_proj_full=None, price_ref_id=""):
+    """Builds export DataFrame via shallow column sharing to avoid duplicating 100k+ rows in RAM."""
+    df_to_export = show_df.copy(deep=False)
+    if export_proj_full is not None:
+        df_to_export['ชื่อโครงการ'] = export_proj_full
+    if price_ref_id and not df_to_export.empty and 'รหัสทรัพย์' in df_to_export.columns:
+        first_val = str(df_to_export['รหัสทรัพย์'].iat[0])
+        if first_val.startswith('[อ้างอิง] '):
+            id_col = df_to_export['รหัสทรัพย์'].copy()
+            id_col.iat[0] = first_val[len('[อ้างอิง] '):]
+            df_to_export['รหัสทรัพย์'] = id_col
+    return df_to_export
+
+
+def _build_tab2_show_df_compact(
     filtered_nearby,
     is_fn_pure_land,
     median_raw_land,
@@ -64,21 +78,26 @@ def _build_tab2_show_df_uncached(
     price_ref_id="",
     price_ref_company="",
 ):
-    """Core vectorized builder for Tab 2 comparison table (show_df, df_to_export, has_valid_proj)."""
+    """Core vectorized builder returning (show_df, export_proj_full_or_none, has_valid_proj) without duplicating show_df."""
     show_df = pd.DataFrame(index=filtered_nearby.index)
+    has_trunc_proj = False
 
     # 1. บริษัท, รหัสทรัพย์, ชื่อโครงการ, ประเภททรัพย์
     for col in ('บริษัท', 'รหัสทรัพย์', 'ชื่อโครงการ', 'ประเภททรัพย์'):
         if col in filtered_nearby.columns:
             if col == 'ชื่อโครงการ':
                 proj_clean = _clean_str_series(filtered_nearby[col], '-')
-                show_df[col] = np.where(proj_clean.str.len() > 35, proj_clean.str.slice(0, 35) + '...', proj_clean)
-                show_df['_export_proj_full'] = proj_clean
+                long_mask = proj_clean.str.len() > 35
+                has_trunc_proj = bool(long_mask.any())
+                if has_trunc_proj:
+                    show_df[col] = np.where(long_mask, proj_clean.str.slice(0, 35) + '...', proj_clean)
+                    show_df['_export_proj_full'] = proj_clean
+                else:
+                    show_df[col] = proj_clean
             else:
                 show_df[col] = _clean_str_series(filtered_nearby[col], '-')
         elif col == 'ชื่อโครงการ':
             show_df[col] = '-'
-            show_df['_export_proj_full'] = '-'
 
     # 2. ราคา (บาท)
     price_num = pd.to_numeric(filtered_nearby['ราคา'], errors='coerce') if 'ราคา' in filtered_nearby.columns else pd.Series(np.nan, index=filtered_nearby.index)
@@ -357,17 +376,71 @@ def _build_tab2_show_df_uncached(
             (show_df['ชื่อโครงการ'].astype(str).str.strip().replace({'': '-', 'nan': '-', 'None': '-', 'null': '-', '<NA>': '-'}) != '-').any()
         )
 
-    df_to_export = show_df.copy()
-    if '_export_proj_full' in df_to_export.columns:
-        df_to_export['ชื่อโครงการ'] = df_to_export.pop('_export_proj_full')
+    export_proj_full = show_df.pop('_export_proj_full') if (has_trunc_proj and '_export_proj_full' in show_df.columns) else None
     if '_export_proj_full' in show_df.columns:
         show_df = show_df.drop(columns=['_export_proj_full'])
-    if 'รหัสทรัพย์' in df_to_export.columns:
-        df_to_export['รหัสทรัพย์'] = df_to_export['รหัสทรัพย์'].astype(str).str.replace('[อ้างอิง] ', '', regex=False)
+    return show_df, export_proj_full, has_valid_proj
+
+
+def _build_tab2_show_df_uncached(
+    filtered_nearby,
+    is_fn_pure_land,
+    median_raw_land,
+    median_sqw_val,
+    median_u_sel,
+    median_sqm_val,
+    price_ref_sqw=0.0,
+    price_ref_sqm=0.0,
+    price_ref_id="",
+    price_ref_company="",
+):
+    """Core vectorized builder for Tab 2 comparison table (show_df, df_to_export, has_valid_proj)."""
+    show_df, export_proj_full, has_valid_proj = _build_tab2_show_df_compact(
+        filtered_nearby,
+        is_fn_pure_land,
+        median_raw_land,
+        median_sqw_val,
+        median_u_sel,
+        median_sqm_val,
+        price_ref_sqw=price_ref_sqw,
+        price_ref_sqm=price_ref_sqm,
+        price_ref_id=price_ref_id,
+        price_ref_company=price_ref_company,
+    )
+    df_to_export = _materialize_export_df(show_df, export_proj_full, price_ref_id=price_ref_id)
     return show_df, df_to_export, has_valid_proj
 
 
-@st.cache_data(show_spinner=False, max_entries=4)
+@st.cache_data(show_spinner=False, max_entries=2)
+def _build_tab2_show_df_compact_cached(
+    _filtered_nearby,
+    _is_fn_pure_land,
+    median_raw_land,
+    median_sqw_val,
+    median_u_sel,
+    median_sqm_val,
+    price_ref_sqw=0.0,
+    price_ref_sqm=0.0,
+    price_ref_id="",
+    cache_key=None,
+    price_ref_company="",
+):
+    """Memory-lean cached wrapper storing a single DataFrame + optional full-project Series."""
+    return _build_tab2_show_df_compact(
+        _filtered_nearby,
+        _is_fn_pure_land,
+        median_raw_land,
+        median_sqw_val,
+        median_u_sel,
+        median_sqm_val,
+        price_ref_sqw=price_ref_sqw,
+        price_ref_sqm=price_ref_sqm,
+        price_ref_id=price_ref_id,
+        price_ref_company=price_ref_company,
+    )
+
+
+@st.cache_data(show_spinner=False, max_entries=2)
 def _build_tab2_show_df_cached(
     _filtered_nearby,
     _is_fn_pure_land,
@@ -564,7 +637,7 @@ def render_tab2_nearby_table_and_export(
                 _has_dist_k,
                 bool(is_comparison_active),
             )
-            show_df, df_to_export, has_valid_proj = _build_tab2_show_df_cached(
+            show_df, export_proj_full, has_valid_proj = _build_tab2_show_df_compact_cached(
                 filtered_nearby,
                 is_fn_pure_land,
                 median_raw_land,
@@ -576,6 +649,11 @@ def render_tab2_nearby_table_and_export(
                 price_ref_id=ref_prop_code if active_price_ref_prop else "",
                 cache_key=_tbl_cache_key,
                 price_ref_company=ref_prop_company if active_price_ref_prop else "",
+            )
+            df_to_export = _materialize_export_df(
+                show_df,
+                export_proj_full,
+                price_ref_id=ref_prop_code if active_price_ref_prop else "",
             )
 
         proj_col_width = "medium" if has_valid_proj else "small"
@@ -667,4 +745,5 @@ def render_tab2_nearby_table_and_export(
         safe_scope_fname = _FILENAME_CLEAN_RE.sub("_", str(scope_header or "map")).strip("_")[:60] or "map"
         render_import_export_section(df_to_export, filename_prefix=f"comparison_{safe_scope_fname}", key_suffix="tab2_compare")
     else:
-        st.info(f"ไม่พบรายการทรัพย์สินที่ตรงตามเงื่อนไขตัวกรอง {scope_header}")
+        safe_scope_md = re.sub(r'([\\`*_{}\[\]()#+\-!|>$])', r'\\\1', str(scope_header or ''))
+        st.info(f"ไม่พบรายการทรัพย์สินที่ตรงตามเงื่อนไขตัวกรอง {safe_scope_md}")

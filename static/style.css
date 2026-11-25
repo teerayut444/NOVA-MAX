@@ -1457,127 +1457,6 @@ header[data-testid="stHeader"] img.stLogo {
     border-radius: 5px !important;
     filter: drop-shadow(0 2px 4px rgba(0,0,0,0.18)) !important;
 }
-[data-testid="stSidebarCollapseButton"],
-[data-testid="stSidebarCollapseButton"] button,
-button[data-testid="stSidebarCollapseButton"],
-[data-testid="stSidebarNavCollapseButton"],
-[data-testid="stSidebarHeader"] button,
-section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] button,
-section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"],
-section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] button,
-section[data-testid="stSidebar"] button[kind="headerNoPadding"],
-section[data-testid="stSidebar"] button[kind="header"] {
-    display: inline-flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    pointer-events: auto !important;
-    margin-left: auto !important;
-    margin-right: 0 !important;
-    right: 0 !important;
-    left: auto !important;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    color: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important;
-}
-[data-testid="stSidebarCollapseButton"] *,
-[data-testid="stSidebarCollapseButton"] svg,
-[data-testid="stSidebarCollapseButton"] svg *,
-[data-testid="stSidebarCollapseButton"] svg path,
-button[data-testid="stSidebarCollapseButton"] *,
-button[data-testid="stSidebarCollapseButton"] svg,
-button[data-testid="stSidebarCollapseButton"] svg path,
-[data-testid="stSidebarHeader"] button *,
-[data-testid="stSidebarHeader"] button svg,
-[data-testid="stSidebarHeader"] button svg path,
-section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] button *,
-section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] button svg,
-section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] button svg path,
-section[data-testid="stSidebar"] button[kind="headerNoPadding"] *,
-section[data-testid="stSidebar"] button[kind="headerNoPadding"] svg,
-section[data-testid="stSidebar"] button[kind="headerNoPadding"] svg path,
-section[data-testid="stSidebar"] button[kind="header"] *,
-section[data-testid="stSidebar"] button[kind="header"] svg,
-section[data-testid="stSidebar"] button[kind="header"] svg path {
-    color: #ffffff !important;
-    fill: #ffffff !important;
-    stroke: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important;
-    opacity: 1 !important;
-    filter: none !important;
-    text-shadow: none !important;
-    box-shadow: none !important;
-}
-[data-testid="stSidebarCollapseButton"]:hover *,
-[data-testid="stSidebarCollapseButton"] button:hover *,
-[data-testid="stSidebarHeader"] button:hover *,
-section[data-testid="stSidebar"] button[kind="headerNoPadding"]:hover * {
-    color: #34d399 !important;
-    fill: #34d399 !important;
-    stroke: #34d399 !important;
-    -webkit-text-fill-color: #34d399 !important;
-    filter: none !important;
-    text-shadow: none !important;
-    box-shadow: none !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    margin-bottom: 10px !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] > details {
-    background-color: rgba(2, 44, 34, 0.85) !important;
-    background: rgba(2, 44, 34, 0.85) !important;
-    border: 1px solid rgba(52, 211, 153, 0.35) !important;
-    border-radius: 10px !important;
-    overflow: hidden !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
-    padding: 0 !important;
-    margin: 0 !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] > details > summary {
-    background-color: transparent !important;
-    color: #ffffff !important;
-    border: none !important;
-    padding: 9px 12px !important;
-    margin: 0 !important;
-    display: flex !important;
-    align-items: center !important;
-    cursor: pointer !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] > details > summary:hover {
-    background-color: rgba(16, 185, 129, 0.15) !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] > details[open] > summary {
-    border-bottom: 1px solid rgba(52, 211, 153, 0.25) !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] > details > summary p,
-section[data-testid="stSidebar"] [data-testid="stExpander"] > details > summary span,
-section[data-testid="stSidebar"] [data-testid="stExpander"] > details > summary div {
-    color: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important;
-    font-weight: 700 !important;
-    font-size: 0.88rem !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] > details > summary [data-testid="stIconMaterial"],
-section[data-testid="stSidebar"] [data-testid="stExpander"] > details > summary i {
-    color: #34d399 !important;
-    -webkit-text-fill-color: #34d399 !important;
-    font-size: 1.15rem !important;
-    margin-right: 6px !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] > details > summary svg {
-    fill: #34d399 !important;
-    color: #34d399 !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
-    background-color: transparent !important;
-    border: none !important;
-    padding: 10px 12px 14px 12px !important;
-}
 /* Ensure sidebar radios/checkboxes/toggles remain readable on dark-green sidebar even in Light Mode */
 section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] label,
 section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] label p,
@@ -1649,6 +1528,72 @@ section[data-testid="stSidebar"] div[data-testid="stToggle"] label p {
     font-weight: 500 !important;
 }
 
+/* Tab 2 Map Stage & External Floating Reload Button (lives outside iframe so it stays clickable even if iframe crashes) */
+.st-key-tab2_map_stage {
+    position: relative !important;
+}
+.st-key-tab2_map_stage .st-key-btn_tab2_reload_map,
+.st-key-tab2_map_stage [data-testid="stElementContainer"]:has(.st-key-btn_tab2_reload_map) {
+    position: absolute !important;
+    top: 100px !important;
+    right: 16px !important;
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    z-index: 40 !important;
+    pointer-events: auto !important;
+}
+.st-key-tab2_map_stage .st-key-btn_tab2_reload_map > [data-testid="stButton"] {
+    width: auto !important;
+}
+.st-key-btn_tab2_reload_map button {
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    border-radius: 9999px !important;
+    background: var(--card-bg, rgba(255, 255, 255, 0.96)) !important;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1.5px solid var(--card-border, rgba(0, 0, 0, 0.10)) !important;
+    box-shadow: 0 6px 20px -2px rgba(0, 0, 0, 0.16), 0 2px 6px -1px rgba(0, 0, 0, 0.08) !important;
+    color: var(--primary-accent, #059669) !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease !important;
+}
+.st-key-btn_tab2_reload_map button:hover {
+    border-color: var(--primary-accent, #059669) !important;
+    box-shadow: 0 8px 24px rgba(5, 150, 105, 0.26) !important;
+    transform: translateY(-1px) !important;
+}
+.st-key-btn_tab2_reload_map button p,
+.st-key-btn_tab2_reload_map button [data-testid="stMarkdownContainer"] {
+    display: none !important;
+}
+.st-key-btn_tab2_reload_map button span[data-testid="stIconMaterial"] {
+    font-size: 1.15rem !important;
+    margin: 0 !important;
+    line-height: 1 !important;
+}
+@media (max-width: 1220px) {
+    .st-key-tab2_map_stage .st-key-btn_tab2_reload_map,
+    .st-key-tab2_map_stage [data-testid="stElementContainer"]:has(.st-key-btn_tab2_reload_map) {
+        top: 82px !important;
+        right: 12px !important;
+    }
+}
+@media (max-width: 860px) {
+    .st-key-tab2_map_stage .st-key-btn_tab2_reload_map,
+    .st-key-tab2_map_stage [data-testid="stElementContainer"]:has(.st-key-btn_tab2_reload_map) {
+        top: 10px !important;
+        right: 10px !important;
+    }
+}
+
 /* iPad / Touch Tablet: large comfortable map (~80% viewport) while keeping page scrolling effortless */
 @media (pointer: coarse) and (max-width: 1366px) {
     .st-key-tab_map iframe,
@@ -1662,5 +1607,9 @@ section[data-testid="stSidebar"] div[data-testid="stToggle"] label p {
         padding-left: 6px !important;
         padding-right: 6px !important;
         box-sizing: border-box !important;
+    }
+    .st-key-tab2_map_stage .st-key-btn_tab2_reload_map,
+    .st-key-tab2_map_stage [data-testid="stElementContainer"]:has(.st-key-btn_tab2_reload_map) {
+        right: 18px !important;
     }
 }
