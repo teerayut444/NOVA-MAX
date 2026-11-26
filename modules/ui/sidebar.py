@@ -801,7 +801,7 @@ def render_sidebar(df_raw):
             st.markdown(
                 """
                 <div style="display: flex; flex-direction: column; justify-content: center; margin-bottom: 2px; padding-top: 2px;">
-                    <div style="font-size: 1.35rem; font-weight: 800; color: #ffffff; line-height: 1.1; letter-spacing: -0.5px;">NOVA <span style="font-size: 0.72rem; font-weight: 600; color: #a7f3d0; letter-spacing: 0.2px;">v1.3</span></div>
+                    <div style="font-size: 1.35rem; font-weight: 800; color: #ffffff; line-height: 1.1; letter-spacing: -0.5px;">NOVA <span style="font-size: 0.72rem; font-weight: 600; color: #a7f3d0; letter-spacing: 0.2px;">v1.4</span></div>
                     <div style="font-size: 0.68rem; font-weight: 700; color: #a7f3d0; letter-spacing: 0.8px;">NPA DASHBOARD</div>
                 </div>
                 """,
