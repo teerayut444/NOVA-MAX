@@ -1256,6 +1256,35 @@ def get_dataset_month_year(_df, data_mtime=None, exclude_legal=True):
     row_cnt = len(_df) if _df is not None else 0
     return _get_dataset_month_year_cached(_df, cache_key=(data_mtime, row_cnt, exclude_legal, 'no_led_legal_v2'), exclude_legal=exclude_legal)
 
+def _sanitize_type_area_invariants(df):
+    """Enforce universal property-type vs area invariants across all companies:
+    - Condos ('ห้องชุดพักอาศัย', 'ห้องชุดพาณิชยกรรม/สำนักงาน', etc.) must NOT have land area / price-per-sq.wah.
+    - Vacant land ('ที่ดินเปล่า') must NOT have usable area / price-per-sq.m. / floor.
+    """
+    if df is None or df.empty or 'ประเภททรัพย์' not in df.columns:
+        return df
+
+    pt_s = df['ประเภททรัพย์'].astype(object).fillna('').astype(str).str.strip()
+    condo_mask = pt_s.str.contains(r'ห้องชุด|คอนโด', regex=True, na=False)
+    if condo_mask.any():
+        if 'เนื้อที่ (ตร.ว.)' in df.columns:
+            df.loc[condo_mask, 'เนื้อที่ (ตร.ว.)'] = None
+        if 'พื้นที่_ตารางวา' in df.columns:
+            df.loc[condo_mask, 'พื้นที่_ตารางวา'] = np.nan
+        if 'ราคาต่อตารางวา' in df.columns:
+            df.loc[condo_mask, 'ราคาต่อตารางวา'] = np.nan
+
+    land_mask = pt_s.isin({'ที่ดินเปล่า', 'ที่ดิน', 'ที่ดินว่างเปล่า', 'ที่ดินเกษตรกรรม'})
+    if land_mask.any():
+        if 'พื้นที่ใช้สอย (ตร.ม.)' in df.columns:
+            df.loc[land_mask, 'พื้นที่ใช้สอย (ตร.ม.)'] = np.nan
+        if 'ราคาต่อตารางเมตร' in df.columns:
+            df.loc[land_mask, 'ราคาต่อตารางเมตร'] = np.nan
+        if 'ชั้น' in df.columns:
+            df.loc[land_mask, 'ชั้น'] = None
+    return df
+
+
 def _sanitize_unit_prices(df):
     """Clear unit prices when total price is missing/invalid or when unit rates exceed realistic bounds."""
     has_price = 'ราคา' in df.columns
@@ -1419,6 +1448,7 @@ def ensure_derived_cols(df, persist_cache=False):
             for col in ['บริษัท', 'ประเภททรัพย์', 'จังหวัด', 'ภาค', 'ประเภทการขาย', 'อำเภอ', 'ตำบล']:
                 if col in df.columns and not isinstance(df[col].dtype, pd.CategoricalDtype):
                     df[col] = df[col].astype('category')
+            df = _sanitize_type_area_invariants(df)
             df = _apply_led_legal_sold_prices(df)
             return df
 
@@ -1727,6 +1757,9 @@ def ensure_derived_cols(df, persist_cache=False):
         if 'ประเภททรัพย์' in df.columns:
             bad_area_mask |= (df['ประเภททรัพย์'].isin(['คอนโด', 'คอนโดมิเนียม', 'ห้องชุด', 'ห้องชุดพักอาศัย', 'ทาวน์เฮ้าส์', 'ทาวน์โฮม']) & (df['พื้นที่ใช้สอย (ตร.ม.)'] > 5000))
         df.loc[bad_area_mask, 'พื้นที่ใช้สอย (ตร.ม.)'] = np.nan
+
+    # Enforce universal condo / vacant-land area invariants BEFORE deriving unit rates (DATA-01 / MERGE-01)
+    df = _sanitize_type_area_invariants(df)
 
     # Apply LED Legal sold-price overrides & clears BEFORE deriving unit rates (MED-06 / HIGH-07)
     df = _apply_led_legal_sold_prices(df)

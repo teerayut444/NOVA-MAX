@@ -70,7 +70,7 @@ _PERSON_TITLE_CORE = (
     r"(?<!ท)(?<!เจ้า)(?<!นคร)นาย(?!หน้า|ายอาม|กเทศ|กองค์|กสมาคม|ก\s*อบต)|"
     r"ทนาย(?!ความ)|"
     r"นางสาว|น\.?ส\.|"
-    r"นาง(?!รอง|เลิ้ง|แล|ฟ้า|พญา|ไม้)|"
+    r"นาง(?!รอง|เลิ้ง|แล|บวช|แก้ว|ตะเคียน|ฟ้า|พญา|ไม้)|"
     r"เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|"
     r"ว่าที่\s*ร้อย|ว่าที่\s*ร\.ต\.|ว่าที่\s*ร\.ท\.|ว่าที่\s*ร\.อ\.|"
     r"(?:ร้อย|พัน|พล)\s*(?:ตรี|โท|เอก)|"
@@ -80,7 +80,7 @@ _PERSON_TITLE_CORE = (
     r"นายแพทย์|แพทย์หญิง|นพ\.|พญ\.|"
     r"ศ\.ดร\.|ผศ\.ดร\.|รศ\.ดร\.|ดร\.|ผศ\.|รศ\.|(?<![พคจม]\.)(?<![พคม])ศ\.|"
     r"คุณหญิง|ท่านผู้หญิง|ม\.ร\.ว\.|ม\.ล\.|หม่อมราชวงศ์|หม่อมหลวง|"
-    r"มิสเตอร์|มิสซิส|มิส(?!ทีน)|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)"
+    r"มิสเตอร์(?!โดนัท)|มิสซิส|มิส(?!ทีน|เตอร์โดนัท)|\b(?:mr|mrs|miss|ms)(?:\.\s+|\.(?=$)|\s+)"
 )
 
 _PERSON_TITLES_PATTERN = re.compile(_PERSON_TITLE_CORE, re.IGNORECASE)
@@ -118,6 +118,7 @@ def clean_plaintiff_name(name) -> str:
         .replace("ทนาย", "")
         .replace("นครนายก", "")
         .replace("มิสทีน", "")
+        .replace("มิสเตอร์โดนัท", "")
         .replace("นางแล", "")
         .replace("นายหน้า", "")
         .replace("นายายอาม", "")
@@ -127,15 +128,56 @@ def clean_plaintiff_name(name) -> str:
     return s_cleaned
 
 
+_COMMON_AMP_EN_ALIASES: dict[str, str] = {
+    "sathorn": "สาทร",
+    "sathon": "สาทร",
+    "ladprao": "ลาดพร้าว",
+    "latphrao": "ลาดพร้าว",
+    "jatujak": "จตุจักร",
+    "chatuchak": "จตุจักร",
+    "sriracha": "ศรีราชา",
+    "siracha": "ศรีราชา",
+    "klongluang": "คลองหลวง",
+    "khlongluang": "คลองหลวง",
+    "huaykwang": "ห้วยขวาง",
+    "huaikhwang": "ห้วยขวาง",
+    "bangna": "บางนา",
+    "watthana": "วัฒนา",
+    "wattana": "วัฒนา",
+    "phrakhanong": "พระโขนง",
+    "prakanong": "พระโขนง",
+    "pathumwan": "ปทุมวัน",
+    "ratchathewi": "ราชเทวี",
+    "phayathai": "พญาไท",
+    "bangrak": "บางรัก",
+    "khlongtoei": "คลองเตย",
+    "klongtoey": "คลองเตย",
+    "bangkapi": "บางกะปิ",
+    "bangkhen": "บางเขน",
+    "bangsue": "บางซื่อ",
+    "suanluang": "สวนหลวง",
+    "prawet": "ประเวศ",
+    "bangphli": "บางพลี",
+    "bangplee": "บางพลี",
+    "pakkret": "ปากเกร็ด",
+    "thanyaburi": "ธัญบุรี",
+    "lamlukka": "ลำลูกกา",
+    "banglamung": "บางละมุง",
+    "pattaya": "บางละมุง",
+    "huahin": "หัวหิน",
+    "chaam": "ชะอำ",
+}
+
+
 def get_amp_en_to_th() -> dict[str, str]:
-    """Load English->Thai district mapping once from local data/districts.geojson."""
+    """Load English->Thai district mapping once from local data/districts.geojson + common aliases."""
     global _AMP_EN_TO_TH_CACHE
     if _AMP_EN_TO_TH_CACHE is not None:
         return _AMP_EN_TO_TH_CACHE
     with _HELPER_LOCK:
         if _AMP_EN_TO_TH_CACHE is not None:
             return _AMP_EN_TO_TH_CACHE
-        mapping: dict[str, str] = {}
+        mapping: dict[str, str] = dict(_COMMON_AMP_EN_ALIASES)
         for rel in ("data/districts.geojson", "data/subdistricts.geojson"):
             try:
                 data = _get_cached_geojson(rel)
@@ -249,8 +291,22 @@ def _get_canonical_proj_map() -> dict[str, str]:
         return _CANONICAL_PROJ_MAP_CACHE
 
 
+_STANDALONE_AD_PREFIX_RE = re.compile(
+    r"^(?:ขายด่วน!?|ขายถูก!?|ขายบ้าน|ขายคอนโด|ขายทาวน์โฮม|ขายทาวน์เฮ้าส์|ขาย)\s*[:\-]?\s*",
+    re.IGNORECASE,
+)
+_STANDALONE_CANON_LOOKUP_PREFIX_RE = re.compile(
+    r"^(?:โครงการ|หมู่บ้านจัดสรร|หมู่บ้าน|มบ\.|คอนโดมิเนียม|คอนโด|อาคารชุด)\s*[:\-]?\s*",
+    re.IGNORECASE,
+)
+_STANDALONE_AD_NOISE_RE = re.compile(
+    r"\s*(?:ราคาถูก(?:มาก)?|พร้อมอยู่|ฟรีโอน|ด่วน!?|เจ้าของขายเอง|ทำเลดี|หลุดจอง|ลดราคา).*$",
+    re.IGNORECASE,
+)
+
+
 def clean_project_name_standalone(raw_name, **kwargs) -> str:
-    """Clean project name standalone using canonical mapping and safe whitespace/noise cleanup."""
+    """Clean project name standalone using canonical mapping and safe ad-noise cleanup."""
     if raw_name is None or pd.isna(raw_name):
         return ""
     s = str(raw_name).strip()
@@ -262,4 +318,12 @@ def clean_project_name_standalone(raw_name, **kwargs) -> str:
     canon = _get_canonical_proj_map()
     if s in canon:
         return canon[s]
-    return s
+    s_clean = _STANDALONE_AD_PREFIX_RE.sub("", s).strip(" :-")
+    s_clean = _STANDALONE_AD_NOISE_RE.sub("", s_clean).strip(" :-")
+    s_clean = re.sub(r"\s+", " ", s_clean).strip()
+    if s_clean in canon:
+        return canon[s_clean]
+    s_lookup = _STANDALONE_CANON_LOOKUP_PREFIX_RE.sub("", s_clean).strip(" :-")
+    if s_lookup and s_lookup in canon:
+        return canon[s_lookup]
+    return s_clean or s
