@@ -843,36 +843,38 @@ def convert_grouped_df_to_excel(grouped_df):
             "text_wrap": True,
         })
         ref_text_fmt = wb.add_format({
-            "bold": True,
+            "bold": False,
             "font_name": "Tahoma",
             "font_size": 10,
-            "font_color": "#064E3B",
-            "bg_color": "#D1FAE5",
+            "font_color": "#000000",
             "border": 1,
-            "border_color": "#A7F3D0",
+            "border_color": "#E2E8F0",
             "valign": "vcenter",
         })
         ref_num_fmt = wb.add_format({
-            "bold": True,
+            "bold": False,
             "font_name": "Tahoma",
             "font_size": 10,
-            "font_color": "#064E3B",
-            "bg_color": "#D1FAE5",
+            "font_color": "#000000",
             "border": 1,
-            "border_color": "#A7F3D0",
+            "border_color": "#E2E8F0",
             "num_format": "#,##0.00",
             "valign": "vcenter",
         })
         body_text_fmt = wb.add_format({
+            "bold": False,
             "font_name": "Tahoma",
             "font_size": 10,
+            "font_color": "#FF0000",
             "border": 1,
             "border_color": "#E2E8F0",
             "valign": "vcenter",
         })
         body_num_fmt = wb.add_format({
+            "bold": False,
             "font_name": "Tahoma",
             "font_size": 10,
+            "font_color": "#FF0000",
             "border": 1,
             "border_color": "#E2E8F0",
             "num_format": "#,##0.00",

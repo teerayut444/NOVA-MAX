@@ -122,30 +122,25 @@ def render_tab2_batch_reference_panel(df_db, is_dark_mode=False):
         f"<i class='fa-solid fa-circle-check' style='margin-right:4px;'></i>"
         f"โหลดแล้ว {loaded_cnt:,} ทรัพย์อ้างอิง ({html.escape(loaded_name)})</span>"
         if has_loaded
-        else f"<span style='background:{pill_bg}; color:{title_c}; font-size:0.76rem; font-weight:700; "
-             f"padding:3px 10px; border-radius:999px; border:1px solid {border_card};'>"
-             f"แยกอิสระจากข้อมูลหลัก Tab 1–5</span>"
+        else ""
     )
 
-    st.markdown(
-        f"""
-        <div style="background:{bg_card}; border:1.5px solid {border_card}; border-top:3.5px solid #10b981;
-                    border-radius:14px; padding:14px 18px 10px 18px; margin-bottom:10px;
-                    box-shadow:0 4px 16px rgba(16,185,129,0.06);">
-            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
-                <div style="font-size:1.05rem; font-weight:800; color:{title_c}; display:flex; align-items:center; gap:8px;">
-                    <i class="fa-solid fa-layer-group"></i>
-                    <span>นำเข้าไฟล์ชุดทรัพย์อ้างอิง (Batch Reference & Grouped Export)</span>
-                </div>
-                {badge_html}
-            </div>
-            <div style="font-size:0.83rem; color:{sub_c}; margin-top:4px; line-height:1.45;">
-                อัปโหลดไฟล์ Excel / CSV เพื่อใช้ทุกแถวเป็นทรัพย์อ้างอิง — กดเลือกดูทีละชิ้นผ่าน <b>Popup กลางล่างสุดของแผนที่</b>
-                หรือส่งออกไฟล์ <b>Excel (.xlsx) แบบจัดกลุ่มพับเก็บ [+]</b> พร้อมคอลัมน์ค่าเฉลี่ย &amp; Median 6 คอลัมน์ในแถวทรัพย์อ้างอิงได้ทันที
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.html(
+        f'<div style="background:{bg_card}; border:1.5px solid {border_card}; border-top:3.5px solid #10b981;'
+        f' border-radius:14px; padding:14px 18px 10px 18px; margin-bottom:10px;'
+        f' box-shadow:0 4px 16px rgba(16,185,129,0.06);">'
+        f'<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">'
+        f'<div style="font-size:1.05rem; font-weight:800; color:{title_c}; display:flex; align-items:center; gap:8px;">'
+        f'<i class="fa-solid fa-layer-group"></i>'
+        f'<span>นำเข้าไฟล์ชุดทรัพย์อ้างอิง (Batch Reference &amp; Grouped Export)</span>'
+        f'</div>'
+        f'{badge_html}'
+        f'</div>'
+        f'<div style="font-size:0.83rem; color:{sub_c}; margin-top:4px; line-height:1.45;">'
+        f'อัปโหลดไฟล์ Excel / CSV เพื่อใช้ทุกแถวเป็นทรัพย์อ้างอิง — กดเลือกดูทีละชิ้นผ่าน <b>Popup กลางล่างสุดของแผนที่</b>'
+        f' หรือส่งออกไฟล์ <b>Excel (.xlsx) แบบจัดกลุ่มพับเก็บ [+]</b> พร้อมคอลัมน์ค่าเฉลี่ย &amp; Median 6 คอลัมน์ในแถวทรัพย์อ้างอิงได้ทันที'
+        f'</div>'
+        f'</div>'
     )
 
     col_up, col_guide = st.columns([0.62, 0.38])
@@ -202,6 +197,7 @@ def render_tab2_batch_reference_panel(df_db, is_dark_mode=False):
         _push_batch_refs_to_map_iframe([], radius_km=None)
 
     if not has_loaded:
+        st.markdown("<div style='height: 48px;'></div>", unsafe_allow_html=True)
         return
 
     ref_df = st.session_state["_tab2_batch_ref_df"]
@@ -246,83 +242,107 @@ def render_tab2_batch_reference_panel(df_db, is_dark_mode=False):
         else []
     )
 
-    c_rad, c_co, c_opts = st.columns([0.22, 0.38, 0.40])
-    with c_rad:
-        batch_radius = st.number_input(
-            "รัศมีค้นหา (กม.)",
-            min_value=0.05,
-            max_value=50.0,
-            value=default_map_rad,
-            step=0.5,
-            format="%.2f",
-            key="tab2_batch_export_radius",
-            help="ค่าเริ่มต้นดึงตามแถบรัศมีบนแผนที่ Tab 2 และสามารถปรับแยกสำหรับ Batch Export ได้",
-        )
-    with c_co:
-        selected_cos = st.multiselect(
-            "กรองบริษัท/แหล่งข้อมูล (ว่าง = ทุกบริษัท)",
-            options=avail_companies,
-            default=[],
-            key="tab2_batch_export_companies",
-            placeholder="ทุกบริษัทในฐานข้อมูลหลัก",
-        )
-    with c_opts:
-        st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
-        oc1, oc2 = st.columns(2)
-        with oc1:
-            match_same_type = st.checkbox(
-                "เฉพาะประเภทเดียวกัน",
-                value=True,
-                key="tab2_batch_match_same_type",
-                help="จับคู่เฉพาะทรัพย์ใกล้เคียงที่มีประเภททรัพย์ตรงกับแถวอ้างอิงแต่ละชิ้น",
+    with st.form("tab2_batch_search_form", border=True):
+        c_rad, c_co, c_opts = st.columns([0.22, 0.38, 0.40])
+        with c_rad:
+            batch_radius = st.number_input(
+                "รัศมีค้นหา (กม.)",
+                min_value=0.05,
+                max_value=50.0,
+                value=default_map_rad,
+                step=0.5,
+                format="%.2f",
+                key="tab2_batch_export_radius",
+                help="ค่าเริ่มต้นดึงตามแถบรัศมีบนแผนที่ Tab 2 และสามารถปรับแยกสำหรับ Batch Export ได้",
             )
-            exclude_centroids = st.checkbox(
-                "ตัดพิกัดกึ่งกลาง (Centroid)",
-                value=True,
-                key="tab2_batch_exclude_centroids",
-                help="ตัดทรัพย์ที่ใช้พิกัดกึ่งกลางตำบล/อำเภอโดยประมาณออกจากการเปรียบเทียบ (เหมือนค่าเริ่มต้น Tab 2)",
+        with c_co:
+            selected_cos = st.multiselect(
+                "กรองบริษัท/แหล่งข้อมูล (ว่าง = ทุกบริษัท)",
+                options=avail_companies,
+                default=[],
+                key="tab2_batch_export_companies",
+                placeholder="ทุกบริษัทในฐานข้อมูลหลัก",
             )
-        with oc2:
-            exclude_self = st.checkbox(
-                "ตัดตัวทรัพย์อ้างอิงเองออก",
-                value=True,
-                key="tab2_batch_exclude_self",
-                help="ไม่นำตัวทรัพย์อ้างอิงเองมาคิดค่าเฉลี่ย/Median หากตรวจพบซ้ำในฐานข้อมูลหลัก",
-            )
+        with c_opts:
+            st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+            oc1, oc2 = st.columns(2)
+            with oc1:
+                match_same_type = st.checkbox(
+                    "เฉพาะประเภทเดียวกัน",
+                    value=True,
+                    key="tab2_batch_match_same_type",
+                    help="จับคู่เฉพาะทรัพย์ใกล้เคียงที่มีประเภททรัพย์ตรงกับแถวอ้างอิงแต่ละชิ้น",
+                )
+                exclude_centroids = st.checkbox(
+                    "ตัดพิกัดกึ่งกลาง (Centroid)",
+                    value=True,
+                    key="tab2_batch_exclude_centroids",
+                    help="ตัดทรัพย์ที่ใช้พิกัดกึ่งกลางตำบล/อำเภอโดยประมาณออกจากการเปรียบเทียบ (เหมือนค่าเริ่มต้น Tab 2)",
+                )
+            with oc2:
+                exclude_self = st.checkbox(
+                    "ตัดตัวทรัพย์อ้างอิงเองออก",
+                    value=True,
+                    key="tab2_batch_exclude_self",
+                    help="ไม่นำตัวทรัพย์อ้างอิงเองมาคิดค่าเฉลี่ย/Median หากตรวจพบซ้ำในฐานข้อมูลหลัก",
+                )
 
-    # Compute (cached by fingerprint)
-    data_mtime = get_data_mtime()
-    batch_fp = compute_batch_ref_fingerprint(
-        ref_df,
-        batch_radius,
-        selected_cos,
-        exclude_centroids,
-        match_same_type,
-        exclude_self,
-        data_mtime,
-    )
+        search_submitted = st.form_submit_button(
+            "ค้นหาและคำนวณข้อมูล",
+            icon=":material/search:",
+            type="primary",
+            width="stretch",
+        )
+
+    current_uid = st.session_state.get("_tab2_batch_ref_uid")
     cached_res = st.session_state.get("_tab2_batch_export_cache")
-    if isinstance(cached_res, dict) and cached_res.get("fp") == batch_fp:
-        grouped_df = cached_res["df"]
-        meta = cached_res["meta"]
-    else:
-        with st.spinner(f"กำลังดึงข้อมูลรัศมี {batch_radius:.2f} กม. และคำนวณค่าเฉลี่ย/Median ทั้ง {len(ref_df):,} ทรัพย์อ้างอิง..."):
-            grouped_df, meta = build_batch_grouped_export_df(
-                ref_df,
-                df_db,
-                radius_km=batch_radius,
-                extra_cols=extra_cols,
-                companies=selected_cos,
-                exclude_centroids=exclude_centroids,
-                match_same_type=match_same_type,
-                exclude_self=exclude_self,
-            )
-        st.session_state["_tab2_batch_export_cache"] = {
-            "fp": batch_fp,
-            "df": grouped_df,
-            "meta": meta,
-        }
-        st.session_state.pop("_tab2_batch_file_bytes_cache", None)
+
+    if search_submitted:
+        data_mtime = get_data_mtime()
+        batch_fp = compute_batch_ref_fingerprint(
+            ref_df,
+            batch_radius,
+            selected_cos,
+            exclude_centroids,
+            match_same_type,
+            exclude_self,
+            data_mtime,
+        )
+        if not (isinstance(cached_res, dict) and cached_res.get("fp") == batch_fp and cached_res.get("uid") == current_uid):
+            with st.spinner(f"กำลังดึงข้อมูลรัศมี {batch_radius:.2f} กม. และคำนวณค่าเฉลี่ย/Median ทั้ง {len(ref_df):,} ทรัพย์อ้างอิง..."):
+                grouped_df, meta = build_batch_grouped_export_df(
+                    ref_df,
+                    df_db,
+                    radius_km=batch_radius,
+                    extra_cols=extra_cols,
+                    companies=selected_cos,
+                    exclude_centroids=exclude_centroids,
+                    match_same_type=match_same_type,
+                    exclude_self=exclude_self,
+                )
+            cached_res = {
+                "fp": batch_fp,
+                "uid": current_uid,
+                "df": grouped_df,
+                "meta": meta,
+                "radius": float(batch_radius),
+                "companies": list(selected_cos),
+            }
+            st.session_state["_tab2_batch_export_cache"] = cached_res
+            st.session_state.pop("_tab2_batch_file_bytes_cache", None)
+
+    if not (isinstance(cached_res, dict) and cached_res.get("uid") == current_uid and cached_res.get("df") is not None):
+        st.caption("ตั้งค่ารัศมี บริษัท และเงื่อนไขด้านบนให้เรียบร้อย แล้วกดปุ่ม **ค้นหาและคำนวณข้อมูล** เพื่อเตรียมไฟล์ Excel")
+        st.markdown("<div style='height: 48px;'></div>", unsafe_allow_html=True)
+        return
+
+    grouped_df = cached_res["df"]
+    meta = cached_res["meta"]
+    batch_fp = cached_res["fp"]
+    searched_radius = float(cached_res.get("radius", batch_radius))
+    searched_cos = cached_res.get("companies") or []
+    co_summary_txt = ", ".join(searched_cos) if searched_cos else "ทุกบริษัท"
+    st.caption(f"ผลการค้นหาล่าสุด: รัศมี **{searched_radius:.2f} กม.** • บริษัท: **{co_summary_txt}**")
 
     # Compact KPI summary of batch result
     m1, m2, m3, m4 = st.columns(4)
@@ -331,13 +351,13 @@ def render_tab2_batch_reference_panel(df_db, is_dark_mode=False):
     m3.metric("กลุ่มที่พบ 0 รายการ / ไม่มีพิกัด", f"{meta['zero_match_refs'] + meta['invalid_coord_refs']:,} กลุ่ม")
     m4.metric("จำนวนแถวทั้งหมดที่จะส่งออก", f"{meta['total_output_rows']:,} แถว")
 
-    # Download CSV & Excel buttons (lazy cached bytes per fingerprint)
+    # Download Excel button (lazy cached bytes per fingerprint)
     base_name = _sanitize_filename_prefix(
         str(st.session_state.get("_tab2_batch_ref_name", "batch_ref")).rsplit(".", 1)[0],
         default="batch_reference",
     )
     date_tag = datetime.datetime.now(_TH_TZ).strftime("%Y%m%d")
-    rad_tag = f"{batch_radius:.2f}".rstrip("0").rstrip(".").replace(".", "p")
+    rad_tag = f"{searched_radius:.2f}".rstrip("0").rstrip(".").replace(".", "p")
     fname_stem = f"{base_name}_grouped_{rad_tag}km_{date_tag}"
 
     # Prepare cache dict on the main Streamlit thread so the download callable never touches st.session_state on asyncio_0
@@ -361,3 +381,4 @@ def render_tab2_batch_reference_panel(df_db, is_dark_mode=False):
         width="stretch",
         key=f"btn_dl_batch_xlsx_{batch_fp}",
     )
+    st.markdown("<div style='height: 48px;'></div>", unsafe_allow_html=True)
