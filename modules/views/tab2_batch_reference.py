@@ -274,10 +274,10 @@ def render_tab2_batch_reference_panel(df_db, is_dark_mode=False):
                     help="จับคู่เฉพาะทรัพย์ใกล้เคียงที่มีประเภททรัพย์ตรงกับแถวอ้างอิงแต่ละชิ้น",
                 )
                 exclude_centroids = st.checkbox(
-                    "ตัดพิกัดกึ่งกลาง (Centroid)",
+                    "ตัดทรัพย์ไม่ทราบพิกัด",
                     value=True,
                     key="tab2_batch_exclude_centroids",
-                    help="ตัดทรัพย์ที่ใช้พิกัดกึ่งกลางตำบล/อำเภอโดยประมาณออกจากการเปรียบเทียบ (เหมือนค่าเริ่มต้น Tab 2)",
+                    help="ตัดทรัพย์ที่ไม่ทราบพิกัดจริง (ใช้พิกัดประมาณกึ่งกลางตำบล/อำเภอ) ออกจากการเปรียบเทียบ (เหมือนค่าเริ่มต้น Tab 2)",
                 )
             with oc2:
                 exclude_self = st.checkbox(

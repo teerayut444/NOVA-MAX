@@ -1085,7 +1085,7 @@ def _build_map_payload_raw_from_df(
         legend_items_html.append(f'<div class="legend-item"><span class="legend-color" style="background:#94a3b8;"></span>อื่นๆ ({other_co_cnt:,}){other_centroid_tag}</div>')
     total_centroid_count = sum(int(v) for v in centroid_per_company.values())
     if total_centroid_count > 0:
-        legend_items_html.append(f'<div class="legend-centroid-summary" style="border-top:1px dashed #e2e8f0; margin-top:5px; padding-top:5px; font-size:10.5px; color:#92400e; font-weight:700;">&#9651; พิกัดกึ่งกลาง {total_centroid_count:,} จาก {map_data_full_len:,} จุด</div>')
+        legend_items_html.append(f'<div class="legend-centroid-summary" style="border-top:1px dashed #e2e8f0; margin-top:5px; padding-top:5px; font-size:10.5px; color:#92400e; font-weight:700;">&#9651; ไม่ทราบพิกัด {total_centroid_count:,} จาก {map_data_full_len:,} จุด</div>')
     legend_content = "\n".join(legend_items_html)
 
     links = _sanitize_map_links(map_data)

@@ -2014,7 +2014,7 @@ function getMapTooltip(info) {
 
     const isCentroid = (String(topItem._centroid) === '1');
     const centroidHtml = isCentroid
-      ? `<div style="background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:3px 8px; margin-bottom:5px; font-size:10.5px; color:#92400e; font-weight:700; display:flex; align-items:center; gap:4px;"><i class="fa-solid fa-triangle-exclamation" style="color:#d97706;"></i> พิกัดโดยประมาณ (กึ่งกลางตำบล/อำเภอ)</div>`
+      ? `<div style="background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:3px 8px; margin-bottom:5px; font-size:10.5px; color:#92400e; font-weight:700; display:flex; align-items:center; gap:4px;"><i class="fa-solid fa-triangle-exclamation" style="color:#d97706;"></i> ไม่ทราบพิกัดจริง (พิกัดประมาณกึ่งกลางตำบล/อำเภอ)</div>`
       : '';
 
     const isLed = String(topItem._company || '').startsWith('LED');

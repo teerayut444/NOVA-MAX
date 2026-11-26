@@ -1161,14 +1161,18 @@ def parse_listing_age_days(val, ref_date=None):
 
     return -1
 
+_UNKNOWN_COORD_LABEL = "⚠️ ไม่ทราบพิกัด"
+
+
 def format_coord_vectorized(df, coord_col):
-    """Vectorized coordinate formatting with centroid warning prefix ('⚠️ ') and '-' fallback."""
+    """Vectorized coordinate formatting: 6-decimal real GPS or '⚠️ ไม่ทราบพิกัด' for centroids/missing values."""
     if df is None or df.empty or coord_col not in df.columns:
-        return pd.Series('-', index=df.index if df is not None else [])
+        return pd.Series(_UNKNOWN_COORD_LABEL, index=df.index if df is not None else [], dtype=object)
     vals = pd.to_numeric(df[coord_col], errors='coerce')
-    valid_mask = vals.notna() & (vals != 0)
+    vals_arr = vals.to_numpy(dtype=np.float64, na_value=np.nan)
+    valid_mask = np.isfinite(vals_arr) & (vals_arr != 0)
     if not valid_mask.any():
-        return pd.Series('-', index=df.index)
+        return pd.Series(_UNKNOWN_COORD_LABEL, index=df.index, dtype=object)
     if 'is_centroid' in df.columns:
         c_raw = df['is_centroid']
         if pd.api.types.is_bool_dtype(c_raw.dtype):
@@ -1177,13 +1181,10 @@ def format_coord_vectorized(df, coord_col):
             is_cen = c_raw.fillna('').astype(str).str.strip().str.lower().isin({'true', '1', '1.0', 'yes', 't'})
     else:
         is_cen = pd.Series(False, index=df.index)
-    formatted = pd.Series('-', index=df.index, dtype=object)
-    valid_vals = vals[valid_mask]
-    valid_cen = is_cen[valid_mask]
-    formatted.loc[valid_mask] = [
-        f"⚠️ {v:.6f}" if c else f"{v:.6f}"
-        for v, c in zip(valid_vals, valid_cen)
-    ]
+    real_mask = valid_mask & (~is_cen.to_numpy(dtype=bool))
+    formatted = pd.Series(_UNKNOWN_COORD_LABEL, index=df.index, dtype=object)
+    if real_mask.any():
+        formatted.loc[real_mask] = [f"{v:.6f}" for v in vals_arr[real_mask]]
     return formatted
 
 @st.cache_data(show_spinner=False, max_entries=8)

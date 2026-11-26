@@ -348,8 +348,8 @@ def _build_tab2_show_df_compact(
     for loc_col in ('ตำบล', 'อำเภอ', 'จังหวัด'):
         show_df[loc_col] = _clean_str_series(filtered_nearby[loc_col], '-') if loc_col in filtered_nearby.columns else '-'
 
-    show_df['ละติจูด'] = format_coord_vectorized(filtered_nearby, 'ละติจูด') if 'ละติจูด' in filtered_nearby.columns else '-'
-    show_df['ลองจิจูด'] = format_coord_vectorized(filtered_nearby, 'ลองจิจูด') if 'ลองจิจูด' in filtered_nearby.columns else '-'
+    show_df['ละติจูด'] = format_coord_vectorized(filtered_nearby, 'ละติจูด') if 'ละติจูด' in filtered_nearby.columns else '⚠️ ไม่ทราบพิกัด'
+    show_df['ลองจิจูด'] = format_coord_vectorized(filtered_nearby, 'ลองจิจูด') if 'ลองจิจูด' in filtered_nearby.columns else '⚠️ ไม่ทราบพิกัด'
     show_df['โจทก์'] = _clean_str_series(filtered_nearby['โจทก์'], '-') if 'โจทก์' in filtered_nearby.columns else '-'
 
     if 'ระยะทาง (กม.)' in show_df.columns:
@@ -690,8 +690,8 @@ def render_tab2_nearby_table_and_export(
             "ตำบล": st.column_config.TextColumn("ตำบล", help="ตำบล/แขวง"),
             "อำเภอ": st.column_config.TextColumn("อำเภอ", help="อำเภอ/เขต"),
             "จังหวัด": st.column_config.TextColumn("จังหวัด", help="จังหวัด"),
-            "ละติจูด": st.column_config.TextColumn("ละติจูด", help="พิกัดละติจูด (⚠️ = พิกัดกึ่งกลางตำบล/อำเภอโดยประมาณ ไม่ใช่ตำแหน่งจริง)"),
-            "ลองจิจูด": st.column_config.TextColumn("ลองจิจูด", help="พิกัดลองจิจูด (⚠️ = พิกัดกึ่งกลางตำบล/อำเภอโดยประมาณ ไม่ใช่ตำแหน่งจริง)"),
+            "ละติจูด": st.column_config.TextColumn("ละติจูด", help="พิกัดละติจูด (⚠️ ไม่ทราบพิกัด = ไม่มีพิกัดจริงจากประกาศ)"),
+            "ลองจิจูด": st.column_config.TextColumn("ลองจิจูด", help="พิกัดลองจิจูด (⚠️ ไม่ทราบพิกัด = ไม่มีพิกัดจริงจากประกาศ)"),
             "โจทก์": st.column_config.TextColumn("โจทก์", help="โจทก์ผู้ฟ้องคดี (เฉพาะทรัพย์กรมบังคับคดี LED / LED Legal)"),
         }
 

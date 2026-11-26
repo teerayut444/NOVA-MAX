@@ -163,15 +163,15 @@
             <div class="filter-chips-grid" id="filter-company-chips"></div>
           </div>
 
-          <!-- Filter 1.5: สถานะโครงการ -->
+          <!-- Filter 1.5: สถานะโครงการ / พิกัด -->
           <div class="filter-section">
-            <div class="filter-section-title"><i class="fa-solid fa-city"></i> โครงการ / สถานะโครงการ</div>
+            <div class="filter-section-title"><i class="fa-solid fa-city"></i> สถานะโครงการ / พิกัด</div>
             <div class="filter-chips-grid">
               <span class="filter-chip" id="filter-chip-has-proj" onclick="toggleOnlyWithProjectFilter()">
                 <i class="fa-solid fa-building-circle-check" style="margin-right: 4px;"></i><span id="filter-chip-has-proj-txt">มีโครงการ</span>
               </span>
-              <span class="filter-chip" id="filter-chip-include-centroids" onclick="toggleIncludeCentroidsFilter()" title="รวมทรัพย์ที่ใช้พิกัดกึ่งกลาง (ระดับตำบล/อำเภอ) ซึ่งอาจไม่ได้ปักหมุดตรงตำแหน่งจริง">
-                <i class="fa-solid fa-location-crosshairs" style="margin-right: 4px;"></i><span id="filter-chip-centroids-txt">พิกัดกึ่งกลาง</span>
+              <span class="filter-chip" id="filter-chip-include-centroids" onclick="toggleIncludeCentroidsFilter()" title="รวมทรัพย์ที่ไม่ทราบพิกัดจริง (แสดงด้วยพิกัดประมาณกึ่งกลางตำบล/อำเภอ)">
+                <i class="fa-solid fa-triangle-exclamation" style="margin-right: 4px;"></i><span id="filter-chip-centroids-txt">รวมทรัพย์ไม่ทราบพิกัด</span>
               </span>
             </div>
           </div>
@@ -318,7 +318,7 @@
           <div id="card-badge" class="card-badge">SAM</div>
           <span id="card-pill-age" class="card-unit-pill" style="display:none; font-size:11px; font-weight:700; background:rgba(139,92,246,0.12); color:#8b5cf6; padding:2px 8px; border-radius:9999px; border:1px solid rgba(139,92,246,0.25);"><i class="fa-regular fa-calendar-days" style="margin-right:3px;"></i><span id="card-pill-age-val">-</span></span>
           <div id="card-centroid-badge" style="display:none; background:#fef3c7; border:1px solid #fde68a; color:#92400e; font-size:10.5px; font-weight:800; padding:2px 8px; border-radius:9999px; align-items:center; gap:4px;">
-            <i class="fa-solid fa-triangle-exclamation" style="font-size:10px;"></i> พิกัดกึ่งกลาง
+            <i class="fa-solid fa-triangle-exclamation" style="font-size:10px;"></i> ไม่ทราบพิกัด
           </div>
         </div>
         <button class="card-close-btn" onclick="closePropertyCard()" title="ปิดหน้าต่าง"><i class="fa-solid fa-xmark"></i></button>
@@ -342,7 +342,7 @@
       <!-- Centroid warning banner -->
       <div id="card-centroid-warning" style="display:none; background:#fffbeb; border:1.5px solid #fde68a; border-radius:8px; padding:5px 9px; margin-bottom:8px; font-size:11.5px; color:#b45309; font-weight:700; display:none; align-items:center; gap:5px;">
         <i class="fa-solid fa-triangle-exclamation" style="color:#d97706;"></i>
-        <span><b>พิกัดโดยประมาณ</b> — คำนวณจากจุดกึ่งกลางตำบล/อำเภอ ไม่ใช่ตำแหน่งจริงของทรัพย์</span>
+        <span><b>ไม่ทราบพิกัดจริง</b> — แสดงพิกัดประมาณจากจุดกึ่งกลางตำบล/อำเภอ ไม่ใช่ตำแหน่งจริงของทรัพย์</span>
       </div>
       <div id="card-title" class="card-title">ชื่อประกาศทรัพย์สิน</div>
       <div class="card-price-section" style="margin-bottom: 8px;">

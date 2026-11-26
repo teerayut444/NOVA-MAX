@@ -498,8 +498,8 @@ def _format_standard_rows(df_part, *, distances=None):
     for col in ("ชั้น", "ห้องนอน", "ห้องน้ำ", "ที่จอดรถ", "ตำบล", "อำเภอ", "จังหวัด"):
         out[col] = _clean_str_series(df_part[col], "-") if col in df_part.columns else "-"
 
-    out["ละติจูด"] = format_coord_vectorized(df_part, "ละติจูด") if "ละติจูด" in df_part.columns else "-"
-    out["ลองจิจูด"] = format_coord_vectorized(df_part, "ลองจิจูด") if "ลองจิจูด" in df_part.columns else "-"
+    out["ละติจูด"] = format_coord_vectorized(df_part, "ละติจูด") if "ละติจูด" in df_part.columns else "⚠️ ไม่ทราบพิกัด"
+    out["ลองจิจูด"] = format_coord_vectorized(df_part, "ลองจิจูด") if "ลองจิจูด" in df_part.columns else "⚠️ ไม่ทราบพิกัด"
     out["เลขโฉนด"] = _clean_str_series(df_part["เลขโฉนด"], "-") if "เลขโฉนด" in df_part.columns else "-"
     out["ลิงก์"] = _clean_str_series(df_part["ลิงก์"], "-") if "ลิงก์" in df_part.columns else "-"
     return out

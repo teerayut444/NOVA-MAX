@@ -152,14 +152,14 @@ def _fmt_coord_val(row, coord_col):
     val = row.get(coord_col)
     try:
         if val is None or pd.isna(val):
-            return '-'
+            return '⚠️ ไม่ทราบพิกัด'
         f = float(val)
         if not math.isfinite(f) or f == 0:
-            return '-'
+            return '⚠️ ไม่ทราบพิกัด'
         is_cen = is_true_centroid(row.get('is_centroid'), row.get('บริษัท'))
-        return f"⚠️ {f:.6f}" if is_cen else f"{f:.6f}"
+        return '⚠️ ไม่ทราบพิกัด' if is_cen else f"{f:.6f}"
     except (ValueError, TypeError):
-        return '-'
+        return '⚠️ ไม่ทราบพิกัด'
 
 
 _PURE_LAND_POS_RE = re.compile(r'ที่ดินเปล่า|ที่ดิน')

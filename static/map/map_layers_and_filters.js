@@ -520,7 +520,7 @@ function updateLegendContent() {
 
       let centroidTag = '';
       if (cCentroid > 0) {
-        centroidTag = `<span class="legend-centroid-badge" title="มีพิกัดกึ่งกลาง/โดยประมาณ ${cCentroid.toLocaleString()} จุด">&#9651; ${cCentroid.toLocaleString()}</span>`;
+        centroidTag = `<span class="legend-centroid-badge" title="มีทรัพย์ไม่ทราบพิกัด (พิกัดประมาณกึ่งกลางตำบล/อำเภอ) ${cCentroid.toLocaleString()} จุด">&#9651; ${cCentroid.toLocaleString()}</span>`;
       }
 
       html += `
