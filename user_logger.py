@@ -8,6 +8,7 @@ Designed for Streamlit-based NOVA NPA Dashboard.
 
 import os
 import re
+import sys
 import logging
 import time
 import uuid
@@ -39,6 +40,8 @@ _USER_CACHE_TTL_SECONDS = 1800  # 30 min TTL prevents stale mappings after DHCP 
 _USER_CACHE = OrderedDict()
 _RESOLVING_IPS = set()
 _LOCK = threading.Lock()
+_WMI_CONCURRENCY_SEM = threading.BoundedSemaphore(2)
+_WMI_MAX_PENDING_IPS = 16
 
 _SAFE_HOSTNAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9-]{0,62}$')
 
@@ -303,7 +306,7 @@ def _resolve_network_identity(clean_ip):
         valid_ip = ""
 
     target_machine = short_name or valid_ip
-    if target_machine and (_SAFE_HOSTNAME_RE.match(target_machine) or target_machine == valid_ip):
+    if sys.platform == "win32" and target_machine and (_SAFE_HOSTNAME_RE.match(target_machine) or target_machine == valid_ip):
         creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             ps_env = os.environ.copy()
@@ -339,14 +342,15 @@ def _resolve_network_identity(clean_ip):
 
 
 def _async_resolve_and_update(session_id, clean_ip, resolve_user_name=True, resolve_machine_user=True):
-    """Background worker to resolve network identity without delaying page response."""
+    """Background worker to resolve network identity without delaying page response (bounded to 2 concurrent WMI lookups)."""
     with _LOCK:
-        if clean_ip in _RESOLVING_IPS:
+        if clean_ip in _RESOLVING_IPS or len(_RESOLVING_IPS) >= _WMI_MAX_PENDING_IPS:
             return
         _RESOLVING_IPS.add(clean_ip)
 
     try:
-        resolved = _resolve_network_identity(clean_ip)
+        with _WMI_CONCURRENCY_SEM:
+            resolved = _resolve_network_identity(clean_ip)
         if resolved:
             if resolve_machine_user:
                 _cache_set(f"machine:{clean_ip}", resolved)
@@ -705,14 +709,17 @@ def log_visit(ip=None, session_id=None, user_agent=None, user_name=None):
     finally:
         conn.close()
 
-    # Launch background resolution if user_name or machine_user is not yet known
+    # Launch background resolution (concurrency capped to 2 simultaneous WMI lookups via _WMI_CONCURRENCY_SEM)
     if (need_async_user or need_async_machine) and clean_ip:
-        bg_thread = threading.Thread(
-            target=_async_resolve_and_update,
-            args=(session_id, clean_ip, need_async_user, need_async_machine),
-            daemon=True
-        )
-        bg_thread.start()
+        with _LOCK:
+            can_spawn = (clean_ip not in _RESOLVING_IPS) and (len(_RESOLVING_IPS) < _WMI_MAX_PENDING_IPS)
+        if can_spawn:
+            bg_thread = threading.Thread(
+                target=_async_resolve_and_update,
+                args=(session_id, clean_ip, need_async_user, need_async_machine),
+                daemon=True
+            )
+            bg_thread.start()
 
 
 def touch_session(session_id=None, now_dt=None, max_gap_seconds=HEARTBEAT_MAX_GAP_SECONDS):

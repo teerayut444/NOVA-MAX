@@ -660,6 +660,15 @@
     const prjStatsDict = (lutObj && lutObj.prj_stats) || {};
     const samStatsArr = (lutObj && Array.isArray(lutObj.sam_stats)) ? lutObj.sam_stats : null;
     const otherStatsArr = (lutObj && Array.isArray(lutObj.other_stats)) ? lutObj.other_stats : null;
+    const samNormArr = (lutObj && Array.isArray(lutObj.sam_norm)) ? lutObj.sam_norm : null;
+    const otherNormArr = (lutObj && Array.isArray(lutObj.other_norm)) ? lutObj.other_norm : null;
+    if (lutObj && Array.isArray(lutObj.prj) && Array.isArray(lutObj.prj_norm) && lutObj.prj.length === lutObj.prj_norm.length) {
+      for (let i = 0; i < lutObj.prj.length; i++) {
+        const rp = (lutObj.prj[i] || '').trim();
+        const rn = (lutObj.prj_norm[i] || '').trim();
+        if (rp && rn) globalProjToNormMap.set(rp, rn);
+      }
+    }
     const _isValidPrjEntry = (p) => !!(p && p !== '-' && p !== 'ไม่มีข้อมูล' && p !== 'ไม่ระบุ' && p.length > 1 && !isInvalidProjectName(p));
 
     // Fast path: pre-computed structured project inventory from backend lookup
@@ -672,10 +681,13 @@
         const pair = (samStatsArr && samStatsArr[i]) || prjStatsDict[p] || [1, 0];
         const sc = Math.max(1, pair[0] || 1);
         const oc = pair[1] || 0;
-        const nk = normalizeProjectKeyword(p);
+        const nk = (samNormArr && samNormArr[i]) || globalProjToNormMap.get(p) || normalizeProjectKeyword(p);
         const tag = getBrandSearchTag(p);
         samProjectStatsMap.set(p, { sam: sc, other: oc, normKey: nk, tag: tag });
-        if (nk) normKeyToCanonicalMap.set(nk, p);
+        if (nk) {
+          normKeyToCanonicalMap.set(nk, p);
+          globalProjToNormMap.set(p, nk);
+        }
       }
 
       allOtherProjectsList = [];
@@ -686,12 +698,15 @@
           allOtherProjectsList.push(p);
           const pair = otherStatsArr ? [0, otherStatsArr[i] || 1] : (prjStatsDict[p] || [0, 1]);
           const oc = Math.max(1, pair[1] || 1);
-          const nk = normalizeProjectKeyword(p);
+          const nk = (otherNormArr && otherNormArr[i]) || globalProjToNormMap.get(p) || normalizeProjectKeyword(p);
           const tag = getBrandSearchTag(p);
           if (!samProjectStatsMap.has(p)) {
             samProjectStatsMap.set(p, { sam: 0, other: oc, normKey: nk, tag: tag });
           }
-          if (nk && !normKeyToCanonicalMap.has(nk)) normKeyToCanonicalMap.set(nk, p);
+          if (nk) {
+            if (!normKeyToCanonicalMap.has(nk)) normKeyToCanonicalMap.set(nk, p);
+            if (!globalProjToNormMap.has(p)) globalProjToNormMap.set(p, nk);
+          }
         }
       }
 
@@ -894,21 +909,78 @@
     return typeCounts;
   }
 
+  const PROP_COMPOSITE_SEP = '||';
+
+  function makePropCompositeKey(itemOrCo, maybeId) {
+    let co = '';
+    let id = '';
+    if (itemOrCo && typeof itemOrCo === 'object') {
+      co = String(itemOrCo._company || itemOrCo.company || '').trim();
+      id = String(itemOrCo._id || itemOrCo.id || '').trim();
+    } else {
+      co = String(itemOrCo || '').trim();
+      id = String(maybeId || '').trim();
+    }
+    if (!id || id === '-') return '';
+    if (co && co !== '-') return co + PROP_COMPOSITE_SEP + id;
+    return id;
+  }
+
+  function parsePropCompositeKey(rawKey) {
+    const s = String(rawKey || '').trim();
+    if (!s) return { company: '', id: '' };
+    const sepIdx = s.indexOf(PROP_COMPOSITE_SEP);
+    if (sepIdx >= 0) {
+      return {
+        company: s.slice(0, sepIdx).trim(),
+        id: s.slice(sepIdx + PROP_COMPOSITE_SEP.length).trim()
+      };
+    }
+    return { company: '', id: s };
+  }
+
   function buildIdLookupIndex(data) {
     const idExactLookupMap = new Map();
     const idStrippedLookupMap = new Map();
+    const idCompanyLookupMap = new Map();
     if (!data || !data.length) {
-      return { idExactLookupMap, idStrippedLookupMap };
+      return { idExactLookupMap, idStrippedLookupMap, idCompanyLookupMap };
     }
     for (let i = 0; i < data.length; i++) {
       const d = data[i];
       const raw = (d._id || '').trim().toLowerCase();
       if (!raw) continue;
       if (!idExactLookupMap.has(raw)) idExactLookupMap.set(raw, d);
+      const co = (d._company || '').trim().toLowerCase();
+      if (co && co !== '-') {
+        const cKey = co + PROP_COMPOSITE_SEP + raw;
+        if (!idCompanyLookupMap.has(cKey)) idCompanyLookupMap.set(cKey, d);
+      }
       const stripped = raw.replace(/[^a-z0-9\u0E00-\u0E7F]/g, '');
       if (stripped && !idStrippedLookupMap.has(stripped)) idStrippedLookupMap.set(stripped, d);
     }
-    return { idExactLookupMap, idStrippedLookupMap };
+    return { idExactLookupMap, idStrippedLookupMap, idCompanyLookupMap };
+  }
+
+  function resolvePropertyByKey(rawKey, indexes, fallbackCompany) {
+    if (!rawKey || !indexes) return null;
+    const parsed = parsePropCompositeKey(rawKey);
+    const idLow = (parsed.id || '').toLowerCase();
+    const coLow = (parsed.company || String(fallbackCompany || '').trim()).toLowerCase();
+    if (!idLow) return null;
+    if (coLow && indexes.idCompanyLookupMap) {
+      const hitCo = indexes.idCompanyLookupMap.get(coLow + PROP_COMPOSITE_SEP + idLow);
+      if (hitCo) return hitCo;
+    }
+    if (indexes.idExactLookupMap) {
+      const hitExact = indexes.idExactLookupMap.get(idLow);
+      if (hitExact) return hitExact;
+    }
+    if (indexes.idStrippedLookupMap) {
+      const stripped = idLow.replace(/[^a-z0-9\u0E00-\u0E7F]/g, '');
+      if (stripped) return indexes.idStrippedLookupMap.get(stripped) || null;
+    }
+    return null;
   }
 
   function getEffectiveSelfOrigin() {
@@ -2047,6 +2119,9 @@
   global.decompressGzip = decompressGzip;
   global.buildSpatialGrid = buildSpatialGrid;
   global.resolveStaticUrlCandidates = resolveStaticUrlCandidates;
+  global.makePropCompositeKey = makePropCompositeKey;
+  global.parsePropCompositeKey = parsePropCompositeKey;
+  global.resolvePropertyByKey = resolvePropertyByKey;
 
   global.NovaMapCache = {
     GRID_CELL_SIZE: GRID_CELL_SIZE,
@@ -2057,6 +2132,9 @@
     buildSpatialGrid: buildSpatialGrid,
     buildProjectIndex: buildProjectIndex,
     buildIdLookupIndex: buildIdLookupIndex,
+    makePropCompositeKey: makePropCompositeKey,
+    parsePropCompositeKey: parsePropCompositeKey,
+    resolvePropertyByKey: resolvePropertyByKey,
     computeTypeCounts: computeTypeCounts,
     getEffectiveSelfOrigin: getEffectiveSelfOrigin,
     getParentHost: getParentHost,

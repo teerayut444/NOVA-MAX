@@ -1715,6 +1715,8 @@ function onMapDistrictChange(dist) {
     || Boolean(curProjDist)
     || (typeof hasActiveParentAnalyticsFragment === 'function' && hasActiveParentAnalyticsFragment());
   if (shouldSyncDistChange) {
+    currentPriceCenterId = '';
+    if (typeof currentPriceCenterCompany !== 'undefined') currentPriceCenterCompany = '';
     triggerStreamlitSync({
       prov: (currentSelectedProv && currentSelectedProv !== '__ALL__') ? currentSelectedProv.trim() : '',
       dist: (selectedDist && selectedDist !== '__ALL__') ? selectedDist.trim() : '',
@@ -1723,6 +1725,9 @@ function onMapDistrictChange(dist) {
       cos: (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) ? Array.from(inMapFilterState.companies) : [],
       types: (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) ? Array.from(inMapFilterState.types) : [],
       id: '',
+      ref_company: '',
+      price_center_id: '',
+      price_center_company: '',
       mode: 'location',
       compare_active: true
     });
@@ -1798,6 +1803,8 @@ function onMapSubdistrictChange(subdist) {
   const curProjSub = (inMapFilterState && inMapFilterState.samProjects && inMapFilterState.samProjects.size > 0)
     ? Array.from(inMapFilterState.samProjects).join(',')
     : (inMapFilterState && inMapFilterState.samProject ? inMapFilterState.samProject : '');
+  currentPriceCenterId = '';
+  if (typeof currentPriceCenterCompany !== 'undefined') currentPriceCenterCompany = '';
   triggerStreamlitSync({
     prov: (currentSelectedProv && currentSelectedProv !== '__ALL__') ? currentSelectedProv.trim() : '',
     dist: (currentSelectedDist && currentSelectedDist !== '__ALL__') ? currentSelectedDist.trim() : '',
@@ -1806,6 +1813,9 @@ function onMapSubdistrictChange(subdist) {
     cos: (inMapFilterState && inMapFilterState.companies && inMapFilterState.companies.size > 0) ? Array.from(inMapFilterState.companies) : [],
     types: (inMapFilterState && inMapFilterState.types && inMapFilterState.types.size > 0) ? Array.from(inMapFilterState.types) : [],
     id: '',
+    ref_company: '',
+    price_center_id: '',
+    price_center_company: '',
     mode: 'location',
     compare_active: true
   });
@@ -2116,18 +2126,19 @@ function onMapSamProjectChange(proj) {
 
 let idExactLookupMap = null;
 let idStrippedLookupMap = null;
+let idCompanyLookupMap = null;
 function buildIdLookupIndex(data) {
+  if (window.NovaMapCache && typeof window.NovaMapCache.buildIdLookupIndex === 'function') {
+    const idx = window.NovaMapCache.buildIdLookupIndex(data);
+    idExactLookupMap = idx.idExactLookupMap;
+    idStrippedLookupMap = idx.idStrippedLookupMap;
+    idCompanyLookupMap = idx.idCompanyLookupMap;
+    return idx;
+  }
   idExactLookupMap = new Map();
   idStrippedLookupMap = new Map();
-  if (!data || !data.length) return;
-  for (let i = 0; i < data.length; i++) {
-    const d = data[i];
-    const raw = (d._id || '').trim().toLowerCase();
-    if (!raw) continue;
-    if (!idExactLookupMap.has(raw)) idExactLookupMap.set(raw, d);
-    const stripped = raw.replace(/[^a-z0-9\u0E00-\u0E7F]/g, '');
-    if (stripped && !idStrippedLookupMap.has(stripped)) idStrippedLookupMap.set(stripped, d);
-  }
+  idCompanyLookupMap = new Map();
+  return { idExactLookupMap, idStrippedLookupMap, idCompanyLookupMap };
 }
 
 function searchPropertyIdAsReference(idStr) {
@@ -2228,13 +2239,25 @@ function searchPropertyIdAsReference(idStr) {
     showPropertyCard(match, true);
 
     const locDetail = [match._subdistrict, match._district, match._prov].filter(x => x && x !== '-' && x !== 'ไม่มีข้อมูล').join(' ');
-    const toastTitle = match._title || (match._project && match._project !== '-' ? match._project : match._type) || '';
-    showToast(`<i class="fa-solid fa-location-crosshairs" style="color:#10b981; margin-right:4px;"></i>พบรหัส [${escapeHtml(match._company || '')}] ${escapeHtml(match._id || '')}: ${escapeHtml(toastTitle)} (${escapeHtml(locDetail)})`);
+    const _emitSearchToast = () => {
+      const toastTitle = match._title || (match._project && match._project !== '-' ? match._project : match._type) || '';
+      showToast(`<i class="fa-solid fa-location-crosshairs" style="color:#10b981; margin-right:4px;"></i>พบรหัส [${escapeHtml(match._company || '')}] ${escapeHtml(match._id || '')}: ${escapeHtml(toastTitle)} (${escapeHtml(locDetail)})`);
+    };
+    if (!match._detailLoaded && window.NovaMapCache && typeof window.NovaMapCache.ensureDetailsForItems === 'function') {
+      window.NovaMapCache.ensureDetailsForItems([match], window._activeMapCacheObj)
+        .then(_emitSearchToast)
+        .catch(_emitSearchToast);
+    } else {
+      _emitSearchToast();
+    }
 
+    const matchCo = (match._company && match._company !== '-') ? String(match._company).trim() : '';
     try {
       if (window.parent) {
         var u = new URL(window.parent.location.href);
         u.searchParams.set('map_ref_id', match._id);
+        if (matchCo) u.searchParams.set('map_ref_co', matchCo);
+        else u.searchParams.delete('map_ref_co');
         u.searchParams.set('map_ref_lat', lat.toFixed(6));
         u.searchParams.set('map_ref_lon', lon.toFixed(6));
         u.searchParams.set('map_ref_radius', currentRadiusKm);
@@ -2264,6 +2287,7 @@ function searchPropertyIdAsReference(idStr) {
         ? Array.from(inMapFilterState.types)
         : [],
       id: match._id || '',
+      ref_company: matchCo,
       lat: lat,
       lon: lon,
       radius: currentRadiusKm || 5.0,

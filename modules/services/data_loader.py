@@ -26,14 +26,53 @@ _STATIC_PAYLOAD_LOCK = threading.Lock()
 _DEFAULT_PAYLOAD_SECRET = b"NOVA_NPA_STATIC_MAP_BUNDLE_V3_2026"
 _BOOT_RANDOM_PAYLOAD_SECRET = secrets.token_bytes(32)
 _BOOT_RANDOM_ALT_SECRET = secrets.token_bytes(32)
+_DETERMINISTIC_SECRET_CACHE = {"key": None, "secret": None}
+
+
+def _compute_deterministic_default_payload_secret() -> bytes:
+    """Derive a stable 32-byte secret from all_assets.parquet content fingerprint (size + head/tail 64KB).
+    Byte-identical across Windows PC, github_push.py, NSSM restarts, and Linux Streamlit Cloud git clones
+    regardless of OS file mtime, while rotating automatically whenever all_assets.parquet content updates."""
+    try:
+        pq_path = get_latest_parquet_path()
+        if pq_path and pq_path.is_file():
+            st_info = pq_path.stat()
+            cache_key = (str(pq_path.resolve()), st_info.st_size, st_info.st_mtime_ns)
+            if _DETERMINISTIC_SECRET_CACHE["key"] == cache_key and _DETERMINISTIC_SECRET_CACHE["secret"]:
+                return _DETERMINISTIC_SECRET_CACHE["secret"]
+            h = hashlib.sha256()
+            h.update(b"NOVA_MAP_DETERMINISTIC_V4|")
+            h.update(str(st_info.st_size).encode("ascii"))
+            h.update(b"|")
+            with open(pq_path, "rb") as fh:
+                head = fh.read(65536)
+                h.update(head)
+                if st_info.st_size > 65536:
+                    fh.seek(max(0, st_info.st_size - 65536))
+                    h.update(fh.read(65536))
+            digest = h.digest()
+            _DETERMINISTIC_SECRET_CACHE["key"] = cache_key
+            _DETERMINISTIC_SECRET_CACHE["secret"] = digest
+            return digest
+    except Exception:
+        pass
+    return hashlib.sha256(b"NOVA_MAP_DETERMINISTIC_V4|fallback").digest()
 
 
 def get_payload_secret() -> bytes:
-    """Returns an ephemeral per-boot 256-bit secret by default so static .gz URLs are unguessable,
-    or honors NOVA_PAYLOAD_SECRET ('random' for alternate per-boot secret, or a custom shared secret)."""
+    """Returns a deterministic 256-bit dataset-fingerprinted secret by default (so prebuilt static .gz
+    caches sync cleanly to Streamlit Cloud & survive server restarts), or honors NOVA_PAYLOAD_SECRET
+    from env / st.secrets ('random' for ephemeral per-boot secret, or a custom shared secret)."""
     env_val = str(os.environ.get("NOVA_PAYLOAD_SECRET") or "").strip()
     if not env_val:
-        return _BOOT_RANDOM_PAYLOAD_SECRET
+        try:
+            sec_val = st.secrets.get("NOVA_PAYLOAD_SECRET")
+            if sec_val:
+                env_val = str(sec_val).strip()
+        except Exception:
+            pass
+    if not env_val:
+        return _compute_deterministic_default_payload_secret()
     if env_val.lower() == "random":
         return _BOOT_RANDOM_ALT_SECRET
     return env_val.encode("utf-8")
@@ -253,8 +292,9 @@ def _cleanup_stale_map_payload_files(
     keep_details_dir=None,
     min_age_sec=86400,
     tmp_min_age_sec=300,
+    max_stale_sets=2,
 ):
-    """Deletes legacy predictable map_payload_cache.js and stale tokenized payloads past their TTL grace period."""
+    """Deletes legacy predictable map_payload_cache.js and stale tokenized payloads past TTL or above max_stale_sets."""
     import shutil
     import time
     now_ts = time.time()
@@ -265,6 +305,7 @@ def _cleanup_stale_map_payload_files(
         pass
     try:
         if _STATIC_DIR.exists():
+            stale_tokens = {}
             for p in _STATIC_DIR.iterdir():
                 name = p.name
                 if name in (keep_filename, keep_sidecar, keep_details_dir):
@@ -272,20 +313,43 @@ def _cleanup_stale_map_payload_files(
                 is_tmp = ".tmp." in name
                 if p.is_dir() and name.startswith("map_details_"):
                     try:
-                        age = now_ts - p.stat().st_mtime
+                        st_m = p.stat().st_mtime
+                        age = now_ts - st_m
                         cutoff = tmp_min_age_sec if is_tmp else min_age_sec
                         if age >= cutoff:
                             shutil.rmtree(p, ignore_errors=True)
+                        elif not is_tmp:
+                            tok = name[len("map_details_"):]
+                            stale_tokens.setdefault(tok, []).append((st_m, p))
                     except Exception:
                         pass
                 elif (name.startswith(("map_payload_", "map_meta_")) and (name.endswith(".gz") or name.endswith(".js") or is_tmp)):
                     try:
-                        age = now_ts - p.stat().st_mtime
+                        st_m = p.stat().st_mtime
+                        age = now_ts - st_m
                         cutoff = tmp_min_age_sec if is_tmp else min_age_sec
                         if age >= cutoff:
                             p.unlink()
+                        elif not is_tmp:
+                            tok = name.replace("map_payload_", "").replace("map_meta_", "").replace(".json.gz", "").replace(".gz", "").replace(".js", "")
+                            stale_tokens.setdefault(tok, []).append((st_m, p))
                     except Exception:
                         pass
+            if max_stale_sets is not None and len(stale_tokens) > max_stale_sets:
+                ranked = sorted(
+                    stale_tokens.items(),
+                    key=lambda kv: max(mt for mt, _ in kv[1]),
+                    reverse=True,
+                )
+                for _tok, entries in ranked[max_stale_sets:]:
+                    for _, ep in entries:
+                        try:
+                            if ep.is_dir():
+                                shutil.rmtree(ep, ignore_errors=True)
+                            elif ep.exists():
+                                ep.unlink()
+                        except Exception:
+                            pass
     except Exception:
         pass
 
@@ -584,30 +648,143 @@ def get_valid_coord_properties_data(data_version=0):
     return load_properties_data(data_version=data_version)
 
 
+PROP_COMPOSITE_SEP = "||"
+
+
+def parse_composite_prop_key(raw_key):
+    """Parse 'Company||Code' composite property key into (company, code). Bare codes return ('', code)."""
+    s = str(raw_key or "").strip()
+    if not s:
+        return "", ""
+    if PROP_COMPOSITE_SEP in s:
+        co, code = s.split(PROP_COMPOSITE_SEP, 1)
+        return co.strip(), code.strip()
+    return "", s
+
+
+def make_composite_prop_key(company, code):
+    """Format canonical composite key 'Company||Code' (or bare code if company missing)."""
+    c = str(code or "").strip()
+    co = str(company or "").strip()
+    if co and co != "-" and c:
+        return f"{co}{PROP_COMPOSITE_SEP}{c}"
+    return c
+
+
+def match_compare_keys_mask(df_obj, raw_keys):
+    """Build boolean mask matching comparison keys (supports both 'Company||Code' and legacy bare 'Code')."""
+    if df_obj is None or df_obj.empty or 'รหัสทรัพย์' not in df_obj.columns or not raw_keys:
+        return pd.Series(False, index=df_obj.index if df_obj is not None else [], dtype=bool)
+    code_s = df_obj['รหัสทรัพย์'].astype(object).fillna('').astype(str).str.strip().str.lower()
+    has_co = 'บริษัท' in df_obj.columns
+    co_s = df_obj['บริษัท'].astype(object).fillna('').astype(str).str.strip().str.lower() if has_co else None
+
+    bare_codes = set()
+    pair_keys = set()
+    for rk in raw_keys:
+        co, cd = parse_composite_prop_key(rk)
+        cd_l = cd.lower()
+        if not cd_l:
+            continue
+        if co and has_co:
+            pair_keys.add((co.lower(), cd_l))
+        else:
+            bare_codes.add(cd_l)
+
+    mask = pd.Series(False, index=df_obj.index, dtype=bool)
+    if bare_codes:
+        mask |= code_s.isin(bare_codes)
+    if pair_keys and co_s is not None:
+        target_cds = {cd for _, cd in pair_keys}
+        cand_mask = code_s.isin(target_cds)
+        if cand_mask.any():
+            sub_idx = df_obj.index[cand_mask]
+            hit_bools = [(c, d) in pair_keys for c, d in zip(co_s.loc[sub_idx], code_s.loc[sub_idx])]
+            mask.loc[sub_idx] = mask.loc[sub_idx] | pd.Series(hit_bools, index=sub_idx, dtype=bool)
+    return mask
+
+
 @st.cache_resource(max_entries=4, show_spinner=False)
 def _get_property_code_index_cached(_df, cache_key=None):
-    """O(1) property code lookup tables: (exact_lower_map, led_prefix_lower_map)."""
+    """O(1) property code lookup tables: (exact_lower_map, led_prefix_lower_map, company_code_positions, company_prefix_map)."""
     exact_map = {}
     prefix_map = {}
+    company_code_positions = {}
+    company_prefix_map = {}
     if _df is None or _df.empty or 'รหัสทรัพย์' not in _df.columns:
-        return exact_map, prefix_map
+        return exact_map, prefix_map, company_code_positions, company_prefix_map
     codes = _df['รหัสทรัพย์'].astype(object).fillna('').astype(str)
-    for pos, raw_c in enumerate(codes):
-        c_low = raw_c.strip().lower()
-        if not c_low:
-            continue
-        if c_low not in exact_map:
-            exact_map[c_low] = pos
-        if '_' in c_low:
-            base_c = c_low.split('_', 1)[0]
-            if base_c and base_c not in prefix_map:
-                prefix_map[base_c] = pos
-    return exact_map, prefix_map
+    has_co = 'บริษัท' in _df.columns
+    companies = _df['บริษัท'].astype(object).fillna('').astype(str) if has_co else None
+    if has_co:
+        for pos, (raw_co, raw_c) in enumerate(zip(companies, codes)):
+            c_low = raw_c.strip().lower()
+            if not c_low:
+                continue
+            co_low = raw_co.strip().lower()
+            if c_low not in exact_map:
+                exact_map[c_low] = pos
+            if co_low:
+                ckey = (co_low, c_low)
+                pos_list = company_code_positions.get(ckey)
+                if pos_list is None:
+                    company_code_positions[ckey] = [pos]
+                else:
+                    pos_list.append(pos)
+            if '_' in c_low:
+                base_c = c_low.split('_', 1)[0]
+                if base_c:
+                    if base_c not in prefix_map:
+                        prefix_map[base_c] = pos
+                    if co_low and (co_low, base_c) not in company_prefix_map:
+                        company_prefix_map[(co_low, base_c)] = pos
+    else:
+        for pos, raw_c in enumerate(codes):
+            c_low = raw_c.strip().lower()
+            if not c_low:
+                continue
+            if c_low not in exact_map:
+                exact_map[c_low] = pos
+            if '_' in c_low:
+                base_c = c_low.split('_', 1)[0]
+                if base_c and base_c not in prefix_map:
+                    prefix_map[base_c] = pos
+    return exact_map, prefix_map, company_code_positions, company_prefix_map
 
 
-def find_property_row_by_code(df_obj, prop_code, include_led_prefix=False):
-    """Looks up the first matching row dict by รหัสทรัพย์ in O(1) for full datasets or fast scan on small frames."""
-    clean_code = str(prop_code or "").strip().lower()
+def _pick_closest_pos(df_obj, positions, lat=None, lon=None):
+    if not positions:
+        return None
+    if len(positions) == 1 or lat is None or lon is None:
+        return positions[0]
+    try:
+        t_lat, t_lon = float(lat), float(lon)
+        if not (np.isfinite(t_lat) and np.isfinite(t_lon)):
+            return positions[0]
+        if 'ละติจูด' not in df_obj.columns or 'ลองจิจูด' not in df_obj.columns:
+            return positions[0]
+        best_pos = positions[0]
+        best_d2 = float("inf")
+        lat_col = df_obj['ละติจูด']
+        lon_col = df_obj['ลองจิจูด']
+        for p in positions:
+            la = lat_col.iloc[p]
+            lo = lon_col.iloc[p]
+            if pd.notna(la) and pd.notna(lo):
+                d2 = (float(la) - t_lat) ** 2 + (float(lo) - t_lon) ** 2
+                if d2 < best_d2:
+                    best_d2 = d2
+                    best_pos = p
+        return best_pos
+    except Exception:
+        return positions[0]
+
+
+def find_property_row_by_code(df_obj, prop_code, include_led_prefix=False, company=None, lat=None, lon=None):
+    """Looks up the matching row dict by รหัสทรัพย์ (with optional Company disambiguation & 'Company||Code' support)."""
+    parsed_co, parsed_code = parse_composite_prop_key(prop_code)
+    clean_code = parsed_code.lower()
+    clean_co = (str(company or "").strip() or parsed_co).lower()
     if not clean_code or df_obj is None or df_obj.empty or 'รหัสทรัพย์' not in df_obj.columns:
         return None
     n = len(df_obj)
@@ -617,16 +794,34 @@ def find_property_row_by_code(df_obj, prop_code, include_led_prefix=False):
             custom_fp = df_obj.attrs.get("_custom_import_fp") if hasattr(df_obj, "attrs") else None
         except Exception:
             custom_fp = None
-        exact_map, prefix_map = _get_property_code_index_cached(
+        exact_map, prefix_map, co_positions, co_prefix = _get_property_code_index_cached(
             df_obj, cache_key=(n, get_data_mtime(), custom_fp)
         )
-        pos = exact_map.get(clean_code)
-        if pos is None and include_led_prefix:
-            pos = prefix_map.get(clean_code)
+        pos = None
+        if clean_co:
+            pos_list = co_positions.get((clean_co, clean_code))
+            if pos_list:
+                pos = _pick_closest_pos(df_obj, pos_list, lat=lat, lon=lon)
+            elif include_led_prefix:
+                pos = co_prefix.get((clean_co, clean_code))
+        if pos is None:
+            pos = exact_map.get(clean_code)
+            if pos is None and include_led_prefix:
+                pos = prefix_map.get(clean_code)
         if pos is not None and 0 <= pos < n:
             return df_obj.iloc[pos].to_dict()
         return None
     s_codes = df_obj['รหัสทรัพย์'].astype(str).str.strip().str.lower()
+    if clean_co and 'บริษัท' in df_obj.columns:
+        s_cos = df_obj['บริษัท'].astype(str).str.strip().str.lower()
+        m_co = df_obj[(s_cos == clean_co) & (s_codes == clean_code)]
+        if m_co.empty and include_led_prefix:
+            m_co = df_obj[(s_cos == clean_co) & s_codes.str.startswith(clean_code + '_')]
+        if not m_co.empty:
+            if len(m_co) > 1 and lat is not None and lon is not None:
+                best_idx = _pick_closest_pos(m_co, list(range(len(m_co))), lat=lat, lon=lon)
+                return m_co.iloc[best_idx].to_dict()
+            return m_co.iloc[0].to_dict()
     m = df_obj[s_codes == clean_code]
     if m.empty and include_led_prefix:
         m = df_obj[s_codes.str.startswith(clean_code + '_')]
@@ -1124,6 +1319,12 @@ def _build_map_payload_raw_from_df(
     else:
         sam_projs_list, sam_only, other_only, proj_stats = [], [], [], {}
 
+    from modules.services.data_cleaner import normalize_project_name as _norm_prj_py
+    _prj_cats_list = _prj_cat.categories.tolist()
+    _prj_norm_list = [_norm_prj_py(p) if (p and p != '-') else '' for p in _prj_cats_list]
+    _sam_norm_list = [_norm_prj_py(p) if p else '' for p in sam_only]
+    _other_norm_list = [_norm_prj_py(p) if p else '' for p in other_only]
+
     lookup_obj = {
         'co': _co_cat.categories.tolist(),
         'co_rgb': [COMPANY_MAP_RGB.get(c, DEFAULT_COLOR) for c in _co_cat.categories.tolist()],
@@ -1133,10 +1334,13 @@ def _build_map_payload_raw_from_df(
         'rg': _rg_cat.categories.tolist(),
         'dt': _dt_cat.categories.tolist(),
         'subdt': _subdt_cat.categories.tolist(),
-        'prj': _prj_cat.categories.tolist(),
+        'prj': _prj_cats_list,
+        'prj_norm': _prj_norm_list,
         'plaintiff': _plain_cat.categories.tolist(),
         'sam_prj': sam_only,
+        'sam_norm': _sam_norm_list,
         'other_prj': other_only,
+        'other_norm': _other_norm_list,
         'all_prj': sam_projs_list,
         'prj_stats': proj_stats,
     }

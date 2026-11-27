@@ -660,12 +660,20 @@ function updateParentMedianCards(sharedActiveData) {
     let sourceIcon = 'fa-circle-dot';
     let landSourceDesc = '';
     let pureLandRates = [];
+    const includeCentroids = !!(inMapFilterState && inMapFilterState.includeCentroids);
+
+    function isPureLandCentroidAllowed(d) {
+      if (!d) return false;
+      if (includeCentroids) return true;
+      return !(String(d._centroid) === '1' || d._centroid === true || d._centroid === 'true');
+    }
 
     function getPureLandRatesFromList(itemList) {
       const rList = [];
       if (!itemList || itemList.length === 0) return rList;
       for (let i = 0; i < itemList.length; i++) {
         const d = itemList[i];
+        if (!isPureLandCentroidAllowed(d)) continue;
         if (!isPureLandProperty(d._type) || !d._price || d._price <= 0) continue;
         const r = (d._puw && d._puw > 0) ? d._puw : ((d._sqw && d._sqw > 0) ? d._price / d._sqw : null);
         if (r && r > 0) rList.push(r);
@@ -681,6 +689,7 @@ function updateParentMedianCards(sharedActiveData) {
       const coRates = [];
       for (let i = 0; i < itemList.length; i++) {
         const d = itemList[i];
+        if (!isPureLandCentroidAllowed(d)) continue;
         if (!activeCos.has(d._company)) continue;
         if (!isPureLandProperty(d._type) || !d._price || d._price <= 0) continue;
         const r = (d._puw && d._puw > 0) ? d._puw : ((d._sqw && d._sqw > 0) ? d._price / d._sqw : null);
@@ -724,6 +733,7 @@ function updateParentMedianCards(sharedActiveData) {
         if (!pDist || !pProv || pDist === '-' || pProv === '-' || pDist === 'ไม่มีข้อมูล' || pProv === 'ไม่มีข้อมูล') {
           const nearest = queryPointsInRadius(referencePoint[0], referencePoint[1], 50.0);
           for (let ni = 0; ni < nearest.length; ni++) {
+            if (!isPureLandCentroidAllowed(nearest[ni])) continue;
             if (!pDist && nearest[ni]._district && nearest[ni]._district !== '-' && nearest[ni]._district !== 'ไม่มีข้อมูล') pDist = nearest[ni]._district.trim();
             if (!pProv && nearest[ni]._prov && nearest[ni]._prov !== '-' && nearest[ni]._prov !== 'ไม่มีข้อมูล') pProv = nearest[ni]._prov.trim();
             if (pDist && pProv) break;
@@ -766,13 +776,17 @@ function updateParentMedianCards(sharedActiveData) {
       pNameList.forEach(pn => {
         const itms = globalProjToItemsMap.get(pn) || [];
         itms.forEach(it => {
+          if (!isPureLandCentroidAllowed(it)) return;
+          if (typeof isItemInCurrentLocation === 'function' && !isItemInCurrentLocation(it)) return;
           const uKey = _itemUniqueKey(it);
           if (!seenProjIds.has(uKey)) { seenProjIds.add(uKey); projAllItems.push(it); }
         });
       });
       if (projAllItems.length === 0 && inMapFilterState.samProject) {
         const tNk = normalizeProjectKeyword(inMapFilterState.samProject);
-        projAllItems = (globalNormToItemsMap.get(tNk) || globalProjToItemsMap.get(inMapFilterState.samProject) || []).slice();
+        projAllItems = (globalNormToItemsMap.get(tNk) || globalProjToItemsMap.get(inMapFilterState.samProject) || []).filter(
+          it => isPureLandCentroidAllowed(it) && (typeof isItemInCurrentLocation !== 'function' || isItemInCurrentLocation(it))
+        );
       }
 
       let candPool = projAllItems;
@@ -1190,6 +1204,7 @@ function clearReferencePoint() {
   currentRefProp = null;
   currentRefId = "";
   currentPriceCenterId = "";
+  if (typeof currentPriceCenterCompany !== 'undefined') currentPriceCenterCompany = "";
   pendingReferencePoint = null;
   mousePreviewCoord = null;
 
@@ -1846,11 +1861,20 @@ async function initMap() {
 
     const effRefId = currentRefId || (initRefIdStr && initRefIdStr !== ("INIT_REF_ID_" + "PLACEHOLDER") ? initRefIdStr : "");
     if (effRefId && effRefId.trim()) {
+      let urlRefCo = '';
+      try {
+        if (window.parent && window.parent.location) {
+          urlRefCo = (new URL(window.parent.location.href).searchParams.get('map_ref_co') || '').trim();
+        }
+      } catch (_e) {}
       const inp = document.getElementById('inmap-prop-search-input');
       const clr = document.getElementById('inmap-clear-search-btn');
-      if (inp) inp.value = effRefId.trim();
+      const parsedRef = (typeof parsePropCompositeKey === 'function') ? parsePropCompositeKey(effRefId.trim()) : { company: '', id: effRefId.trim() };
+      if (inp) inp.value = parsedRef.id || effRefId.trim();
       if (clr) clr.style.display = 'inline-flex';
-      if (idExactLookupMap) {
+      if (typeof resolvePropertyByKey === 'function' && idExactLookupMap) {
+        currentRefProp = resolvePropertyByKey(effRefId.trim(), { idExactLookupMap, idStrippedLookupMap, idCompanyLookupMap }, urlRefCo) || null;
+      } else if (idExactLookupMap) {
         currentRefProp = idExactLookupMap.get(effRefId.trim().toLowerCase()) || null;
       } else if (cachedData && cachedData.length > 0) {
         currentRefProp = cachedData.find(x => (x._id || '').trim() === effRefId.trim()) || null;
@@ -1859,13 +1883,19 @@ async function initMap() {
 
     if (initialCompareIds && initialCompareIds.length > 0 && cachedData && cachedData.length > 0) {
       if (!idExactLookupMap) buildIdLookupIndex(cachedData);
+      const restoredItems = [];
       initialCompareIds.forEach(rawId => {
-        const key = String(rawId || '').trim().toLowerCase();
-        const d = (key && idExactLookupMap) ? idExactLookupMap.get(key) : null;
+        const keyStr = String(rawId || '').trim();
+        const d = (typeof resolvePropertyByKey === 'function')
+          ? resolvePropertyByKey(keyStr, { idExactLookupMap, idStrippedLookupMap, idCompanyLookupMap })
+          : ((keyStr && idExactLookupMap) ? idExactLookupMap.get(keyStr.toLowerCase()) : null);
         if (d && d._id) {
-          selectedComparisonProps.set(String(d._id).trim(), {
-            id: String(d._id).trim(),
-            _id: String(d._id).trim(),
+          const cleanId = String(d._id).trim();
+          const compKey = (typeof makePropCompositeKey === 'function') ? makePropCompositeKey(d) : cleanId;
+          selectedComparisonProps.set(compKey, {
+            key: compKey,
+            id: cleanId,
+            _id: cleanId,
             lat: parseFloat(d.lat),
             lon: parseFloat(d.lon),
             title: d._title || (d._project && d._project !== '-' ? d._project : d._type) || '',
@@ -1875,10 +1905,26 @@ async function initMap() {
             sqw: d._sqw || 0,
             sqm: d._sqm || 0
           });
+          if (!d._detailLoaded) restoredItems.push({ compKey, d });
         }
       });
       updateComparisonUi();
       updateDeckLayers();
+      if (restoredItems.length > 0 && window.NovaMapCache && typeof window.NovaMapCache.ensureDetailsForItems === 'function') {
+        window.NovaMapCache.ensureDetailsForItems(restoredItems.map(x => x.d), window._activeMapCacheObj)
+          .then(() => {
+            let changed = false;
+            restoredItems.forEach(({ compKey, d }) => {
+              const entry = selectedComparisonProps.get(compKey);
+              if (entry && d._title) {
+                entry.title = d._title;
+                changed = true;
+              }
+            });
+            if (changed) updateComparisonUi();
+          })
+          .catch(() => {});
+      }
     }
 
     renderSavedCoordinatesPills();

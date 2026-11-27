@@ -181,14 +181,28 @@ def resolve_tab2_sync_and_filter_state(
                 else:
                     st.session_state.pop("tab2_batch_active_ref", None)
 
+            _p_lat_hint = _safe_float(payload_obj.get("lat"), 0.0)
+            _p_lon_hint = _safe_float(payload_obj.get("lon"), 0.0)
+            _has_coord_hint = _is_valid_thai_coord(_p_lat_hint, _p_lon_hint)
+
             if "id" in payload_obj:
                 p_id = str(payload_obj.get("id", "")).strip()
+                p_ref_co = str(payload_obj.get("ref_company", "")).strip()
                 if p_id:
                     st.session_state["tab2_search_prop_id"] = p_id
-                    found_row = find_property_row_by_code(df_raw, p_id, include_led_prefix=True)
+                    st.session_state["tab2_ref_company"] = p_ref_co
+                    found_row = find_property_row_by_code(
+                        df_raw,
+                        p_id,
+                        include_led_prefix=True,
+                        company=p_ref_co or None,
+                        lat=_p_lat_hint if _has_coord_hint else None,
+                        lon=_p_lon_hint if _has_coord_hint else None,
+                    )
                     if found_row is not None:
                         active_ref_prop = found_row
                         st.session_state["tab2_ref_prop"] = active_ref_prop
+                        st.session_state["tab2_ref_company"] = str(found_row.get("บริษัท", p_ref_co)).strip()
                         prop_p = str(active_ref_prop.get('จังหวัด', '')).strip()
                         prop_d = str(active_ref_prop.get('อำเภอ', '')).strip()
                         prop_s = str(active_ref_prop.get('ตำบล', '')).strip()
@@ -197,21 +211,34 @@ def resolve_tab2_sync_and_filter_state(
                         st.session_state["tab2_filter_subdistricts"] = [prop_s] if prop_s not in _INVALID_LOC_TOKENS else []
                 else:
                     st.session_state["tab2_search_prop_id"] = ""
+                    st.session_state["tab2_ref_company"] = ""
                     st.session_state.pop("tab2_ref_prop", None)
 
             if "price_center_id" in payload_obj:
                 if st.session_state.get("tab2_just_reset_price_center"):
                     p_price_id = ""
+                    p_price_co = ""
                 else:
                     p_price_id = str(payload_obj.get("price_center_id", "")).strip()
+                    p_price_co = str(payload_obj.get("price_center_company", "")).strip()
                 if p_price_id:
                     st.session_state["tab2_price_center_id"] = p_price_id
-                    found_pr = find_property_row_by_code(df_raw, p_price_id)
+                    st.session_state["tab2_price_center_company"] = p_price_co
+                    found_pr = find_property_row_by_code(
+                        df_raw,
+                        p_price_id,
+                        include_led_prefix=True,
+                        company=p_price_co or None,
+                        lat=_p_lat_hint if _has_coord_hint else None,
+                        lon=_p_lon_hint if _has_coord_hint else None,
+                    )
                     if found_pr is not None:
                         active_price_ref_prop = found_pr
                         st.session_state["tab2_price_ref_prop"] = active_price_ref_prop
+                        st.session_state["tab2_price_center_company"] = str(found_pr.get("บริษัท", p_price_co)).strip()
                 else:
                     st.session_state["tab2_price_center_id"] = ""
+                    st.session_state["tab2_price_center_company"] = ""
                     st.session_state.pop("tab2_price_ref_prop", None)
                     active_price_ref_prop = None
 
@@ -396,18 +423,32 @@ def resolve_tab2_sync_and_filter_state(
     # Auto-resolve active_ref_prop
     if "tab2_search_prop_id" in st.session_state:
         q_id = st.session_state.get("tab2_search_prop_id")
+        q_ref_co = st.session_state.get("tab2_ref_company", "")
     else:
         q_id = st.query_params.get("map_ref_id")
+        q_ref_co = st.query_params.get("map_ref_co", "")
     if q_id and df_raw is not None and not df_raw.empty and 'รหัสทรัพย์' in df_raw.columns:
         clean_id = str(q_id).strip()
-        if active_ref_prop is None or str(active_ref_prop.get('รหัสทรัพย์', '')).strip().lower() != clean_id.lower():
-            found_row = find_property_row_by_code(df_raw, clean_id, include_led_prefix=True)
+        clean_ref_co = str(q_ref_co or "").strip()
+        _cur_code = str(active_ref_prop.get('รหัสทรัพย์', '')).strip().lower() if active_ref_prop is not None else ""
+        _cur_co = str(active_ref_prop.get('บริษัท', '')).strip().lower() if active_ref_prop is not None else ""
+        if active_ref_prop is None or _cur_code != clean_id.lower() or (clean_ref_co and _cur_co != clean_ref_co.lower()):
+            found_row = find_property_row_by_code(
+                df_raw,
+                clean_id,
+                include_led_prefix=True,
+                company=clean_ref_co or None,
+                lat=active_ref_lat,
+                lon=active_ref_lon,
+            )
             if found_row is not None:
                 active_ref_prop = found_row
                 st.session_state["tab2_ref_prop"] = active_ref_prop
-                st.session_state["tab2_search_prop_id"] = clean_id
+                st.session_state["tab2_search_prop_id"] = str(found_row.get('รหัสทรัพย์', clean_id)).strip()
+                st.session_state["tab2_ref_company"] = str(found_row.get('บริษัท', clean_ref_co)).strip()
     elif not q_id:
         st.session_state["tab2_search_prop_id"] = ""
+        st.session_state["tab2_ref_company"] = ""
         batch_ref_state = st.session_state.get("tab2_batch_active_ref")
         if (
             isinstance(batch_ref_state, dict)
@@ -426,23 +467,38 @@ def resolve_tab2_sync_and_filter_state(
         st.session_state["tab2_just_reset_price_center"] = False
         active_price_ref_prop = None
         st.session_state["tab2_price_center_id"] = ""
+        st.session_state["tab2_price_center_company"] = ""
         st.session_state.pop("tab2_price_ref_prop", None)
     else:
         if "tab2_price_center_id" in st.session_state:
             q_price_id = st.session_state.get("tab2_price_center_id")
+            q_price_co = st.session_state.get("tab2_price_center_company", "")
         else:
             q_price_id = st.query_params.get("map_price_ref_id")
+            q_price_co = st.query_params.get("map_price_ref_co", "")
         if q_price_id and df_raw is not None and not df_raw.empty and 'รหัสทรัพย์' in df_raw.columns:
             clean_price_id = str(q_price_id).strip()
-            if active_price_ref_prop is None or str(active_price_ref_prop.get('รหัสทรัพย์', '')).strip().lower() != clean_price_id.lower():
-                found_p_row = find_property_row_by_code(df_raw, clean_price_id)
+            clean_price_co = str(q_price_co or "").strip()
+            _cur_p_code = str(active_price_ref_prop.get('รหัสทรัพย์', '')).strip().lower() if active_price_ref_prop is not None else ""
+            _cur_p_co = str(active_price_ref_prop.get('บริษัท', '')).strip().lower() if active_price_ref_prop is not None else ""
+            if active_price_ref_prop is None or _cur_p_code != clean_price_id.lower() or (clean_price_co and _cur_p_co != clean_price_co.lower()):
+                found_p_row = find_property_row_by_code(
+                    df_raw,
+                    clean_price_id,
+                    include_led_prefix=True,
+                    company=clean_price_co or None,
+                    lat=active_ref_lat,
+                    lon=active_ref_lon,
+                )
                 if found_p_row is not None:
                     active_price_ref_prop = found_p_row
                     st.session_state["tab2_price_ref_prop"] = active_price_ref_prop
-                    st.session_state["tab2_price_center_id"] = clean_price_id
+                    st.session_state["tab2_price_center_id"] = str(found_p_row.get('รหัสทรัพย์', clean_price_id)).strip()
+                    st.session_state["tab2_price_center_company"] = str(found_p_row.get('บริษัท', clean_price_co)).strip()
         elif not q_price_id:
             active_price_ref_prop = None
             st.session_state["tab2_price_center_id"] = ""
+            st.session_state["tab2_price_center_company"] = ""
             st.session_state.pop("tab2_price_ref_prop", None)
 
     # 2. Extract and resolve all current map filters (preferring session_state once initialized)

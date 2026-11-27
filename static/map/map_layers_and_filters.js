@@ -835,16 +835,30 @@ function createComparisonPinsBadgeLayer() {
   });
 }
 
+function _getComparePropKey(item) {
+  if (!item || !item._id) return '';
+  if (typeof makePropCompositeKey === 'function') {
+    return makePropCompositeKey(item);
+  }
+  const id = String(item._id).trim();
+  const co = String(item._company || '').trim();
+  return (co && co !== '-') ? (co + '||' + id) : id;
+}
+
 function toggleCardPropertyComparison() {
   if (!activePropertyData || !activePropertyData._id) return;
   const id = String(activePropertyData._id).trim();
   if (!id || id === '-') return;
+  const compKey = _getComparePropKey(activePropertyData);
+  const coLabel = (activePropertyData._company && activePropertyData._company !== '-') ? `[${activePropertyData._company}] ` : '';
 
-  if (selectedComparisonProps.has(id)) {
+  if (selectedComparisonProps.has(compKey) || selectedComparisonProps.has(id)) {
+    selectedComparisonProps.delete(compKey);
     selectedComparisonProps.delete(id);
-    showToast(`<i class="fa-solid fa-xmark" style="color:#ef4444; margin-right:6px;"></i>ยกเลิกการเลือกทรัพย์ <b>${escapeHtml(id)}</b>`);
+    showToast(`<i class="fa-solid fa-xmark" style="color:#ef4444; margin-right:6px;"></i>ยกเลิกการเลือกทรัพย์ <b>${escapeHtml(coLabel + id)}</b>`);
   } else {
-    selectedComparisonProps.set(id, {
+    selectedComparisonProps.set(compKey, {
+      key: compKey,
       id: id,
       _id: id,
       lat: parseFloat(activePropertyData.lat),
@@ -856,7 +870,7 @@ function toggleCardPropertyComparison() {
       sqw: activePropertyData._sqw || 0,
       sqm: activePropertyData._sqm || 0
     });
-    showToast(`<i class="fa-solid fa-scale-balanced" style="color:#f59e0b; margin-right:6px;"></i>เพิ่มทรัพย์ <b>${escapeHtml(id)}</b> ในรายการเปรียบเทียบ (รวม ${selectedComparisonProps.size} ทรัพย์)`);
+    showToast(`<i class="fa-solid fa-scale-balanced" style="color:#f59e0b; margin-right:6px;"></i>เพิ่มทรัพย์ <b>${escapeHtml(coLabel + id)}</b> ในรายการเปรียบเทียบ (รวม ${selectedComparisonProps.size} ทรัพย์)`);
   }
 
   updateComparisonUi();
@@ -868,7 +882,8 @@ function updateComparisonUi() {
   const btnToggleComp = document.getElementById('btn-toggle-compare-card');
   if (btnToggleComp && activePropertyData && activePropertyData._id) {
     const propId = String(activePropertyData._id).trim();
-    const isSelected = selectedComparisonProps && selectedComparisonProps.has(propId);
+    const compKey = _getComparePropKey(activePropertyData);
+    const isSelected = selectedComparisonProps && (selectedComparisonProps.has(compKey) || selectedComparisonProps.has(propId));
     if (isSelected) {
       btnToggleComp.classList.add('selected');
       btnToggleComp.innerHTML = '<i class="fa-solid fa-square-check"></i> เลือกอยู่ (ยกเลิก)';
@@ -891,10 +906,11 @@ function updateComparisonUi() {
       if (specFilterPanel) specFilterPanel.classList.add('with-compare-bar');
       countEl.innerText = `เลือกเปรียบเทียบ ${count} ทรัพย์`;
       if (chipsEl) {
-        const ids = Array.from(selectedComparisonProps.keys());
-        chipsEl.innerHTML = ids.slice(0, 4).map((cid, i) =>
-          `<span style="background:rgba(245,158,11,0.22); color:#fbbf24; border:1px solid rgba(245,158,11,0.45); font-size:10.5px; font-weight:700; padding:1px 6px; border-radius:9999px;">${i+1}. ${escapeHtml(cid)}</span>`
-        ).join('') + (ids.length > 4 ? `<span style="font-size:10px; color:#94a3b8; font-weight:700;">+${ids.length - 4}</span>` : '');
+        const entries = Array.from(selectedComparisonProps.entries());
+        chipsEl.innerHTML = entries.slice(0, 4).map(([ckey, item], i) => {
+          const dispLabel = (item && item.id) ? item.id : ((typeof parsePropCompositeKey === 'function') ? parsePropCompositeKey(ckey).id : ckey);
+          return `<span style="background:rgba(245,158,11,0.22); color:#fbbf24; border:1px solid rgba(245,158,11,0.45); font-size:10.5px; font-weight:700; padding:1px 6px; border-radius:9999px;">${i+1}. ${escapeHtml(dispLabel)}</span>`;
+        }).join('') + (entries.length > 4 ? `<span style="font-size:10px; color:#94a3b8; font-weight:700;">+${entries.length - 4}</span>` : '');
       }
     } else {
       bar.style.display = 'none';
@@ -2367,7 +2383,9 @@ function getMapSyncPayload() {
     proj: projStr,
     proj_list: projArr,
     id: id,
+    ref_company: (currentRefProp && currentRefProp._company && currentRefProp._company !== '-') ? currentRefProp._company : '',
     price_center_id: currentPriceCenterId || '',
+    price_center_company: (typeof currentPriceCenterCompany !== 'undefined' && currentPriceCenterCompany) ? currentPriceCenterCompany : '',
     lat: lat,
     lon: lon,
     radius: currentRadiusKm || 5.0,

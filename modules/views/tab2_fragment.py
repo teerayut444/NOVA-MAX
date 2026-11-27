@@ -221,12 +221,11 @@ def render_tab2_reference_analytics_fragment(
     status_df = df_raw if df_raw is not None else pd.DataFrame()
     is_comparison_active = False
     if active_compare_ids and df_raw is not None and not df_raw.empty and 'รหัสทรัพย์' in df_raw.columns:
-        cids_set = {str(x).strip().lower() for x in active_compare_ids if str(x).strip()}
-        if cids_set:
-            comp_match = df_raw[df_raw['รหัสทรัพย์'].astype(str).str.strip().str.lower().isin(cids_set)]
-            if not comp_match.empty:
-                status_df = comp_match.copy()
-                is_comparison_active = True
+        from modules.services.data_loader import match_compare_keys_mask
+        comp_mask = match_compare_keys_mask(df_raw, active_compare_ids)
+        if bool(comp_mask.any()):
+            status_df = df_raw.loc[comp_mask].copy()
+            is_comparison_active = True
 
     if not is_comparison_active and has_any_filter and not status_df.empty:
         if active_proj:

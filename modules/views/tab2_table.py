@@ -474,7 +474,7 @@ def precompute_tab2_default_analytics(df_raw, data_mtime=0):
     """Pre-warms only the nationwide pure-land benchmark cache hit by Tab 2 filters (without copying 461k rows)."""
     if df_raw is None or df_raw.empty:
         return
-    needed_cols = [c for c in ('บริษัท', 'ประเภททรัพย์', 'ราคา', 'พื้นที่_ตารางวา', 'เนื้อที่ (ตร.ว.)', 'ราคาต่อตารางวา', 'ราคาต่อหน่วย', 'ละติจูด', 'ลองจิจูด') if c in df_raw.columns]
+    needed_cols = [c for c in ('บริษัท', 'ประเภททรัพย์', 'ราคา', 'พื้นที่_ตารางวา', 'เนื้อที่ (ตร.ว.)', 'ราคาต่อตารางวา', 'ราคาต่อหน่วย', 'ละติจูด', 'ลองจิจูด', 'is_centroid') if c in df_raw.columns]
     df_sub = df_raw[needed_cols]
     if 'ละติจูด' in df_sub.columns and 'ลองจิจูด' in df_sub.columns:
         valid_coords_mask = (
@@ -486,8 +486,8 @@ def precompute_tab2_default_analytics(df_raw, data_mtime=0):
     if df_sub.empty:
         return
 
-    base_key = (data_mtime, len(df_sub), None)
-    _get_cached_nationwide_pure_land(df_sub, cache_key=base_key)
+    base_key = (data_mtime, len(df_sub), None, False)
+    _get_cached_nationwide_pure_land(df_sub, cache_key=base_key, exclude_centroids=True)
 
 
 def render_tab2_nearby_table_and_export(

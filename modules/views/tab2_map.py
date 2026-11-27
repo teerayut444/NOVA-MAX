@@ -444,13 +444,29 @@ def render_tab2_map_view(df_raw, df_filtered, is_dark_mode):
         if q_comp and str(q_comp).strip():
             st.session_state["tab2_compare_ids"] = [x.strip() for x in str(q_comp).split(",") if x.strip()]
         q_id = st.query_params.get("map_ref_id")
+        q_ref_co = st.query_params.get("map_ref_co") or st.session_state.get("tab2_ref_company", "")
         search_prop_id = q_id or st.session_state.get("tab2_search_prop_id", "")
 
         if search_prop_id and str(search_prop_id).strip():
             clean_id = str(search_prop_id).strip()
-            if active_ref_prop is None or str(active_ref_prop.get('รหัสทรัพย์', '')).strip().lower() != clean_id.lower():
+            clean_ref_co = str(q_ref_co or "").strip()
+            _cur_ref_code = str(active_ref_prop.get('รหัสทรัพย์', '')).strip().lower() if active_ref_prop is not None else ""
+            _cur_ref_co = str(active_ref_prop.get('บริษัท', '')).strip().lower() if active_ref_prop is not None else ""
+            _ref_mismatch = (
+                active_ref_prop is None
+                or _cur_ref_code != clean_id.lower()
+                or (clean_ref_co and _cur_ref_co != clean_ref_co.lower())
+            )
+            if _ref_mismatch:
                 if df_raw is not None and not df_raw.empty and 'รหัสทรัพย์' in df_raw.columns:
-                    r0 = find_property_row_by_code(df_raw, clean_id, include_led_prefix=True)
+                    r0 = find_property_row_by_code(
+                        df_raw,
+                        clean_id,
+                        include_led_prefix=True,
+                        company=clean_ref_co or None,
+                        lat=active_ref_lat,
+                        lon=active_ref_lon,
+                    )
                     if r0 is not None:
                         if _is_valid_thai_coord(r0.get('ละติจูด'), r0.get('ลองจิจูด')):
                             active_ref_prop = r0
@@ -459,7 +475,8 @@ def render_tab2_map_view(df_raw, df_filtered, is_dark_mode):
                             st.session_state["tab2_ref_lat"] = active_ref_lat
                             st.session_state["tab2_ref_lon"] = active_ref_lon
                             st.session_state["tab2_ref_prop"] = active_ref_prop
-                            st.session_state["tab2_search_prop_id"] = clean_id
+                            st.session_state["tab2_search_prop_id"] = str(r0.get('รหัสทรัพย์', clean_id)).strip()
+                            st.session_state["tab2_ref_company"] = str(r0.get('บริษัท', clean_ref_co)).strip()
                             st.session_state["tab2_filter_projects"] = []
                             try:
                                 st.query_params.pop("map_proj", None)
@@ -535,20 +552,37 @@ def render_tab2_map_view(df_raw, df_filtered, is_dark_mode):
         else:
             active_price_ref_prop = st.session_state.get("tab2_price_ref_prop")
             price_prop_id = str(st.query_params.get("map_price_ref_id") or st.session_state.get("tab2_price_center_id", "")).strip()
+            price_prop_co = str(st.query_params.get("map_price_ref_co") or st.session_state.get("tab2_price_center_company", "")).strip()
             if price_prop_id:
                 clean_price_id = price_prop_id.strip()
-                if active_price_ref_prop is None or str(active_price_ref_prop.get('รหัสทรัพย์', '')).strip().lower() != clean_price_id.lower():
-                    found_pr = find_property_row_by_code(df_raw, clean_price_id, include_led_prefix=True)
+                _cur_p_code = str(active_price_ref_prop.get('รหัสทรัพย์', '')).strip().lower() if active_price_ref_prop is not None else ""
+                _cur_p_co = str(active_price_ref_prop.get('บริษัท', '')).strip().lower() if active_price_ref_prop is not None else ""
+                _p_mismatch = (
+                    active_price_ref_prop is None
+                    or _cur_p_code != clean_price_id.lower()
+                    or (price_prop_co and _cur_p_co != price_prop_co.lower())
+                )
+                if _p_mismatch:
+                    found_pr = find_property_row_by_code(
+                        df_raw,
+                        clean_price_id,
+                        include_led_prefix=True,
+                        company=price_prop_co or None,
+                        lat=active_ref_lat,
+                        lon=active_ref_lon,
+                    )
                     if found_pr is not None:
                         active_price_ref_prop = found_pr
                         st.session_state["tab2_price_ref_prop"] = active_price_ref_prop
-                        st.session_state["tab2_price_center_id"] = clean_price_id
+                        st.session_state["tab2_price_center_id"] = str(found_pr.get('รหัสทรัพย์', clean_price_id)).strip()
+                        st.session_state["tab2_price_center_company"] = str(found_pr.get('บริษัท', price_prop_co)).strip()
                 elif active_price_ref_prop is not None:
                     st.session_state["tab2_price_center_id"] = clean_price_id
             else:
                 active_price_ref_prop = None
                 st.session_state["tab2_price_ref_prop"] = None
                 st.session_state["tab2_price_center_id"] = ""
+                st.session_state["tab2_price_center_company"] = ""
 
         # Read tab2 location filters AFTER property search has updated session_state
         tab2_filtered = pd.DataFrame() if df_filtered is None else df_filtered
@@ -658,7 +692,7 @@ def render_tab2_map_view(df_raw, df_filtered, is_dark_mode):
                         try:
                             with gzip.open(_payload_meta["sidecar_path"], "rb") as _sf:
                                 _sidecar = json.loads(_sf.read().decode("utf-8"))
-                            base_legend = str(_sidecar.get("legend", ""))
+                            base_legend = str(_sidecar.get("legend_content") or _sidecar.get("legend") or "")
                             delta_df = st.session_state["imported_custom_df"]
                             delta_csv_b64, delta_lut_b64, delta_legend, _ = build_map_payload_from_df(
                                 delta_df,

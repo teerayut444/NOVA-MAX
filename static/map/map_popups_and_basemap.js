@@ -692,10 +692,14 @@ function showPropertyCard(d, rebuildStack = true) {
   let isCurrentRef = false;
   if (referencePoint && referencePoint.length >= 2 && d.lat && d.lon) {
     const distKm = haversineDistanceKm(referencePoint[1], referencePoint[0], parseFloat(d.lat), parseFloat(d.lon));
-    isCurrentRef = (
-      (currentRefProp && (String(currentRefProp._id).trim() === String(d._id).trim() && String(d._id).trim() !== '-' && String(d._id).trim() !== '')) ||
-      distKm < 0.002
+    const sameIdAndCo = !!(
+      currentRefProp &&
+      String(currentRefProp._id || '').trim() === String(d._id || '').trim() &&
+      String(d._id || '').trim() !== '-' &&
+      String(d._id || '').trim() !== '' &&
+      (!currentRefProp._company || !d._company || String(currentRefProp._company).trim() === String(d._company).trim())
     );
+    isCurrentRef = (sameIdAndCo || distKm < 0.002);
 
     if (pillDist && pillDistVal) {
       if (isCurrentRef || distKm < 0.002) {
@@ -736,7 +740,14 @@ function showPropertyCard(d, rebuildStack = true) {
   const btnSetPriceCenter = document.getElementById('btn-set-price-center-card');
   if (btnSetPriceCenter) {
     const propId = String(d._id || '').trim().toLowerCase();
-    const isPriceCenter = (currentPriceCenterId && propId && String(currentPriceCenterId).trim().toLowerCase() === propId);
+    const propCo = String(d._company || '').trim().toLowerCase();
+    const curPriceCo = (typeof currentPriceCenterCompany !== 'undefined' && currentPriceCenterCompany) ? String(currentPriceCenterCompany).trim().toLowerCase() : '';
+    const isPriceCenter = !!(
+      currentPriceCenterId &&
+      propId &&
+      String(currentPriceCenterId).trim().toLowerCase() === propId &&
+      (!curPriceCo || !propCo || curPriceCo === propCo)
+    );
     if (isPriceCenter) {
       btnSetPriceCenter.disabled = false;
       btnSetPriceCenter.style.opacity = '1';
@@ -757,7 +768,8 @@ function showPropertyCard(d, rebuildStack = true) {
   const btnToggleComp = document.getElementById('btn-toggle-compare-card');
   if (btnToggleComp) {
     const propId = String(d._id || '').trim();
-    const isSelected = selectedComparisonProps && selectedComparisonProps.has(propId);
+    const compKey = (typeof makePropCompositeKey === 'function') ? makePropCompositeKey(d) : propId;
+    const isSelected = selectedComparisonProps && (selectedComparisonProps.has(compKey) || selectedComparisonProps.has(propId));
     if (isSelected) {
       btnToggleComp.classList.add('selected');
       btnToggleComp.innerHTML = '<i class="fa-solid fa-square-check"></i> เลือกอยู่ (ยกเลิก)';
@@ -1090,6 +1102,8 @@ function setCardAsReferencePoint() {
 
   currentRefProp = activePropertyData;
   currentPriceCenterId = "";
+  currentPriceCenterCompany = "";
+  const refCo = (activePropertyData._company && activePropertyData._company !== '-') ? String(activePropertyData._company).trim() : '';
 
   // Sync geographic selections from this property
   if (activePropertyData._prov && activePropertyData._prov !== '-' && activePropertyData._prov !== 'ไม่มีข้อมูล') {
@@ -1126,8 +1140,11 @@ function setCardAsReferencePoint() {
     u.searchParams.set('map_ref_radius', currentRadiusKm);
     u.searchParams.set('map_pin_mode', 'radius');
     u.searchParams.delete('map_price_ref_id');
+    u.searchParams.delete('map_price_ref_co');
     if (id && id !== '-') {
       u.searchParams.set('map_ref_id', id);
+      if (refCo) u.searchParams.set('map_ref_co', refCo);
+      else u.searchParams.delete('map_ref_co');
     }
     if (activePropertyData && activePropertyData._prov && activePropertyData._prov !== '-' && activePropertyData._prov !== 'ไม่มีข้อมูล') {
       u.searchParams.set('map_prov', activePropertyData._prov);
@@ -1147,7 +1164,9 @@ function setCardAsReferencePoint() {
     dist: (activePropertyData && activePropertyData._district) || '',
     subdist: (activePropertyData && activePropertyData._subdistrict) || '',
     id: (id && id !== '-') ? id : '',
+    ref_company: refCo,
     price_center_id: '',
+    price_center_company: '',
     lat: lat,
     lon: lon,
     radius: currentRadiusKm || 5.0,
@@ -1161,9 +1180,11 @@ function setCardAsPriceCenter() {
   const lat = parseFloat(activePropertyData.lat);
   const lon = parseFloat(activePropertyData.lon);
   const id = (activePropertyData._id || '').trim();
+  const refCo = (activePropertyData._company && activePropertyData._company !== '-') ? String(activePropertyData._company).trim() : '';
 
   currentRefProp = activePropertyData;
   currentPriceCenterId = id;
+  currentPriceCenterCompany = refCo;
 
   // Sync geographic selections from this property
   if (activePropertyData._prov && activePropertyData._prov !== '-' && activePropertyData._prov !== 'ไม่มีข้อมูล') {
@@ -1204,6 +1225,13 @@ function setCardAsPriceCenter() {
     if (id && id !== '-') {
       u.searchParams.set('map_ref_id', id);
       u.searchParams.set('map_price_ref_id', id);
+      if (refCo) {
+        u.searchParams.set('map_ref_co', refCo);
+        u.searchParams.set('map_price_ref_co', refCo);
+      } else {
+        u.searchParams.delete('map_ref_co');
+        u.searchParams.delete('map_price_ref_co');
+      }
     }
     if (activePropertyData && activePropertyData._prov && activePropertyData._prov !== '-' && activePropertyData._prov !== 'ไม่มีข้อมูล') {
       u.searchParams.set('map_prov', activePropertyData._prov);
@@ -1223,7 +1251,9 @@ function setCardAsPriceCenter() {
     dist: (activePropertyData && activePropertyData._district) || '',
     subdist: (activePropertyData && activePropertyData._subdistrict) || '',
     id: (id && id !== '-') ? id : '',
+    ref_company: refCo,
     price_center_id: (id && id !== '-') ? id : '',
+    price_center_company: refCo,
     lat: lat,
     lon: lon,
     radius: currentRadiusKm || 5.0,
@@ -1234,9 +1264,11 @@ function setCardAsPriceCenter() {
 
 function clearPriceCenter() {
   currentPriceCenterId = "";
+  currentPriceCenterCompany = "";
   try {
     var u = new URL(window.parent.location.href);
     u.searchParams.delete('map_price_ref_id');
+    u.searchParams.delete('map_price_ref_co');
     window.parent.history.replaceState({}, '', u.toString());
   } catch(e) {}
 
@@ -1420,6 +1452,7 @@ function selectBatchReference(idx) {
 
   currentRefId = '';
   currentPriceCenterId = '';
+  if (typeof currentPriceCenterCompany !== 'undefined') currentPriceCenterCompany = '';
   currentRefProp = {
     _id: item.code || `REF-${idx + 1}`,
     _company: item.company || 'ทรัพย์อ้างอิง',
@@ -1439,7 +1472,9 @@ function selectBatchReference(idx) {
     proj: '',
     proj_list: [],
     id: '',
+    ref_company: '',
     price_center_id: '',
+    price_center_company: '',
     lat: Number(item.lat),
     lon: Number(item.lon),
     radius: currentRadiusKm || 5.0,

@@ -52,8 +52,18 @@ def clean_project_name(name, **kwargs):
 @st.cache_resource(show_spinner=False)
 def _load_readonly_project_clean_cache():
     """Load precomputed project_name_clean_cache.parquet once as a read-only dict."""
-    cache_path = os.path.join(_ROOT_DIR, "data", "project_name_clean_cache.parquet")
-    if not os.path.exists(cache_path):
+    import sys as _sys
+    fname = "project_name_clean_cache.parquet"
+    candidates = [os.path.join(_ROOT_DIR, "data", fname)]
+    if getattr(_sys, "frozen", False):
+        exe_dir = os.path.dirname(_sys.executable)
+        candidates.append(os.path.join(exe_dir, "data", fname))
+    meipass = getattr(_sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(os.path.join(meipass, "data", fname))
+        candidates.append(os.path.join(meipass, fname))
+    cache_path = next((p for p in candidates if os.path.exists(p)), "")
+    if not cache_path:
         return {}
     try:
         c_df = pd.read_parquet(cache_path)
@@ -1849,6 +1859,15 @@ def ensure_derived_cols(df, persist_cache=False):
             }
             s_tam.loc[en_tam_mask] = s_tam.loc[en_tam_mask].map(tam_lut)
         df['ตำบล'] = s_tam.replace({'': np.nan})
+
+    # Sanitize bare 4-digit building completion years (e.g. '2019', '2020.0') leaked into DDproperty วันประกาศ
+    if 'วันประกาศ' in df.columns and 'บริษัท' in df.columns:
+        dd_mask = df['บริษัท'].astype(str).str.strip().str.lower() == 'ddproperty'
+        if dd_mask.any():
+            s_dd_pd = df.loc[dd_mask, 'วันประกาศ'].astype(object).where(df.loc[dd_mask, 'วันประกาศ'].notna(), '').astype(str).str.strip()
+            bare_yr_dd = s_dd_pd.str.match(r'^(?:19|20|25)\d{2}(?:\.0+)?$', na=False)
+            if bare_yr_dd.any():
+                df.loc[s_dd_pd.index[bare_yr_dd], 'วันประกาศ'] = np.nan
 
     # Pre-clean normalized project name for ultra-fast competitor matching
     if 'norm_project_name' not in df.columns or (len(df) > 0 and not bool(df['_is_derived_clean'].fillna(False).all() if '_is_derived_clean' in df.columns else False)):

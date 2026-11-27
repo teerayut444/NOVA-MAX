@@ -843,6 +843,7 @@
       let initRefIdStr = "INIT_REF_ID_PLACEHOLDER";
       let initPriceRefIdStr = "INIT_PRICE_REF_ID_PLACEHOLDER";
       let currentPriceCenterId = "";
+      let currentPriceCenterCompany = "";
       try {
         if (initPriceRefIdStr && initPriceRefIdStr !== ("INIT_PRICE_REF_ID_" + "PLACEHOLDER")) {
           currentPriceCenterId = initPriceRefIdStr.trim();
@@ -850,6 +851,11 @@
           const u = new URL(window.location.href);
           const pPrice = u.searchParams.get('map_price_ref_id') || (window.parent && new URL(window.parent.location.href).searchParams.get('map_price_ref_id'));
           if (pPrice) currentPriceCenterId = pPrice.trim();
+        }
+        if (!_forceFreshReset) {
+          const uCo = new URL(window.location.href);
+          const pPriceCo = uCo.searchParams.get('map_price_ref_co') || (window.parent && new URL(window.parent.location.href).searchParams.get('map_price_ref_co'));
+          if (pPriceCo) currentPriceCenterCompany = pPriceCo.trim();
         }
       } catch(e) {}
       const initCompareIdsRaw = INIT_COMPARE_IDS_PLACEHOLDER;

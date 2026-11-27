@@ -104,9 +104,10 @@ def get_static_tab5_payload_meta(data_mtime=None, th_date=None):
     mtime_token = get_data_mtime_token(data_mtime)
     day_str = str(th_date or _today_th_str())
     size_token = get_data_size_token()
+    mt_part = f"|mt={mtime_token}" if data_mtime is not None else ""
     token_hex = hmac.new(
         get_payload_secret(),
-        f"tab5_v2|sz={size_token}|mt={mtime_token}|d={day_str}".encode("utf-8"),
+        f"tab5_v2|sz={size_token}{mt_part}|d={day_str}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()[:32]
     filename = f"tab5_payload_{token_hex}.gz"
@@ -120,20 +121,31 @@ def get_static_tab5_payload_meta(data_mtime=None, th_date=None):
     }
 
 
-def _cleanup_stale_tab5_payloads(keep_filename=None, min_age_sec=86400, tmp_min_age_sec=300):
+def _cleanup_stale_tab5_payloads(keep_filename=None, min_age_sec=86400, tmp_min_age_sec=300, max_stale_files=2):
     now_ts = time.time()
     try:
         if os.path.isdir(_STATIC_DIR):
+            recent_stale = []
             for name in os.listdir(_STATIC_DIR):
                 if name == keep_filename:
                     continue
                 if name.startswith("tab5_payload_") and (name.endswith(".gz") or ".tmp." in name):
                     fpath = os.path.join(_STATIC_DIR, name)
                     try:
-                        age = now_ts - os.path.getmtime(fpath)
+                        mtime = os.path.getmtime(fpath)
+                        age = now_ts - mtime
                         cutoff = tmp_min_age_sec if ".tmp." in name else min_age_sec
                         if age >= cutoff:
                             os.remove(fpath)
+                        elif ".tmp." not in name:
+                            recent_stale.append((mtime, fpath))
+                    except OSError:
+                        pass
+            if max_stale_files is not None and len(recent_stale) > max_stale_files:
+                recent_stale.sort(key=lambda x: x[0], reverse=True)
+                for _, old_fp in recent_stale[max_stale_files:]:
+                    try:
+                        os.remove(old_fp)
                     except OSError:
                         pass
     except Exception:
@@ -221,7 +233,7 @@ def _build_tab5_popular_locations_uncached(df_raw, is_dark_mode=False, has_custo
     # 4. Tokenized static offload for production dataset (cuts 11.6 MB inline HTML down to ~45 KB!)
     tab5_payload_url = ""
     if not has_custom_imports and len(projects_slim) >= _TAB5_OFFLOAD_MIN_PROJECTS:
-        meta = ensure_static_tab5_payload_gz(projects_slim, data_mtime=cur_mtime, th_date=day_str)
+        meta = ensure_static_tab5_payload_gz(projects_slim, data_mtime=data_mtime, th_date=day_str)
         if meta is not None:
             tab5_payload_url = meta["url"]
 

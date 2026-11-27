@@ -10,11 +10,32 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import threading
 import pandas as pd
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _HELPER_LOCK = threading.RLock()
+
+
+def _resolve_bundled_data_path(rel_path: str) -> str:
+    """Resolve a workspace/data asset across normal checkout AND frozen PyInstaller .exe (_MEIPASS or external data/)."""
+    fname = os.path.basename(rel_path)
+    candidates = [os.path.join(_ROOT_DIR, rel_path)]
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, rel_path))
+        candidates.append(os.path.join(exe_dir, fname))
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(os.path.join(meipass, rel_path))
+        candidates.append(os.path.join(meipass, fname))
+    candidates.append(os.path.join(_ROOT_DIR, fname))
+    candidates.append(os.path.join(_ROOT_DIR, "Py Scraper", fname))
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
+    return candidates[0]
 
 _AMP_EN_TO_TH_CACHE: dict[str, str] | None = None
 _CENTROIDS_SET_CACHE: set[str] | None = None
@@ -30,7 +51,7 @@ def _get_cached_geojson(rel_path: str) -> dict:
     with _HELPER_LOCK:
         if rel_path in _GEOJSON_DATA_CACHE:
             return _GEOJSON_DATA_CACHE[rel_path]
-        p = os.path.join(_ROOT_DIR, rel_path)
+        p = _resolve_bundled_data_path(rel_path)
         data: dict = {}
         if os.path.exists(p):
             try:
@@ -278,7 +299,7 @@ def _get_canonical_proj_map() -> dict[str, str]:
         if _CANONICAL_PROJ_MAP_CACHE is not None:
             return _CANONICAL_PROJ_MAP_CACHE
         mapping: dict[str, str] = {}
-        p = os.path.join(_ROOT_DIR, "data", "project_canonical_mapping.json")
+        p = _resolve_bundled_data_path(os.path.join("data", "project_canonical_mapping.json"))
         if os.path.exists(p):
             try:
                 with open(p, "r", encoding="utf-8") as f:
